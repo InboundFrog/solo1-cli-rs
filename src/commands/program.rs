@@ -15,22 +15,22 @@ use crate::vlog;
 pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()> {
     vlog!("Loading firmware JSON: {:?}", firmware_json);
     let fw = FirmwareJson::from_file(firmware_json)?;
-    let firmware_bytes = fw.firmware_bytes()?;
+    let (flash_start, firmware_bytes) = fw.firmware_binary()?;
 
     println!("Firmware size: {} bytes", firmware_bytes.len());
+    println!("Flash start:   0x{:08X}", flash_start);
     vlog!(
         "Firmware SHA256: {}",
         hex::encode(Sha256::digest(&firmware_bytes))
     );
 
     const CHUNK_SIZE: usize = 256;
-    const FLASH_START: u32 = 0x08005000; // Skip bootloader
 
     vlog!(
         "Writing {} chunks of {} bytes starting at 0x{:08X}",
         (firmware_bytes.len() + CHUNK_SIZE - 1) / CHUNK_SIZE,
         CHUNK_SIZE,
-        FLASH_START
+        flash_start
     );
 
     let total = firmware_bytes.len();
@@ -43,7 +43,7 @@ pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()>
     );
 
     let mut offset = 0usize;
-    let mut addr = FLASH_START;
+    let mut addr = flash_start;
     let mut chunk_num = 0u32;
 
     while offset < firmware_bytes.len() {

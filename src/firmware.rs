@@ -30,9 +30,30 @@ impl FirmwareJson {
         Ok(serde_json::from_str(&data)?)
     }
 
-    /// Decode the firmware binary from the websafe base64 field.
+    /// Decode the raw bytes from the firmware field (may be Intel HEX text or binary).
     pub fn firmware_bytes(&self) -> Result<Vec<u8>> {
         websafe_b64_decode(&self.firmware)
+    }
+
+    /// Decode firmware to a flat binary with its base flash address.
+    ///
+    /// The official SoloKeys firmware JSONs store Intel HEX text in the `firmware`
+    /// field (base64-encoded). This method detects that and parses it correctly.
+    /// Raw binary (from our own `cmd_sign`) is also handled.
+    ///
+    /// Returns `(base_address, binary_bytes)`.
+    pub fn firmware_binary(&self) -> Result<(u32, Vec<u8>)> {
+        let bytes = websafe_b64_decode(&self.firmware)?;
+        // Intel HEX files always start with ':'
+        if bytes.first() == Some(&b':') {
+            let hex_str = String::from_utf8(bytes).map_err(|e| {
+                SoloError::FirmwareError(format!("Firmware HEX UTF-8 error: {}", e))
+            })?;
+            parse_hex_string(&hex_str)
+        } else {
+            // Raw binary — use the Solo 1 application start address
+            Ok((0x08005000, bytes))
+        }
     }
 
     /// Decode the signature from the websafe base64 field.

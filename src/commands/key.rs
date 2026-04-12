@@ -320,8 +320,9 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
         serde_json::from_str(&json_str)?
     };
 
-    let firmware_bytes = fw_json.firmware_bytes()?;
+    let (flash_start, firmware_bytes) = fw_json.firmware_binary()?;
     println!("Firmware size: {} bytes", firmware_bytes.len());
+    println!("Flash start:   0x{:08X}", flash_start);
     println!("Firmware SHA-256: {}", sha256_hex(&firmware_bytes));
 
     // Enter bootloader mode. CMD_ENTER_BOOT (0x51) is a direct firmware vendor command —
@@ -359,7 +360,6 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
 
     // Write firmware in 256-byte chunks
     const CHUNK_SIZE: usize = 256;
-    const FLASH_START: u32 = 0x08005000; // Skip bootloader region
 
     let pb = ProgressBar::new(firmware_bytes.len() as u64);
     pb.set_style(
@@ -370,7 +370,7 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
     );
 
     let mut offset = 0usize;
-    let mut addr = FLASH_START;
+    let mut addr = flash_start;
     while offset < firmware_bytes.len() {
         let end = (offset + CHUNK_SIZE).min(firmware_bytes.len());
         let chunk = &firmware_bytes[offset..end];
