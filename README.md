@@ -14,6 +14,9 @@ A Rust CLI for managing [SoloKeys Solo 1](https://solokeys.com/) hardware securi
 Supports firmware updates, FIDO2 operations, credential management, and low-level
 bootloader/DFU programming.
 
+**WARN:** Not everything has been fully tested with a SoloKey v1 yet, so use at your own
+          risk.
+
 ---
 
 ## Building
