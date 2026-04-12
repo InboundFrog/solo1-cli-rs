@@ -5,3 +5,4 @@ pub mod device;
 pub mod dfu;
 pub mod error;
 pub mod firmware;
+pub mod verbose;

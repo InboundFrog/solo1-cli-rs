@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 use hidapi::{HidApi, HidDevice};
 
 use crate::error::{Result, SoloError};
+use crate::vlog;
 
 // USB identifiers
 pub const SOLO_VID: u16 = 0x0483;
@@ -277,6 +278,7 @@ impl SoloHid {
     fn init(&mut self) -> Result<()> {
         // Generate a random nonce
         let nonce: [u8; 8] = rand::random();
+        vlog!("CTAPHID_INIT: sending nonce {}", hex::encode(nonce));
         let frames = build_ctaphid_frames(&CTAPHID_BROADCAST_CID, CTAPHID_INIT, &nonce);
         for frame in &frames {
             let encoded = frame.encode();
@@ -291,6 +293,10 @@ impl SoloHid {
         }
         // Response: nonce[8] | channel_id[4] | ...
         self.channel_id.copy_from_slice(&response[8..12]);
+        vlog!(
+            "CTAPHID_INIT: assigned channel_id {}",
+            hex::encode(self.channel_id)
+        );
         Ok(())
     }
 
@@ -302,7 +308,18 @@ impl SoloHid {
 
     /// Send a command with payload.
     pub fn send(&self, cmd: u8, data: &[u8]) -> Result<()> {
+        vlog!(
+            "HID send: cmd=0x{:02X} len={} data={}",
+            cmd,
+            data.len(),
+            if data.len() <= 64 {
+                hex::encode(data)
+            } else {
+                format!("{}...", hex::encode(&data[..64]))
+            }
+        );
         let frames = build_ctaphid_frames(&self.channel_id, cmd, data);
+        vlog!("HID send: {} frame(s)", frames.len());
         for frame in &frames {
             let encoded = frame.encode();
             self.device.write(&encoded)?;
@@ -312,6 +329,7 @@ impl SoloHid {
 
     /// Receive a response for a given command, with timeout.
     pub fn recv_response(&self, expected_cmd: u8, timeout: Duration) -> Result<Vec<u8>> {
+        vlog!("HID recv: waiting for cmd=0x{:02X}", expected_cmd);
         let start = Instant::now();
         let mut frames: Vec<CtapHidFrame> = Vec::new();
         let mut total_bcnt: Option<usize> = None;
@@ -349,6 +367,10 @@ impl SoloHid {
             let for_us = frame.channel_id == self.channel_id
                 || frame.channel_id == CTAPHID_BROADCAST_CID;
             if !for_us {
+                vlog!(
+                    "HID recv: ignoring frame for channel {}",
+                    hex::encode(frame.channel_id)
+                );
                 continue;
             }
 
@@ -357,13 +379,25 @@ impl SoloHid {
                     // Check for error
                     if *cmd == 0x3F {
                         // CTAPHID_ERROR
+                        let code = data.first().copied().unwrap_or(0);
+                        vlog!("HID recv: CTAPHID_ERROR code=0x{:02X}", code);
                         return Err(SoloError::ProtocolError(format!(
                             "CTAPHID error: {:02x}",
-                            data.first().copied().unwrap_or(0)
+                            code
                         )));
                     }
+                    vlog!(
+                        "HID recv: init frame cmd=0x{:02X} bcnt={} first_data={}",
+                        cmd,
+                        bcnt,
+                        hex::encode(&data[..data.len().min(16)])
+                    );
                     if *cmd != expected_cmd {
-                        // Unexpected command; skip
+                        vlog!(
+                            "HID recv: unexpected cmd 0x{:02X} (want 0x{:02X}), skipping",
+                            cmd,
+                            expected_cmd
+                        );
                         continue;
                     }
                     total_bcnt = Some(*bcnt as usize);
@@ -371,7 +405,8 @@ impl SoloHid {
                     frames.clear();
                     frames.push(frame);
                 }
-                FramePayload::Cont { .. } => {
+                FramePayload::Cont { seq, .. } => {
+                    vlog!("HID recv: cont frame seq={}", seq);
                     if let Some(tb) = total_bcnt {
                         frames.push(frame.clone());
                         if let FramePayload::Cont { data, .. } = &frame.payload {
@@ -392,12 +427,27 @@ impl SoloHid {
         }
 
         let (_, payload) = reassemble_frames(&frames)?;
+        vlog!(
+            "HID recv: reassembled {} bytes: {}",
+            payload.len(),
+            if payload.len() <= 32 {
+                hex::encode(&payload)
+            } else {
+                format!("{}...", hex::encode(&payload[..32]))
+            }
+        );
         Ok(payload)
     }
 
     /// Send a vendor (bootloader) command packet.
     /// Format: [cmd(1)] [addr(3)] [TAG(4)] [length_be(2)] [data]
     pub fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
+        vlog!(
+            "bootloader cmd=0x{:02X} addr=0x{:08X} data_len={}",
+            cmd,
+            addr,
+            data.len()
+        );
         let mut packet = Vec::with_capacity(10 + data.len());
         packet.push(cmd);
         // 3-byte address (big-endian, lower 24 bits)

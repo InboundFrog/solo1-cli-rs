@@ -2,21 +2,35 @@
 use std::path::Path;
 
 use indicatif::{ProgressBar, ProgressStyle};
+use sha2::{Digest, Sha256};
 
-use crate::device::{SoloHid, CMD_DONE, CMD_WRITE};
+use crate::device::{SoloHid, CMD_CHECK, CMD_DONE, CMD_WRITE};
 use crate::dfu::DfuDevice;
 use crate::error::Result;
 use crate::firmware::FirmwareJson;
+use crate::vlog;
 
 /// Program via the Solo bootloader (firmware.json format).
 pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()> {
+    vlog!("Loading firmware JSON: {:?}", firmware_json);
     let fw = FirmwareJson::from_file(firmware_json)?;
     let firmware_bytes = fw.firmware_bytes()?;
 
     println!("Firmware size: {} bytes", firmware_bytes.len());
+    vlog!(
+        "Firmware SHA256: {}",
+        hex::encode(Sha256::digest(&firmware_bytes))
+    );
 
     const CHUNK_SIZE: usize = 256;
     const FLASH_START: u32 = 0x08005000; // Skip bootloader
+
+    vlog!(
+        "Writing {} chunks of {} bytes starting at 0x{:08X}",
+        (firmware_bytes.len() + CHUNK_SIZE - 1) / CHUNK_SIZE,
+        CHUNK_SIZE,
+        FLASH_START
+    );
 
     let total = firmware_bytes.len();
     let pb = ProgressBar::new(total as u64);
@@ -29,19 +43,36 @@ pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()>
 
     let mut offset = 0usize;
     let mut addr = FLASH_START;
+    let mut chunk_num = 0u32;
 
     while offset < firmware_bytes.len() {
         let end = (offset + CHUNK_SIZE).min(firmware_bytes.len());
         let chunk = &firmware_bytes[offset..end];
-        hid.send_bootloader_cmd(CMD_WRITE, addr, chunk)?;
+        vlog!(
+            "chunk #{} addr=0x{:08X} len={}",
+            chunk_num,
+            addr,
+            chunk.len()
+        );
+        let resp = hid.send_bootloader_cmd(CMD_WRITE, addr, chunk)?;
+        if !resp.is_empty() {
+            vlog!("  write response: {}", hex::encode(&resp));
+        }
         pb.inc(chunk.len() as u64);
         offset = end;
         addr += CHUNK_SIZE as u32;
+        chunk_num += 1;
     }
     pb.finish_with_message("written");
 
+    vlog!("Sending CMD_CHECK (verify)");
+    let check_resp = hid.send_bootloader_cmd(CMD_CHECK, 0, &[])?;
+    vlog!("check response: {}", hex::encode(&check_resp));
+
     println!("Finalizing firmware...");
-    hid.send_bootloader_cmd(CMD_DONE, 0, &[])?;
+    vlog!("Sending CMD_DONE");
+    let done_resp = hid.send_bootloader_cmd(CMD_DONE, 0, &[])?;
+    vlog!("done response: {}", hex::encode(&done_resp));
     println!("Done.");
     Ok(())
 }

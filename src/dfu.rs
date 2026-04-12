@@ -8,6 +8,7 @@ use rusb::{Context, DeviceHandle, UsbContext};
 
 use crate::device::{FLASH_BASE, DFU_CHUNK_SIZE, SOLO_VID, SOLO_DFU_PID};
 use crate::error::{Result, SoloError};
+use crate::vlog;
 
 // DFU request codes
 pub const DFU_DETACH: u8 = 0x00;
@@ -128,7 +129,14 @@ impl DfuDevice {
     pub fn get_status(&self) -> Result<DfuStatus> {
         let mut buf = [0u8; 6];
         self.control_in(DFU_GETSTATUS, 0, &mut buf)?;
-        DfuStatus::parse(&buf)
+        let status = DfuStatus::parse(&buf)?;
+        vlog!(
+            "DFU_GETSTATUS: status=0x{:02X} state=0x{:02X} poll_ms={}",
+            status.status,
+            status.state,
+            status.poll_timeout_ms
+        );
+        Ok(status)
     }
 
     pub fn clear_status(&self) -> Result<()> {
@@ -164,6 +172,11 @@ impl DfuDevice {
 
     /// Download one chunk via DFU_DNLOAD.
     pub fn dnload_chunk(&mut self, data: &[u8]) -> Result<()> {
+        vlog!(
+            "DFU_DNLOAD: transaction={} len={}",
+            self.transaction,
+            data.len()
+        );
         self.control_out(DFU_DNLOAD, self.transaction, data)?;
         self.transaction += 1;
         self.wait_while_busy()?;

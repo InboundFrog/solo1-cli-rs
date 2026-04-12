@@ -9,6 +9,8 @@ use solo1::error;
 fn main() {
     let cli = Cli::parse();
 
+    solo1::verbose::set_verbose(cli.verbose);
+
     let result = run(cli);
     if let Err(e) = result {
         eprintln!("Error: {}", e);

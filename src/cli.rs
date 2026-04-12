@@ -10,6 +10,10 @@ use clap::{Args, Parser, Subcommand};
     version
 )]
 pub struct Cli {
+    /// Enable verbose output (HID frames, DFU status, bootloader packets, etc.)
+    #[arg(long, short = 'v', global = true)]
+    pub verbose: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
