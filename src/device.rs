@@ -392,11 +392,11 @@ impl SoloHid {
                         bcnt,
                         hex::encode(&data[..data.len().min(16)])
                     );
-                    if *cmd != expected_cmd {
+                    if *cmd != (expected_cmd & 0x7F) {
                         vlog!(
                             "HID recv: unexpected cmd 0x{:02X} (want 0x{:02X}), skipping",
                             cmd,
-                            expected_cmd
+                            expected_cmd & 0x7F
                         );
                         continue;
                     }
