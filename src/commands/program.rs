@@ -4,7 +4,7 @@ use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::device::{SoloHid, CMD_CHECK, CMD_DONE, CMD_VERSION, CMD_WRITE};
+use crate::device::{SoloHid, CMD_DONE, CMD_VERSION, CMD_WRITE};
 use crate::dfu::DfuDevice;
 use crate::error::Result;
 use crate::firmware::{FirmwareJson, FirmwareVersion};
@@ -23,6 +23,29 @@ pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()>
         "Firmware SHA256: {}",
         hex::encode(Sha256::digest(&firmware_bytes))
     );
+
+    // Query bootloader version BEFORE writing to select the correct signature.
+    // (The BootVersion command resets the internal has_erased flag; querying it
+    // before writes avoids any state confusion and mirrors the Python tool's flow.)
+    let signature = match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
+        Ok(resp) if resp.len() >= 3 => {
+            let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
+            println!("Bootloader version: {}", v);
+            fw.signature_for_version(&v)?
+        }
+        Ok(resp) if !resp.is_empty() => {
+            let v = FirmwareVersion::new(0, 0, resp[0] as u32);
+            println!("Bootloader version: {}", v);
+            fw.signature_for_version(&v)?
+        }
+        _ => {
+            // CMD_VERSION failed or returned no data — use the default (latest) signature.
+            // Do NOT fall back to version 0.0.0 which would incorrectly match "<=2.5.3".
+            println!("Could not read bootloader version; using default signature.");
+            fw.signature_bytes()?
+        }
+    };
+    vlog!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
 
     const CHUNK_SIZE: usize = 256;
 
@@ -65,23 +88,6 @@ pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()>
         chunk_num += 1;
     }
     pb.finish_with_message("written");
-
-    // Query bootloader version to select the correct signature
-    let version = match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
-        Ok(resp) if resp.len() >= 3 => {
-            FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32)
-        }
-        Ok(resp) if !resp.is_empty() => FirmwareVersion::new(0, 0, resp[0] as u32),
-        _ => FirmwareVersion::new(0, 0, 0),
-    };
-    vlog!("Bootloader version: {}", version);
-
-    let signature = fw.signature_for_version(&version)?;
-    vlog!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
-
-    vlog!("Sending CMD_CHECK (liveness probe)");
-    let check_resp = hid.send_bootloader_cmd(CMD_CHECK, 0, &[])?;
-    vlog!("check response: {}", hex::encode(&check_resp));
 
     // CMD_DONE sends the ECDSA signature; bootloader verifies and reboots on success
     println!("Finalizing firmware...");

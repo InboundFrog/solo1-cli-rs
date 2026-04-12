@@ -299,7 +299,7 @@ pub fn cmd_sign_file(hid: &SoloHid, filename: &Path) -> Result<()> {
 /// Update the device firmware.
 pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
     use crate::device::{CMD_ENTER_BOOT, CMD_WRITE, CMD_DONE, CMD_VERSION};
-    use crate::firmware::{fetch_latest_release, download_url, FirmwareJson, FirmwareVersion};
+    use crate::firmware::{fetch_latest_release, download_url, FirmwareJson};
     use crate::crypto::sha256_hex;
     use indicatif::{ProgressBar, ProgressStyle};
 
@@ -337,25 +337,25 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
     println!("Reconnecting...");
     let bl_hid = SoloHid::open_bootloader(None)?;
 
-    // Query bootloader version to select the correct signature
-    let version = match bl_hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
+    // Query bootloader version to select the correct signature.
+    // If CMD_VERSION fails, use the default (latest) signature directly rather than
+    // falling back to version 0.0.0 which would incorrectly match "<=2.5.3".
+    let signature = match bl_hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
             let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
             println!("Bootloader version: {}", v);
-            v
+            fw_json.signature_for_version(&v)?
         }
         Ok(resp) if !resp.is_empty() => {
             let v = FirmwareVersion::new(0, 0, resp[0] as u32);
             println!("Bootloader version: {}", v);
-            v
+            fw_json.signature_for_version(&v)?
         }
         _ => {
-            println!("Could not read bootloader version, using default signature.");
-            FirmwareVersion::new(0, 0, 0)
+            println!("Could not read bootloader version; using default signature.");
+            fw_json.signature_bytes()?
         }
     };
-
-    let signature = fw_json.signature_for_version(&version)?;
     vlog!("Using signature ({} bytes): {}", signature.len(), hex::encode(&signature));
 
     // Write firmware in 256-byte chunks
