@@ -4,13 +4,14 @@ use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::device::{SoloHid, CMD_CHECK, CMD_DONE, CMD_WRITE};
+use crate::device::{SoloHid, CMD_CHECK, CMD_DONE, CMD_VERSION, CMD_WRITE};
 use crate::dfu::DfuDevice;
 use crate::error::Result;
-use crate::firmware::FirmwareJson;
+use crate::firmware::{FirmwareJson, FirmwareVersion};
 use crate::vlog;
 
 /// Program via the Solo bootloader (firmware.json format).
+/// The device must already be in bootloader mode when this is called.
 pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()> {
     vlog!("Loading firmware JSON: {:?}", firmware_json);
     let fw = FirmwareJson::from_file(firmware_json)?;
@@ -65,13 +66,27 @@ pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()>
     }
     pb.finish_with_message("written");
 
-    vlog!("Sending CMD_CHECK (verify)");
+    // Query bootloader version to select the correct signature
+    let version = match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
+        Ok(resp) if resp.len() >= 3 => {
+            FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32)
+        }
+        Ok(resp) if !resp.is_empty() => FirmwareVersion::new(0, 0, resp[0] as u32),
+        _ => FirmwareVersion::new(0, 0, 0),
+    };
+    vlog!("Bootloader version: {}", version);
+
+    let signature = fw.signature_for_version(&version)?;
+    vlog!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
+
+    vlog!("Sending CMD_CHECK (liveness probe)");
     let check_resp = hid.send_bootloader_cmd(CMD_CHECK, 0, &[])?;
     vlog!("check response: {}", hex::encode(&check_resp));
 
+    // CMD_DONE sends the ECDSA signature; bootloader verifies and reboots on success
     println!("Finalizing firmware...");
-    vlog!("Sending CMD_DONE");
-    let done_resp = hid.send_bootloader_cmd(CMD_DONE, 0, &[])?;
+    vlog!("Sending CMD_DONE with {} byte signature", signature.len());
+    let done_resp = hid.send_bootloader_cmd(CMD_DONE, 0, &signature)?;
     vlog!("done response: {}", hex::encode(&done_resp));
     println!("Done.");
     Ok(())

@@ -439,8 +439,12 @@ impl SoloHid {
         Ok(payload)
     }
 
-    /// Send a vendor (bootloader) command packet.
-    /// Format: [cmd(1)] [addr(3)] [TAG(4)] [length_be(2)] [data]
+    /// Send a vendor (bootloader) command packet and return the response payload.
+    ///
+    /// Packet format: [cmd(1)] [addr(3) LE] [TAG(4)] [length_be(2)] [data]
+    ///
+    /// The bootloader responds with [status(1)] [payload...]. This method checks
+    /// the status byte and strips it, returning only the payload on success.
     pub fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
         vlog!(
             "bootloader cmd=0x{:02X} addr=0x{:08X} data_len={}",
@@ -450,27 +454,41 @@ impl SoloHid {
         );
         let mut packet = Vec::with_capacity(10 + data.len());
         packet.push(cmd);
-        // 3-byte address (big-endian, lower 24 bits)
-        packet.push(((addr >> 16) & 0xFF) as u8);
-        packet.push(((addr >> 8) & 0xFF) as u8);
+        // 3-byte address, little-endian (firmware does: *(uint32_t*)addr & 0xffffff | 0x8000000)
         packet.push((addr & 0xFF) as u8);
+        packet.push(((addr >> 8) & 0xFF) as u8);
+        packet.push(((addr >> 16) & 0xFF) as u8);
         packet.extend_from_slice(&SOLO_TAG);
         let len = data.len() as u16;
         packet.push((len >> 8) as u8);
         packet.push(len as u8);
         packet.extend_from_slice(data);
 
-        self.send_recv(CMD_BOOT, &packet)
+        let resp = self.send_recv(CMD_BOOT, &packet)?;
+
+        // First byte of bootloader response is a status code (0x00 = success)
+        if resp.is_empty() {
+            return Ok(resp);
+        }
+        let status = resp[0];
+        if status != 0x00 {
+            return Err(SoloError::ProtocolError(format!(
+                "Bootloader error status: 0x{:02X}",
+                status
+            )));
+        }
+        Ok(resp[1..].to_vec())
     }
 }
 
 /// Build a bootloader command packet (for testing / manual use).
+/// Address is encoded little-endian (lower 24 bits); firmware ORs 0x08000000 back in.
 pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Vec<u8> {
     let mut packet = Vec::with_capacity(10 + data.len());
     packet.push(cmd);
-    packet.push(((addr >> 16) & 0xFF) as u8);
-    packet.push(((addr >> 8) & 0xFF) as u8);
     packet.push((addr & 0xFF) as u8);
+    packet.push(((addr >> 8) & 0xFF) as u8);
+    packet.push(((addr >> 16) & 0xFF) as u8);
     packet.extend_from_slice(&SOLO_TAG);
     let len = data.len() as u16;
     packet.push((len >> 8) as u8);
@@ -590,19 +608,24 @@ mod tests {
 
     #[test]
     fn test_bootloader_packet() {
-        // Address 0x08001000 in 3-byte big-endian: lower 24 bits = 0x001000
-        // bytes: 0x00, 0x10, 0x00
+        // Address 0x08001000: firmware strips 0x08000000, leaving offset 0x001000.
+        // Little-endian 3-byte encoding of 0x001000: [0x00, 0x10, 0x00]
         let pkt = build_bootloader_packet(0x40, 0x08001000, &[0xDE, 0xAD]);
         assert_eq!(pkt[0], 0x40); // cmd
-        assert_eq!(&pkt[1..4], &[0x00, 0x10, 0x00]); // addr (lower 24 bits of 0x08001000)
+        assert_eq!(&pkt[1..4], &[0x00, 0x10, 0x00]); // addr little-endian (LSB first)
         assert_eq!(&pkt[4..8], &SOLO_TAG); // tag
         assert_eq!(pkt[8], 0x00); // len high
         assert_eq!(pkt[9], 0x02); // len low
         assert_eq!(&pkt[10..12], &[0xDE, 0xAD]); // data
 
-        // Verify with an address in the lower range
-        let pkt2 = build_bootloader_packet(0x40, 0x00001234, &[]);
-        assert_eq!(&pkt2[1..4], &[0x00, 0x12, 0x34]); // addr
+        // Address where byte order matters: 0x08010000 → offset 0x010000
+        // Little-endian: [0x00, 0x00, 0x01]  (NOT [0x01, 0x00, 0x00])
+        let pkt2 = build_bootloader_packet(0x40, 0x08010000, &[]);
+        assert_eq!(&pkt2[1..4], &[0x00, 0x00, 0x01]);
+
+        // 0x08012345 → offset 0x012345 → LE: [0x45, 0x23, 0x01]
+        let pkt3 = build_bootloader_packet(0x40, 0x08012345, &[]);
+        assert_eq!(&pkt3[1..4], &[0x45, 0x23, 0x01]);
     }
 
     #[test]

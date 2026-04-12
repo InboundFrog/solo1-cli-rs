@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use crate::device::{
     SoloHid, CMD_GET_VERSION, CMD_PROBE, CMD_RNG, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK,
 };
+use crate::vlog;
 use crate::error::{Result, SoloError};
 use crate::firmware::FirmwareVersion;
 
@@ -297,8 +298,8 @@ pub fn cmd_sign_file(hid: &SoloHid, filename: &Path) -> Result<()> {
 
 /// Update the device firmware.
 pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
-    use crate::device::{CMD_ENTER_BOOT, CMD_WRITE, CMD_DONE, CMD_CHECK};
-    use crate::firmware::{fetch_latest_release, download_url, FirmwareJson};
+    use crate::device::{CMD_ENTER_BOOT, CMD_WRITE, CMD_DONE, CMD_VERSION};
+    use crate::firmware::{fetch_latest_release, download_url, FirmwareJson, FirmwareVersion};
     use crate::crypto::sha256_hex;
     use indicatif::{ProgressBar, ProgressStyle};
 
@@ -328,15 +329,37 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
     println!("Entering bootloader mode...");
     let _ = hid.send(CMD_ENTER_BOOT, &[]);
 
-    // Small delay for device to re-enumerate
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    // Delay for device to re-enumerate in bootloader mode
+    std::thread::sleep(std::time::Duration::from_millis(1500));
 
     // Reconnect in bootloader mode
+    println!("Reconnecting...");
     let bl_hid = SoloHid::open_bootloader(None)?;
 
-    // Erase and write firmware in 256-byte chunks
+    // Query bootloader version to select the correct signature
+    let version = match bl_hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
+        Ok(resp) if resp.len() >= 3 => {
+            let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
+            println!("Bootloader version: {}", v);
+            v
+        }
+        Ok(resp) if !resp.is_empty() => {
+            let v = FirmwareVersion::new(0, 0, resp[0] as u32);
+            println!("Bootloader version: {}", v);
+            v
+        }
+        _ => {
+            println!("Could not read bootloader version, using default signature.");
+            FirmwareVersion::new(0, 0, 0)
+        }
+    };
+
+    let signature = fw_json.signature_for_version(&version)?;
+    vlog!("Using signature ({} bytes): {}", signature.len(), hex::encode(&signature));
+
+    // Write firmware in 256-byte chunks
     const CHUNK_SIZE: usize = 256;
-    const FLASH_START: u32 = 0x08005000; // Skip bootloader
+    const FLASH_START: u32 = 0x08005000; // Skip bootloader region
 
     let pb = ProgressBar::new(firmware_bytes.len() as u64);
     pb.set_style(
@@ -358,11 +381,9 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
     }
     pb.finish_with_message("Written");
 
-    println!("Finalizing...");
-    bl_hid.send_bootloader_cmd(CMD_DONE, 0, &[])?;
-
-    println!("Verifying...");
-    bl_hid.send_bootloader_cmd(CMD_CHECK, 0, &[])?;
+    // CMD_DONE sends the ECDSA signature; bootloader verifies it and reboots on success
+    println!("Verifying and finalizing...");
+    bl_hid.send_bootloader_cmd(CMD_DONE, 0, &signature)?;
 
     println!("Firmware update complete!");
     Ok(())
