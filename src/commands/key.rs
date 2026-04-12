@@ -323,9 +323,10 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
     println!("Firmware size: {} bytes", firmware_bytes.len());
     println!("Firmware SHA-256: {}", sha256_hex(&firmware_bytes));
 
-    // Enter bootloader mode
+    // Enter bootloader mode. CMD_ENTER_BOOT (0x51) is a direct firmware vendor command —
+    // not wrapped in CMD_BOOT. Device reboots immediately so no response is expected.
     println!("Entering bootloader mode...");
-    hid.send_bootloader_cmd(CMD_ENTER_BOOT, 0, &[])?;
+    let _ = hid.send(CMD_ENTER_BOOT, &[]);
 
     // Small delay for device to re-enumerate
     std::thread::sleep(std::time::Duration::from_millis(1000));

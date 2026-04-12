@@ -460,7 +460,7 @@ impl SoloHid {
         packet.push(len as u8);
         packet.extend_from_slice(data);
 
-        self.send_recv(CTAPHID_VENDOR_FIRST, &packet)
+        self.send_recv(CMD_BOOT, &packet)
     }
 }
 

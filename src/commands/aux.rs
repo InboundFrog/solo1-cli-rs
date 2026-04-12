@@ -1,33 +1,34 @@
 /// `program aux` subcommands: bootloader mode switching, reboot, DFU mode.
-use crate::device::{
-    SoloHid, CMD_BOOT, CMD_ENTER_BOOT, CMD_ENTER_DFU, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION,
-};
+use crate::device::{SoloHid, CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION};
 use crate::error::Result;
 
 /// Enter bootloader mode (from firmware).
+/// Sends command 0x51 directly — no bootloader wrapper — as the firmware handles it.
+/// The device reboots immediately so we don't wait for a response.
 pub fn cmd_enter_bootloader(hid: &SoloHid) -> Result<()> {
-    hid.send_bootloader_cmd(CMD_ENTER_BOOT, 0, &[])?;
+    let _ = hid.send(CMD_ENTER_BOOT, &[]);
     println!("Entering bootloader mode...");
     Ok(())
 }
 
-/// Leave bootloader mode (boot to firmware).
+/// Leave bootloader mode (boot to firmware) by issuing a reboot from bootloader.
 pub fn cmd_leave_bootloader(hid: &SoloHid) -> Result<()> {
-    hid.send_bootloader_cmd(CMD_BOOT, 0, &[])?;
+    let _ = hid.send_bootloader_cmd(CMD_REBOOT, 0, &[]);
     println!("Booting to firmware...");
     Ok(())
 }
 
-/// Enter ST DFU mode.
+/// Enter ST DFU mode (from firmware).
+/// Sends command 0x52 directly — the firmware handles it, device reboots.
 pub fn cmd_enter_dfu(hid: &SoloHid) -> Result<()> {
-    hid.send_bootloader_cmd(CMD_ENTER_DFU, 0, &[])?;
+    let _ = hid.send(CMD_ENTER_ST_BOOT, &[]);
     println!("Entering ST DFU mode...");
     Ok(())
 }
 
-/// Leave ST DFU mode (re-enter bootloader).
+/// Leave ST DFU mode (re-enter Solo bootloader) by issuing a reboot from bootloader.
 pub fn cmd_leave_dfu(hid: &SoloHid) -> Result<()> {
-    hid.send_bootloader_cmd(CMD_ENTER_ST_BOOT, 0, &[])?;
+    let _ = hid.send_bootloader_cmd(CMD_REBOOT, 0, &[]);
     println!("Leaving ST DFU mode...");
     Ok(())
 }
