@@ -1,5 +1,8 @@
 # solo1-cli-rs
 
+**WARN:** Not everything has been fully tested with a SoloKey v1 yet, so use at your own
+          risk.
+
 ## Note
 
 This is a port of the official [solokeys/solo1-cli](https://github.com/solokeys/solo1-cli) Python tool to Rust.
@@ -13,9 +16,6 @@ protocol details, and debugging firmware update issues along the way.
 A Rust CLI for managing [SoloKeys Solo 1](https://solokeys.com/) hardware security keys.
 Supports firmware updates, FIDO2 operations, credential management, and low-level
 bootloader/DFU programming.
-
-**WARN:** Not everything has been fully tested with a SoloKey v1 yet, so use at your own
-          risk.
 
 ---
 
