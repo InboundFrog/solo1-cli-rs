@@ -2,7 +2,6 @@
 ///
 /// Tests marked `#[ignore]` require actual hardware (a Solo 1 device plugged in).
 /// Run hardware tests with: `cargo test -- --ignored`
-
 use solo1::device::{list_solo_devices, SoloHid};
 
 /// Test that we can list devices (returns empty list without hardware, not an error).
@@ -13,7 +12,11 @@ fn test_list_devices_no_hardware() {
     let result = list_solo_devices();
     // We don't assert a particular count because hardware may or may not be present.
     // We just verify it doesn't error out.
-    assert!(result.is_ok(), "list_solo_devices should not fail: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "list_solo_devices should not fail: {:?}",
+        result
+    );
 }
 
 /// Ping the device (requires hardware).
@@ -36,7 +39,10 @@ fn test_version_hardware() {
     let response = hid
         .send_recv(solo1::device::CMD_GET_VERSION, &[])
         .expect("Version command failed");
-    assert!(response.len() >= 3, "Version response should be at least 3 bytes");
+    assert!(
+        response.len() >= 3,
+        "Version response should be at least 3 bytes"
+    );
     println!(
         "Firmware version: {}.{}.{}",
         response[0], response[1], response[2]
@@ -71,7 +77,9 @@ fn test_firmware_sign_versioned_regions_differ() {
     hex_content.push_str(&format!(
         ":10{:04X}00{}  {:02X}\n",
         offset,
-        data.iter().map(|b| format!("{:02X}", b)).collect::<String>(),
+        data.iter()
+            .map(|b| format!("{:02X}", b))
+            .collect::<String>(),
         checksum
     ));
     hex_content.push_str(":00000001FF\n");
@@ -173,7 +181,9 @@ fn test_rng_hexbytes_count_validation_logic() {
 #[test]
 fn test_probe_hash_type_validation() {
     // Valid types (case-insensitive input, canonical output)
-    let valid_types = ["sha256", "SHA256", "sha512", "SHA512", "rsa2048", "RSA2048", "ed25519", "Ed25519"];
+    let valid_types = [
+        "sha256", "SHA256", "sha512", "SHA512", "rsa2048", "RSA2048", "ed25519", "Ed25519",
+    ];
     let invalid_types = ["md5", "sha1", "blake3", ""];
 
     for hash_type in &valid_types {
@@ -184,7 +194,11 @@ fn test_probe_hash_type_validation() {
             "ed25519" => Some("Ed25519"),
             _ => None,
         };
-        assert!(canonical.is_some(), "Hash type '{}' should be valid", hash_type);
+        assert!(
+            canonical.is_some(),
+            "Hash type '{}' should be valid",
+            hash_type
+        );
     }
 
     for hash_type in &invalid_types {
@@ -192,23 +206,37 @@ fn test_probe_hash_type_validation() {
             "sha256" | "sha512" | "rsa2048" | "ed25519" => Some("valid"),
             _ => None,
         };
-        assert!(canonical.is_none(), "Hash type '{}' should be invalid", hash_type);
+        assert!(
+            canonical.is_none(),
+            "Hash type '{}' should be invalid",
+            hash_type
+        );
     }
 }
 
 /// Test mergehex default attestation constants.
 #[test]
 fn test_mergehex_default_attestation_constants() {
-    use solo1::firmware::{HACKER_ATTESTATION_KEY_HEX, HACKER_ATTESTATION_CERT};
+    use solo1::firmware::{HACKER_ATTESTATION_CERT, HACKER_ATTESTATION_KEY_HEX};
 
     // Key should be a valid 32-byte hex string
     let key_bytes = hex::decode(HACKER_ATTESTATION_KEY_HEX).expect("key should be valid hex");
     assert_eq!(key_bytes.len(), 32, "attestation key should be 32 bytes");
 
     // Cert should be a non-empty DER certificate (>= 100 bytes, starts with 0x30)
-    assert!(HACKER_ATTESTATION_CERT.len() >= 100, "attestation cert should be at least 100 bytes");
-    assert_eq!(HACKER_ATTESTATION_CERT.len(), 749, "hacker attestation cert should be 749 bytes");
-    assert_eq!(HACKER_ATTESTATION_CERT[0], 0x30, "DER cert should start with 0x30 (SEQUENCE)");
+    assert!(
+        HACKER_ATTESTATION_CERT.len() >= 100,
+        "attestation cert should be at least 100 bytes"
+    );
+    assert_eq!(
+        HACKER_ATTESTATION_CERT.len(),
+        749,
+        "hacker attestation cert should be 749 bytes"
+    );
+    assert_eq!(
+        HACKER_ATTESTATION_CERT[0], 0x30,
+        "DER cert should start with 0x30 (SEQUENCE)"
+    );
 }
 
 /// Test that mergehex rejects mismatched key/cert arguments.
@@ -220,28 +248,20 @@ fn test_mergehex_key_cert_must_both_be_provided() {
 
     // Create a minimal HEX file
     let mut tmp_hex = NamedTempFile::new().unwrap();
-    tmp_hex.write_all(b":020000040800F2\n:00000001FF\n").unwrap();
+    tmp_hex
+        .write_all(b":020000040800F2\n:00000001FF\n")
+        .unwrap();
     tmp_hex.flush().unwrap();
 
     let mut tmp_out = NamedTempFile::new().unwrap();
     let key_path = tmp_hex.path(); // reuse as fake key path
 
     // key without cert -> error
-    let result = merge_hex_files(
-        &[tmp_hex.path()],
-        tmp_out.path(),
-        Some(key_path),
-        None,
-    );
+    let result = merge_hex_files(&[tmp_hex.path()], tmp_out.path(), Some(key_path), None);
     assert!(result.is_err(), "key without cert should fail");
 
     // cert without key -> error
-    let result = merge_hex_files(
-        &[tmp_hex.path()],
-        tmp_out.path(),
-        None,
-        Some(key_path),
-    );
+    let result = merge_hex_files(&[tmp_hex.path()], tmp_out.path(), None, Some(key_path));
     assert!(result.is_err(), "cert without key should fail");
 }
 
@@ -266,18 +286,20 @@ fn test_mergehex_default_attestation() {
     let tmp_out = NamedTempFile::new().unwrap();
 
     // Should succeed with no attestation args (uses defaults)
-    let result = merge_hex_files(
-        &[tmp_hex.path()],
-        tmp_out.path(),
-        None,
-        None,
+    let result = merge_hex_files(&[tmp_hex.path()], tmp_out.path(), None, None);
+    assert!(
+        result.is_ok(),
+        "mergehex with default attestation should succeed: {:?}",
+        result
     );
-    assert!(result.is_ok(), "mergehex with default attestation should succeed: {:?}", result);
 
     // Output should be a valid HEX file (non-empty, starts with ':')
     let output = std::fs::read_to_string(tmp_out.path()).unwrap();
     assert!(!output.is_empty(), "output HEX file should not be empty");
-    assert!(output.starts_with(':'), "output should be a valid Intel HEX file");
+    assert!(
+        output.starts_with(':'),
+        "output should be a valid Intel HEX file"
+    );
 
     // Verify the attestation data is present in the output.
     // ATTEST_ADDR = flash_addr(113) = 0x08038800
@@ -310,8 +332,14 @@ fn test_firmware_sign_versioned_json_structure() {
 
     // Should have 2 version entries
     assert_eq!(fw_json.versions.len(), 2, "should have 2 version entries");
-    assert!(fw_json.versions.contains_key("<=2.5.3"), "should have <=2.5.3 entry");
-    assert!(fw_json.versions.contains_key(">2.5.3"), "should have >2.5.3 entry");
+    assert!(
+        fw_json.versions.contains_key("<=2.5.3"),
+        "should have <=2.5.3 entry"
+    );
+    assert!(
+        fw_json.versions.contains_key(">2.5.3"),
+        "should have >2.5.3 entry"
+    );
 
     // The default signature should be v2
     let sig_v2_decoded = fw_json.signature_bytes().unwrap();
@@ -320,14 +348,20 @@ fn test_firmware_sign_versioned_json_structure() {
     // Firmware field should be base64 of the HEX FILE TEXT (not binary)
     let fw_bytes = fw_json.firmware_bytes().unwrap();
     let fw_text = String::from_utf8(fw_bytes).unwrap();
-    assert!(fw_text.starts_with(':'), "firmware field should be base64 of hex text");
-    assert!(fw_text.contains("FF"), "firmware field should contain hex data");
+    assert!(
+        fw_text.starts_with(':'),
+        "firmware field should be base64 of hex text"
+    );
+    assert!(
+        fw_text.contains("FF"),
+        "firmware field should contain hex data"
+    );
 }
 
 /// Test device frame reassembly handles truncation.
 #[test]
 fn test_reassemble_frames_truncation() {
-    use solo1::device::{CtapHidFrame, FramePayload, reassemble_frames};
+    use solo1::device::{reassemble_frames, CtapHidFrame, FramePayload};
 
     let cid = [0x01u8, 0x02, 0x03, 0x04];
 
@@ -353,11 +387,21 @@ fn test_reassemble_frames_truncation() {
 fn test_known_fingerprints_validity() {
     use solo1::crypto::KNOWN_FINGERPRINTS;
 
-    assert_eq!(KNOWN_FINGERPRINTS.len(), 6, "should have exactly 6 known fingerprints");
+    assert_eq!(
+        KNOWN_FINGERPRINTS.len(),
+        6,
+        "should have exactly 6 known fingerprints"
+    );
 
     for (fp, name) in KNOWN_FINGERPRINTS {
-        let bytes = hex::decode(fp).expect(&format!("fingerprint for '{}' should be valid hex", name));
-        assert_eq!(bytes.len(), 32, "fingerprint for '{}' should be 32 bytes", name);
+        let bytes =
+            hex::decode(fp).expect(&format!("fingerprint for '{}' should be valid hex", name));
+        assert_eq!(
+            bytes.len(),
+            32,
+            "fingerprint for '{}' should be 32 bytes",
+            name
+        );
     }
 
     // Verify specific expected fingerprints
@@ -376,7 +420,7 @@ fn test_flash_addr_calculation() {
     use solo1::firmware::flash_addr;
 
     assert_eq!(flash_addr(0), 0x08000000);
-    assert_eq!(flash_addr(1), 0x08000800);   // 0x08000000 + 2048
+    assert_eq!(flash_addr(1), 0x08000800); // 0x08000000 + 2048
     assert_eq!(flash_addr(108), 0x08036000); // 0x08000000 + 108 * 2048
     assert_eq!(flash_addr(113), 0x08038800); // ATTEST_ADDR
     assert_eq!(flash_addr(128), 0x08040000); // one past end

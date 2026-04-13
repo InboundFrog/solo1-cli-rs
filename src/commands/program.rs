@@ -45,7 +45,11 @@ pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()>
             fw.signature_bytes()?
         }
     };
-    vlog!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
+    vlog!(
+        "Signature ({} bytes): {}",
+        signature.len(),
+        hex::encode(&signature)
+    );
 
     const CHUNK_SIZE: usize = 256;
 

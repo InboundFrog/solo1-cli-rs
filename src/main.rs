@@ -84,12 +84,23 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> 
             }
         }
 
-        KeyCommands::MakeCredential { host, user, pin: _, prompt } => {
+        KeyCommands::MakeCredential {
+            host,
+            user,
+            pin: _,
+            prompt,
+        } => {
             let hid = SoloHid::open(serial)?;
             key::cmd_make_credential(&hid, &host, &user, &prompt)?;
         }
 
-        KeyCommands::ChallengeResponse { credential_id, challenge, host, user: _, pin: _ } => {
+        KeyCommands::ChallengeResponse {
+            credential_id,
+            challenge,
+            host,
+            user: _,
+            pin: _,
+        } => {
             let hid = SoloHid::open(serial)?;
             key::cmd_challenge_response(&hid, &credential_id, &challenge, &host)?;
         }
@@ -146,12 +157,18 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> 
             key::cmd_disable_updates(&hid)?;
         }
 
-        KeyCommands::Probe { hash_type, filename } => {
+        KeyCommands::Probe {
+            hash_type,
+            filename,
+        } => {
             let hid = SoloHid::open(serial)?;
             key::cmd_probe(&hid, &hash_type, &filename)?;
         }
 
-        KeyCommands::SignFile { credential_id, filename } => {
+        KeyCommands::SignFile {
+            credential_id,
+            filename,
+        } => {
             let hid = SoloHid::open(serial)?;
             key::cmd_sign_file(&hid, &credential_id, &filename)?;
         }

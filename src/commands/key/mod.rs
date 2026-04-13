@@ -7,11 +7,11 @@ mod rng;
 mod update;
 mod verify;
 
-pub use fido2::{cmd_make_credential, cmd_challenge_response};
-pub use ops::{cmd_key_version, cmd_wink, cmd_ping, cmd_keyboard, cmd_reset, cmd_disable_updates};
+pub use fido2::{cmd_challenge_response, cmd_make_credential};
+pub use ops::{cmd_disable_updates, cmd_key_version, cmd_keyboard, cmd_ping, cmd_reset, cmd_wink};
 pub use pin::{cmd_change_pin, cmd_set_pin};
 pub use probe::{cmd_probe, cmd_sign_file};
-pub use rng::{cmd_rng_hexbytes, cmd_rng_raw, cmd_rng_feedkernel};
+pub use rng::{cmd_rng_feedkernel, cmd_rng_hexbytes, cmd_rng_raw};
 pub use update::cmd_update;
 pub use verify::cmd_verify;
 
@@ -90,7 +90,11 @@ mod tests {
                 // These DO trim to "yes" - they should be accepted!
                 assert_eq!(trimmed, "yes");
             } else {
-                assert_ne!(trimmed, "yes", "'{}' trimmed ('{}') should not equal 'yes'", s, trimmed);
+                assert_ne!(
+                    trimmed, "yes",
+                    "'{}' trimmed ('{}') should not equal 'yes'",
+                    s, trimmed
+                );
             }
         }
     }

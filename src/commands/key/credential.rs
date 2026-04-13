@@ -17,7 +17,11 @@ pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
         .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
     let pairs = match info_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("getInfo response is not a CBOR map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getInfo response is not a CBOR map".into(),
+            ))
+        }
     };
     // Key 0x04 in getInfo response is the options map (text → bool)
     let client_pin_set = pairs
@@ -29,7 +33,11 @@ pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
                     if let Value::Map(opts) = v {
                         return Some(opts.iter().find_map(|(ok, ov)| {
                             if let (Value::Text(name), Value::Bool(b)) = (ok, ov) {
-                                if name == "clientPin" { Some(*b) } else { None }
+                                if name == "clientPin" {
+                                    Some(*b)
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
@@ -98,7 +106,13 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
     if let Some(Value::Array(versions)) = get_key(0x01) {
         let strs: Vec<&str> = versions
             .iter()
-            .filter_map(|v| if let Value::Text(s) = v { Some(s.as_str()) } else { None })
+            .filter_map(|v| {
+                if let Value::Text(s) = v {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
         println!("Versions:                       {}", strs.join(", "));
     }
@@ -107,7 +121,13 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
     if let Some(Value::Array(exts)) = get_key(0x02) {
         let strs: Vec<&str> = exts
             .iter()
-            .filter_map(|v| if let Value::Text(s) = v { Some(s.as_str()) } else { None })
+            .filter_map(|v| {
+                if let Value::Text(s) = v {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
         println!("Extensions:                     {}", strs.join(", "));
     }
@@ -197,7 +217,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use base64::Engine as _;
     use ciborium::value::Value;
-    use hmac::{Hmac, Mac as _, KeyInit as _};
+    use hmac::{Hmac, KeyInit as _, Mac as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -212,10 +232,11 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     // ── Step 0: get PIN token ────────────────────────────────────────────
 
-    let pin = rpassword::prompt_password("PIN: ")
-        .map_err(|e| SoloError::IoError(e))?;
+    let pin = rpassword::prompt_password("PIN: ").map_err(|e| SoloError::IoError(e))?;
     if pin.len() < 4 {
-        return Err(SoloError::DeviceError("PIN must be at least 4 characters".into()));
+        return Err(SoloError::DeviceError(
+            "PIN must be at least 4 characters".into(),
+        ));
     }
 
     // 0a. getKeyAgreement (clientPIN 0x06, subcommand 0x02)
@@ -229,11 +250,14 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     let ka_resp = hid.send_recv(CTAPHID_CBOR, &ka_req)?;
     if ka_resp.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from getKeyAgreement".into()));
+        return Err(SoloError::DeviceError(
+            "Empty response from getKeyAgreement".into(),
+        ));
     }
     if ka_resp[0] != 0x00 {
         return Err(SoloError::DeviceError(format!(
-            "getKeyAgreement returned CTAP error 0x{:02X}", ka_resp[0]
+            "getKeyAgreement returned CTAP error 0x{:02X}",
+            ka_resp[0]
         )));
     }
 
@@ -241,7 +265,11 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
     let ka_pairs = match ka_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("getKeyAgreement response is not a map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getKeyAgreement response is not a map".into(),
+            ))
+        }
     };
 
     let key_agreement = ka_pairs
@@ -249,14 +277,24 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         .find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x01 { Some(v) } else { None }
-            } else { None }
+                if ki == 0x01 {
+                    Some(v)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         })
         .ok_or_else(|| SoloError::DeviceError("keyAgreement missing from response".into()))?;
 
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("keyAgreement is not a CBOR map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "keyAgreement is not a CBOR map".into(),
+            ))
+        }
     };
 
     let get_coord = |key: i64| -> Result<Vec<u8>> {
@@ -266,9 +304,17 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
                 if let Value::Integer(i) = k {
                     let ki: i64 = (*i).try_into().ok()?;
                     if ki == key {
-                        if let Value::Bytes(b) = v { Some(b.clone()) } else { None }
-                    } else { None }
-                } else { None }
+                        if let Value::Bytes(b) = v {
+                            Some(b.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             })
             .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
     };
@@ -276,7 +322,9 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     let dev_x = get_coord(-2)?;
     let dev_y = get_coord(-3)?;
     if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::DeviceError("Device COSE key coordinates are not 32 bytes".into()));
+        return Err(SoloError::DeviceError(
+            "Device COSE key coordinates are not 32 bytes".into(),
+        ));
     }
 
     let mut uncompressed = vec![0x04u8];
@@ -298,44 +346,48 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     // 0c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
     let pin_hash_full = Sha256::digest(pin.as_bytes());
-    let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().map_err(|_| {
-        SoloError::DeviceError("Failed to slice pin hash".into())
-    })?;
+    let pin_hash: [u8; 16] = pin_hash_full[..16]
+        .try_into()
+        .map_err(|_| SoloError::DeviceError("Failed to slice pin hash".into()))?;
     let mut pin_hash_enc = [0u8; 16];
     #[allow(deprecated)]
     {
         use hybrid_array::Array as HybridArray;
         type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
-        let src: &[Block16] = unsafe {
-            std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1)
-        };
-        let dst: &mut [Block16] = unsafe {
-            std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1)
-        };
-        let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-            .encrypt_blocks_b2b(src, dst);
+        let src: &[Block16] =
+            unsafe { std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1) };
+        let dst: &mut [Block16] =
+            unsafe { std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1) };
+        let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into()).encrypt_blocks_b2b(src, dst);
     }
 
     // 0d. getPINToken (subcommand 0x05)
-    let eph_x = ephemeral_point.x()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x".into()))?.to_vec();
-    let eph_y = ephemeral_point.y()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y".into()))?.to_vec();
+    let eph_x = ephemeral_point
+        .x()
+        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x".into()))?
+        .to_vec();
+    let eph_y = ephemeral_point
+        .y()
+        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y".into()))?
+        .to_vec();
 
     let eph_cose = Value::Map(vec![
-        (Value::Integer(1i64.into()),    Value::Integer(2i64.into())),
-        (Value::Integer(3i64.into()),    Value::Integer((-7i64).into())),
+        (Value::Integer(1i64.into()), Value::Integer(2i64.into())),
+        (Value::Integer(3i64.into()), Value::Integer((-7i64).into())),
         (Value::Integer((-1i64).into()), Value::Integer(1i64.into())),
         (Value::Integer((-2i64).into()), Value::Bytes(eph_x)),
         (Value::Integer((-3i64).into()), Value::Bytes(eph_y)),
     ]);
 
     let get_pin_token_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())),             // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())),             // subCommand = getPINToken
-        (Value::Integer(0x03u64.into()), eph_cose),                                // keyAgreement
-        (Value::Integer(0x06u64.into()), Value::Bytes(pin_hash_enc.to_vec())),     // pinHashEnc
+        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
+        (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())), // subCommand = getPINToken
+        (Value::Integer(0x03u64.into()), eph_cose),                    // keyAgreement
+        (
+            Value::Integer(0x06u64.into()),
+            Value::Bytes(pin_hash_enc.to_vec()),
+        ), // pinHashEnc
     ]);
 
     let mut gpt_req = vec![0x06u8];
@@ -344,7 +396,9 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
     if gpt_resp.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from getPINToken".into()));
+        return Err(SoloError::DeviceError(
+            "Empty response from getPINToken".into(),
+        ));
     }
     if gpt_resp[0] != 0x00 {
         let code = gpt_resp[0];
@@ -355,7 +409,8 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             _ => "",
         };
         return Err(SoloError::DeviceError(format!(
-            "getPINToken returned CTAP error 0x{:02X}{}", code, hint
+            "getPINToken returned CTAP error 0x{:02X}{}",
+            code, hint
         )));
     }
 
@@ -363,7 +418,11 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
     let gpt_pairs = match gpt_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("getPINToken response is not a map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getPINToken response is not a map".into(),
+            ))
+        }
     };
 
     let pin_token_enc = gpt_pairs
@@ -372,15 +431,26 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             if let Value::Integer(i) = k {
                 let ki: u64 = (*i).try_into().ok()?;
                 if ki == 0x02 {
-                    if let Value::Bytes(b) = v { Some(b.clone()) } else { None }
-                } else { None }
-            } else { None }
+                    if let Value::Bytes(b) = v {
+                        Some(b.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         })
-        .ok_or_else(|| SoloError::DeviceError("pinTokenEnc (0x02) missing from getPINToken response".into()))?;
+        .ok_or_else(|| {
+            SoloError::DeviceError("pinTokenEnc (0x02) missing from getPINToken response".into())
+        })?;
 
     if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
         return Err(SoloError::DeviceError(format!(
-            "pinTokenEnc has unexpected length: {}", pin_token_enc.len()
+            "pinTokenEnc has unexpected length: {}",
+            pin_token_enc.len()
         )));
     }
 
@@ -399,8 +469,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         let dst: &mut [Block16] = unsafe {
             std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut Block16, n_token_blocks)
         };
-        let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
-            .decrypt_blocks_b2b(src, dst);
+        let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into()).decrypt_blocks_b2b(src, dst);
     }
     // Use the full decrypted token (Solo 1: 16 bytes; larger tokens also supported)
     let pin_token = &pin_token[..pin_token_enc.len()];
@@ -415,28 +484,33 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     };
 
     // Helper: send a credMgmt (0x0A) subcommand with optional params and pinAuth
-    let send_cred_mgmt = |subcommand: u8, params: Option<Value>, pin_uv: Vec<u8>| -> Result<Vec<u8>> {
-        let mut map_entries = vec![
-            (Value::Integer(0x01u64.into()), Value::Integer((subcommand as u64).into())),  // subCommand
-        ];
-        if let Some(p) = params {
-            map_entries.push((Value::Integer(0x02u64.into()), p));                // subCommandParams
-        }
-        map_entries.push((Value::Integer(0x03u64.into()), Value::Integer(1u64.into()))); // pinUvAuthProtocol = 1
-        map_entries.push((Value::Integer(0x04u64.into()), Value::Bytes(pin_uv)));         // pinUvAuthParam
+    let send_cred_mgmt =
+        |subcommand: u8, params: Option<Value>, pin_uv: Vec<u8>| -> Result<Vec<u8>> {
+            let mut map_entries = vec![
+                (
+                    Value::Integer(0x01u64.into()),
+                    Value::Integer((subcommand as u64).into()),
+                ), // subCommand
+            ];
+            if let Some(p) = params {
+                map_entries.push((Value::Integer(0x02u64.into()), p)); // subCommandParams
+            }
+            map_entries.push((Value::Integer(0x03u64.into()), Value::Integer(1u64.into()))); // pinUvAuthProtocol = 1
+            map_entries.push((Value::Integer(0x04u64.into()), Value::Bytes(pin_uv))); // pinUvAuthParam
 
-        let cm_cbor = Value::Map(map_entries);
-        let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
-        ciborium::ser::into_writer(&cm_cbor, &mut req)
-            .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-        hid.send_recv(CTAPHID_CBOR, &req)
-    };
+            let cm_cbor = Value::Map(map_entries);
+            let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
+            ciborium::ser::into_writer(&cm_cbor, &mut req)
+                .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+            hid.send_recv(CTAPHID_CBOR, &req)
+        };
 
     // Helper: send a credMgmt subcommand with NO pinAuth (for *Next commands)
     let send_cred_mgmt_next = |subcommand: u8| -> Result<Vec<u8>> {
-        let cm_cbor = Value::Map(vec![
-            (Value::Integer(0x01u64.into()), Value::Integer((subcommand as u64).into())),
-        ]);
+        let cm_cbor = Value::Map(vec![(
+            Value::Integer(0x01u64.into()),
+            Value::Integer((subcommand as u64).into()),
+        )]);
         let mut req = vec![0x0Au8];
         ciborium::ser::into_writer(&cm_cbor, &mut req)
             .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
@@ -446,7 +520,10 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     // Helper: parse a CBOR map response, check status byte
     let parse_cm_response = |resp: Vec<u8>, ctx: &str| -> Result<Vec<(Value, Value)>> {
         if resp.is_empty() {
-            return Err(SoloError::DeviceError(format!("Empty response from {}", ctx)));
+            return Err(SoloError::DeviceError(format!(
+                "Empty response from {}",
+                ctx
+            )));
         }
         let status = resp[0];
         if status == 0x2E {
@@ -456,7 +533,8 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         }
         if status != 0x00 {
             return Err(SoloError::DeviceError(format!(
-                "{} returned CTAP error 0x{:02X}", ctx, status
+                "{} returned CTAP error 0x{:02X}",
+                ctx, status
             )));
         }
         if resp.len() == 1 {
@@ -466,7 +544,10 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             .map_err(|e| SoloError::DeviceError(format!("CBOR parse error in {}: {}", ctx, e)))?;
         match val {
             Value::Map(p) => Ok(p),
-            _ => Err(SoloError::DeviceError(format!("{} response is not a CBOR map", ctx))),
+            _ => Err(SoloError::DeviceError(format!(
+                "{} response is not a CBOR map",
+                ctx
+            ))),
         }
     };
 
@@ -475,8 +556,14 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         pairs.iter().find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: u64 = (*i).try_into().ok()?;
-                if ki == key { Some(v) } else { None }
-            } else { None }
+                if ki == key {
+                    Some(v)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         })
     }
 
@@ -493,7 +580,13 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     // Extract totalRPs from response (key 0x05); may be absent if only 1 RP
     let total_rps: usize = find_int_key(&rp_begin_pairs, 0x05)
-        .and_then(|v| if let Value::Integer(i) = v { (*i).try_into().ok() } else { None })
+        .and_then(|v| {
+            if let Value::Integer(i) = v {
+                (*i).try_into().ok()
+            } else {
+                None
+            }
+        })
         .unwrap_or(1usize);
 
     // Collect all RP responses
@@ -505,7 +598,10 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     }
 
     // ── Step 2: For each RP, enumerate credentials ───────────────────────
-    println!("{:<32} {:<24} {}", "Relying Party", "Username", "Credential ID (base64)");
+    println!(
+        "{:<32} {:<24} {}",
+        "Relying Party", "Username", "Credential ID (base64)"
+    );
     println!("{}", "-".repeat(90));
 
     for rp_pairs in &rp_responses {
@@ -516,33 +612,52 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
                     m.iter().find_map(|(k, val)| {
                         if let Value::Text(s) = k {
                             if s == "id" {
-                                if let Value::Text(id) = val { Some(id.clone()) } else { None }
-                            } else { None }
-                        } else { None }
+                                if let Value::Text(id) = val {
+                                    Some(id.clone())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
                     })
-                } else { None }
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| "<unknown>".into());
 
         // Extract rpIdHash from key 0x04 (32 bytes)
         let rp_id_hash: Vec<u8> = find_int_key(rp_pairs, 0x04)
-            .and_then(|v| if let Value::Bytes(b) = v { Some(b.clone()) } else { None })
-            .ok_or_else(|| SoloError::DeviceError(
-                format!("rpIdHash (0x04) missing for RP '{}'", rp_id)
-            ))?;
+            .and_then(|v| {
+                if let Value::Bytes(b) = v {
+                    Some(b.clone())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                SoloError::DeviceError(format!("rpIdHash (0x04) missing for RP '{}'", rp_id))
+            })?;
 
         if rp_id_hash.len() != 32 {
             return Err(SoloError::DeviceError(format!(
-                "rpIdHash for '{}' is {} bytes, expected 32", rp_id, rp_id_hash.len()
+                "rpIdHash for '{}' is {} bytes, expected 32",
+                rp_id,
+                rp_id_hash.len()
             )));
         }
 
         // enumerateCredentialsBegin (subcommand 0x04)
         // subCommandParams = CBOR({0x01: rpIdHash})
         // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || subCommandParamsCbor)[0..16]
-        let rk_begin_params = Value::Map(vec![
-            (Value::Integer(0x01u64.into()), Value::Bytes(rp_id_hash.clone())),
-        ]);
+        let rk_begin_params = Value::Map(vec![(
+            Value::Integer(0x01u64.into()),
+            Value::Bytes(rp_id_hash.clone()),
+        )]);
         let mut rk_params_cbor: Vec<u8> = Vec::new();
         ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)
             .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
@@ -559,7 +674,13 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         }
 
         let total_creds: usize = find_int_key(&rk_begin_pairs, 0x09)
-            .and_then(|v| if let Value::Integer(i) = v { (*i).try_into().ok() } else { None })
+            .and_then(|v| {
+                if let Value::Integer(i) = v {
+                    (*i).try_into().ok()
+                } else {
+                    None
+                }
+            })
             .unwrap_or(1usize);
 
         let mut cred_responses = vec![rk_begin_pairs];
@@ -575,27 +696,42 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
                 .and_then(|v| {
                     if let Value::Map(m) = v {
                         // prefer "name", fall back to "displayName", then "id" as hex
-                        m.iter().find_map(|(k, val)| {
-                            if let Value::Text(s) = k {
-                                if s == "name" || s == "displayName" {
-                                    if let Value::Text(n) = val { Some(n.clone()) } else { None }
-                                } else { None }
-                            } else { None }
-                        })
-                        .or_else(|| {
-                            m.iter().find_map(|(k, val)| {
+                        m.iter()
+                            .find_map(|(k, val)| {
                                 if let Value::Text(s) = k {
-                                    if s == "id" {
-                                        match val {
-                                            Value::Text(t) => Some(t.clone()),
-                                            Value::Bytes(b) => Some(hex::encode(b)),
-                                            _ => None,
+                                    if s == "name" || s == "displayName" {
+                                        if let Value::Text(n) = val {
+                                            Some(n.clone())
+                                        } else {
+                                            None
                                         }
-                                    } else { None }
-                                } else { None }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
                             })
-                        })
-                    } else { None }
+                            .or_else(|| {
+                                m.iter().find_map(|(k, val)| {
+                                    if let Value::Text(s) = k {
+                                        if s == "id" {
+                                            match val {
+                                                Value::Text(t) => Some(t.clone()),
+                                                Value::Bytes(b) => Some(hex::encode(b)),
+                                                _ => None,
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                            })
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or_else(|| "<unknown>".into());
 
@@ -608,11 +744,19 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
                                 if s == "id" {
                                     if let Value::Bytes(b) = val {
                                         Some(base64::engine::general_purpose::STANDARD.encode(b))
-                                    } else { None }
-                                } else { None }
-                            } else { None }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
                         })
-                    } else { None }
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or_else(|| "<unknown>".into());
 
@@ -628,22 +772,24 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
-    use hmac::{Hmac, Mac as _, KeyInit as _};
+    use hmac::{Hmac, KeyInit as _, Mac as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
     use sha2::{Digest as _, Sha256};
 
-    let cred_id_bytes = hex::decode(credential_id).map_err(|e| {
-        SoloError::DeviceError(format!("Invalid credential ID hex: {}", e))
-    })?;
+    let cred_id_bytes = hex::decode(credential_id)
+        .map_err(|e| SoloError::DeviceError(format!("Invalid credential ID hex: {}", e)))?;
 
     // Confirmation prompt
     print!("Delete credential {}? (yes/N): ", credential_id);
     use std::io::Write as _;
-    std::io::stdout().flush().map_err(|e| SoloError::IoError(e))?;
+    std::io::stdout()
+        .flush()
+        .map_err(|e| SoloError::IoError(e))?;
     let mut confirmation = String::new();
-    std::io::stdin().read_line(&mut confirmation)
+    std::io::stdin()
+        .read_line(&mut confirmation)
         .map_err(|e| SoloError::IoError(e))?;
     if confirmation.trim() != "yes" {
         println!("Aborted.");
@@ -659,10 +805,11 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     // ── Step 0: get PIN token ────────────────────────────────────────────
 
-    let pin = rpassword::prompt_password("PIN: ")
-        .map_err(|e| SoloError::IoError(e))?;
+    let pin = rpassword::prompt_password("PIN: ").map_err(|e| SoloError::IoError(e))?;
     if pin.len() < 4 {
-        return Err(SoloError::DeviceError("PIN must be at least 4 characters".into()));
+        return Err(SoloError::DeviceError(
+            "PIN must be at least 4 characters".into(),
+        ));
     }
 
     // 0a. getKeyAgreement (clientPIN 0x06, subcommand 0x02)
@@ -676,11 +823,14 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     let ka_resp = hid.send_recv(CTAPHID_CBOR, &ka_req)?;
     if ka_resp.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from getKeyAgreement".into()));
+        return Err(SoloError::DeviceError(
+            "Empty response from getKeyAgreement".into(),
+        ));
     }
     if ka_resp[0] != 0x00 {
         return Err(SoloError::DeviceError(format!(
-            "getKeyAgreement returned CTAP error 0x{:02X}", ka_resp[0]
+            "getKeyAgreement returned CTAP error 0x{:02X}",
+            ka_resp[0]
         )));
     }
 
@@ -688,7 +838,11 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
         .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
     let ka_pairs = match ka_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("getKeyAgreement response is not a map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getKeyAgreement response is not a map".into(),
+            ))
+        }
     };
 
     let key_agreement = ka_pairs
@@ -696,14 +850,24 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
         .find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x01 { Some(v) } else { None }
-            } else { None }
+                if ki == 0x01 {
+                    Some(v)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         })
         .ok_or_else(|| SoloError::DeviceError("keyAgreement missing from response".into()))?;
 
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("keyAgreement is not a CBOR map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "keyAgreement is not a CBOR map".into(),
+            ))
+        }
     };
 
     let get_coord = |key: i64| -> Result<Vec<u8>> {
@@ -713,9 +877,17 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
                 if let Value::Integer(i) = k {
                     let ki: i64 = (*i).try_into().ok()?;
                     if ki == key {
-                        if let Value::Bytes(b) = v { Some(b.clone()) } else { None }
-                    } else { None }
-                } else { None }
+                        if let Value::Bytes(b) = v {
+                            Some(b.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             })
             .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
     };
@@ -723,7 +895,9 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     let dev_x = get_coord(-2)?;
     let dev_y = get_coord(-3)?;
     if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::DeviceError("Device COSE key coordinates are not 32 bytes".into()));
+        return Err(SoloError::DeviceError(
+            "Device COSE key coordinates are not 32 bytes".into(),
+        ));
     }
 
     let mut uncompressed = vec![0x04u8];
@@ -745,44 +919,48 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     // 0c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
     let pin_hash_full = Sha256::digest(pin.as_bytes());
-    let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().map_err(|_| {
-        SoloError::DeviceError("Failed to slice pin hash".into())
-    })?;
+    let pin_hash: [u8; 16] = pin_hash_full[..16]
+        .try_into()
+        .map_err(|_| SoloError::DeviceError("Failed to slice pin hash".into()))?;
     let mut pin_hash_enc = [0u8; 16];
     #[allow(deprecated)]
     {
         use hybrid_array::Array as HybridArray;
         type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
-        let src: &[Block16] = unsafe {
-            std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1)
-        };
-        let dst: &mut [Block16] = unsafe {
-            std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1)
-        };
-        let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-            .encrypt_blocks_b2b(src, dst);
+        let src: &[Block16] =
+            unsafe { std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1) };
+        let dst: &mut [Block16] =
+            unsafe { std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1) };
+        let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into()).encrypt_blocks_b2b(src, dst);
     }
 
     // 0d. getPINToken (subcommand 0x05)
-    let eph_x = ephemeral_point.x()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x".into()))?.to_vec();
-    let eph_y = ephemeral_point.y()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y".into()))?.to_vec();
+    let eph_x = ephemeral_point
+        .x()
+        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x".into()))?
+        .to_vec();
+    let eph_y = ephemeral_point
+        .y()
+        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y".into()))?
+        .to_vec();
 
     let eph_cose = Value::Map(vec![
-        (Value::Integer(1i64.into()),    Value::Integer(2i64.into())),
-        (Value::Integer(3i64.into()),    Value::Integer((-7i64).into())),
+        (Value::Integer(1i64.into()), Value::Integer(2i64.into())),
+        (Value::Integer(3i64.into()), Value::Integer((-7i64).into())),
         (Value::Integer((-1i64).into()), Value::Integer(1i64.into())),
         (Value::Integer((-2i64).into()), Value::Bytes(eph_x)),
         (Value::Integer((-3i64).into()), Value::Bytes(eph_y)),
     ]);
 
     let get_pin_token_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())),             // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())),             // subCommand = getPINToken
-        (Value::Integer(0x03u64.into()), eph_cose),                                // keyAgreement
-        (Value::Integer(0x06u64.into()), Value::Bytes(pin_hash_enc.to_vec())),     // pinHashEnc
+        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
+        (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())), // subCommand = getPINToken
+        (Value::Integer(0x03u64.into()), eph_cose),                    // keyAgreement
+        (
+            Value::Integer(0x06u64.into()),
+            Value::Bytes(pin_hash_enc.to_vec()),
+        ), // pinHashEnc
     ]);
 
     let mut gpt_req = vec![0x06u8];
@@ -791,7 +969,9 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
     if gpt_resp.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from getPINToken".into()));
+        return Err(SoloError::DeviceError(
+            "Empty response from getPINToken".into(),
+        ));
     }
     if gpt_resp[0] != 0x00 {
         let code = gpt_resp[0];
@@ -802,7 +982,8 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
             _ => "",
         };
         return Err(SoloError::DeviceError(format!(
-            "getPINToken returned CTAP error 0x{:02X}{}", code, hint
+            "getPINToken returned CTAP error 0x{:02X}{}",
+            code, hint
         )));
     }
 
@@ -810,7 +991,11 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
         .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
     let gpt_pairs = match gpt_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("getPINToken response is not a map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getPINToken response is not a map".into(),
+            ))
+        }
     };
 
     let pin_token_enc = gpt_pairs
@@ -819,15 +1004,26 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
             if let Value::Integer(i) = k {
                 let ki: u64 = (*i).try_into().ok()?;
                 if ki == 0x02 {
-                    if let Value::Bytes(b) = v { Some(b.clone()) } else { None }
-                } else { None }
-            } else { None }
+                    if let Value::Bytes(b) = v {
+                        Some(b.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         })
-        .ok_or_else(|| SoloError::DeviceError("pinTokenEnc (0x02) missing from getPINToken response".into()))?;
+        .ok_or_else(|| {
+            SoloError::DeviceError("pinTokenEnc (0x02) missing from getPINToken response".into())
+        })?;
 
     if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
         return Err(SoloError::DeviceError(format!(
-            "pinTokenEnc has unexpected length: {}", pin_token_enc.len()
+            "pinTokenEnc has unexpected length: {}",
+            pin_token_enc.len()
         )));
     }
 
@@ -846,17 +1042,17 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
         let dst: &mut [Block16] = unsafe {
             std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut Block16, n_token_blocks)
         };
-        let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
-            .decrypt_blocks_b2b(src, dst);
+        let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into()).decrypt_blocks_b2b(src, dst);
     }
     // Use the full decrypted token (Solo 1: 16 bytes; larger tokens also supported)
     let pin_token = &pin_token[..pin_token_enc.len()];
 
     // ── Step 1: deleteCredential (subcommand 0x06) ───────────────────────
     // subCommandParams = CBOR({0x01: credentialId bytes})
-    let del_params = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Bytes(cred_id_bytes)),
-    ]);
+    let del_params = Value::Map(vec![(
+        Value::Integer(0x01u64.into()),
+        Value::Bytes(cred_id_bytes),
+    )]);
     let mut del_params_cbor: Vec<u8> = Vec::new();
     ciborium::ser::into_writer(&del_params, &mut del_params_cbor)
         .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
@@ -875,10 +1071,13 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     // Send: authenticatorCredentialManagement CBOR =
     //   {0x01: 6, 0x02: {0x01: cred_id_bytes}, 0x03: 1, 0x04: pinUvAuthParam}
     let del_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(6u64.into())),          // subCommand = deleteCredential
-        (Value::Integer(0x02u64.into()), del_params),                            // subCommandParams
-        (Value::Integer(0x03u64.into()), Value::Integer(1u64.into())),          // pinUvAuthProtocol = 1
-        (Value::Integer(0x04u64.into()), Value::Bytes(del_pin_uv_auth)),        // pinUvAuthParam
+        (Value::Integer(0x01u64.into()), Value::Integer(6u64.into())), // subCommand = deleteCredential
+        (Value::Integer(0x02u64.into()), del_params),                  // subCommandParams
+        (Value::Integer(0x03u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
+        (
+            Value::Integer(0x04u64.into()),
+            Value::Bytes(del_pin_uv_auth),
+        ), // pinUvAuthParam
     ]);
     let mut del_req = vec![0x0Au8]; // authenticatorCredentialManagement
     ciborium::ser::into_writer(&del_cbor, &mut del_req)
@@ -886,7 +1085,9 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     let del_resp = hid.send_recv(CTAPHID_CBOR, &del_req)?;
     if del_resp.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from deleteCredential".into()));
+        return Err(SoloError::DeviceError(
+            "Empty response from deleteCredential".into(),
+        ));
     }
     let status = del_resp[0];
     if status == 0x2E {
@@ -896,7 +1097,8 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     }
     if status != 0x00 {
         return Err(SoloError::DeviceError(format!(
-            "deleteCredential returned CTAP error 0x{:02X}", status
+            "deleteCredential returned CTAP error 0x{:02X}",
+            status
         )));
     }
 

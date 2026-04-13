@@ -59,15 +59,8 @@ pub struct CtapHidFrame {
 
 #[derive(Debug, Clone)]
 pub enum FramePayload {
-    Init {
-        cmd: u8,
-        bcnt: u16,
-        data: Vec<u8>,
-    },
-    Cont {
-        seq: u8,
-        data: Vec<u8>,
-    },
+    Init { cmd: u8, bcnt: u16, data: Vec<u8> },
+    Cont { seq: u8, data: Vec<u8> },
 }
 
 impl CtapHidFrame {
@@ -333,9 +326,10 @@ impl SoloHid {
                 return Err(SoloError::Timeout);
             }
             let mut buf = [0u8; 65];
-            let n = self.device.read_timeout(&mut buf, 500).map_err(|e| {
-                SoloError::DeviceError(format!("HID read error: {}", e))
-            })?;
+            let n = self
+                .device
+                .read_timeout(&mut buf, 500)
+                .map_err(|e| SoloError::DeviceError(format!("HID read error: {}", e)))?;
 
             if n == 0 {
                 continue;
@@ -357,8 +351,8 @@ impl SoloHid {
             let frame = CtapHidFrame::parse(frame_bytes)?;
 
             // Skip frames not for our channel (unless this is INIT response on broadcast)
-            let for_us = frame.channel_id == self.channel_id
-                || frame.channel_id == CTAPHID_BROADCAST_CID;
+            let for_us =
+                frame.channel_id == self.channel_id || frame.channel_id == CTAPHID_BROADCAST_CID;
             if !for_us {
                 vlog!(
                     "HID recv: ignoring frame for channel {}",
@@ -542,7 +536,10 @@ mod tests {
         let data = vec![0x01, 0x02, 0x03];
         let frame = CtapHidFrame {
             channel_id: cid,
-            payload: FramePayload::Cont { seq: 2, data: data.clone() },
+            payload: FramePayload::Cont {
+                seq: 2,
+                data: data.clone(),
+            },
         };
         let encoded = frame.encode();
         assert_eq!(encoded[5], 0x02); // seq, no high bit

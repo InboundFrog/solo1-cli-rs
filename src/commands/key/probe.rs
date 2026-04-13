@@ -58,10 +58,7 @@ pub fn cmd_probe(hid: &SoloHid, hash_type: &str, filename: &Path) -> Result<()> 
         // First 64 bytes = signature (128 hex chars), rest = content
         if response.len() > 64 {
             println!("content: {:?}", &response[64..]);
-            println!(
-                "content from hex: {:?}",
-                &response[64..]
-            );
+            println!("content from hex: {:?}", &response[64..]);
             println!("signature: {}", &result_hex[..128.min(result_hex.len())]);
         }
     }
@@ -97,19 +94,13 @@ pub fn cmd_sign_file(hid: &SoloHid, credential_id: &str, filename: &Path) -> Res
     //   0x03: allowList  [{type: "public-key", id: cred_id_bytes}]
     let rp_id = "solokeys.dev";
     let get_assertion_cbor = Value::Map(vec![
-        (
-            Value::Integer(0x01u64.into()),
-            Value::Text(rp_id.into()),
-        ),
-        (
-            Value::Integer(0x02u64.into()),
-            Value::Bytes(file_hash),
-        ),
+        (Value::Integer(0x01u64.into()), Value::Text(rp_id.into())),
+        (Value::Integer(0x02u64.into()), Value::Bytes(file_hash)),
         (
             Value::Integer(0x03u64.into()),
             Value::Array(vec![Value::Map(vec![
                 (Value::Text("type".into()), Value::Text("public-key".into())),
-                (Value::Text("id".into()),   Value::Bytes(cred_id_bytes)),
+                (Value::Text("id".into()), Value::Bytes(cred_id_bytes)),
             ])]),
         ),
     ]);
@@ -121,7 +112,9 @@ pub fn cmd_sign_file(hid: &SoloHid, credential_id: &str, filename: &Path) -> Res
     let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
 
     if ga_response.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from getAssertion".into()));
+        return Err(SoloError::DeviceError(
+            "Empty response from getAssertion".into(),
+        ));
     }
     let ga_status = ga_response[0];
     if ga_status != 0x00 {
@@ -137,14 +130,22 @@ pub fn cmd_sign_file(hid: &SoloHid, credential_id: &str, filename: &Path) -> Res
 
     let ga_pairs = match ga_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("getAssertion response is not a map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getAssertion response is not a map".into(),
+            ))
+        }
     };
 
     let get_ga_key = |key: u64| -> Option<&Value> {
         ga_pairs.iter().find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: u64 = (*i).try_into().ok()?;
-                if ki == key { Some(v) } else { None }
+                if ki == key {
+                    Some(v)
+                } else {
+                    None
+                }
             } else {
                 None
             }

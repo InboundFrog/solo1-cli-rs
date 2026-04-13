@@ -9,10 +9,10 @@ use crate::error::{Result, SoloError};
 /// DER-encoded attestation certificate from attStmt.x5c[0], SHA-256 fingerprints
 /// it, and compares against known fingerprints in crypto.rs.
 pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
+    use crate::crypto::{check_attestation_fingerprint, sha256_hex};
     use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
-    use crate::crypto::{check_attestation_fingerprint, sha256_hex};
-    use hmac::{Hmac, Mac as _, KeyInit as _};
+    use hmac::{Hmac, KeyInit as _, Mac as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -22,10 +22,11 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     let pin_uv_auth: Option<Vec<u8>> = if super::credential::get_info_client_pin_set(hid)? {
-        let pin = rpassword::prompt_password("PIN: ")
-            .map_err(|e| SoloError::IoError(e))?;
+        let pin = rpassword::prompt_password("PIN: ").map_err(|e| SoloError::IoError(e))?;
         if pin.len() < 4 {
-            return Err(SoloError::DeviceError("PIN must be at least 4 characters".into()));
+            return Err(SoloError::DeviceError(
+                "PIN must be at least 4 characters".into(),
+            ));
         }
 
         // getKeyAgreement (clientPIN 0x06, subcommand 0x02)
@@ -39,27 +40,42 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
         let ka_resp = hid.send_recv(CTAPHID_CBOR, &ka_req)?;
         if ka_resp.is_empty() || ka_resp[0] != 0x00 {
             return Err(SoloError::DeviceError(format!(
-                "getKeyAgreement failed: 0x{:02X}", ka_resp.first().copied().unwrap_or(0xFF)
+                "getKeyAgreement failed: 0x{:02X}",
+                ka_resp.first().copied().unwrap_or(0xFF)
             )));
         }
         let ka_val: Value = ciborium::de::from_reader(&ka_resp[1..])
             .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
         let ka_pairs = match ka_val {
             Value::Map(p) => p,
-            _ => return Err(SoloError::DeviceError("getKeyAgreement response is not a map".into())),
+            _ => {
+                return Err(SoloError::DeviceError(
+                    "getKeyAgreement response is not a map".into(),
+                ))
+            }
         };
         let key_agreement = ka_pairs
             .iter()
             .find_map(|(k, v)| {
                 if let Value::Integer(i) = k {
                     let ki: u64 = (*i).try_into().ok()?;
-                    if ki == 0x01 { Some(v) } else { None }
-                } else { None }
+                    if ki == 0x01 {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             })
             .ok_or_else(|| SoloError::DeviceError("keyAgreement missing from response".into()))?;
         let cose_pairs = match key_agreement {
             Value::Map(p) => p,
-            _ => return Err(SoloError::DeviceError("keyAgreement is not a CBOR map".into())),
+            _ => {
+                return Err(SoloError::DeviceError(
+                    "keyAgreement is not a CBOR map".into(),
+                ))
+            }
         };
         let get_coord = |key: i64| -> Result<Vec<u8>> {
             cose_pairs
@@ -68,16 +84,28 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
                     if let Value::Integer(i) = k {
                         let ki: i64 = (*i).try_into().ok()?;
                         if ki == key {
-                            if let Value::Bytes(b) = v { Some(b.clone()) } else { None }
-                        } else { None }
-                    } else { None }
+                            if let Value::Bytes(b) = v {
+                                Some(b.clone())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 })
-                .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
+                .ok_or_else(|| {
+                    SoloError::DeviceError(format!("COSE key missing coordinate {}", key))
+                })
         };
         let dev_x = get_coord(-2)?;
         let dev_y = get_coord(-3)?;
         if dev_x.len() != 32 || dev_y.len() != 32 {
-            return Err(SoloError::DeviceError("Device COSE key coordinates are not 32 bytes".into()));
+            return Err(SoloError::DeviceError(
+                "Device COSE key coordinates are not 32 bytes".into(),
+            ));
         }
         let mut uncompressed = vec![0x04u8];
         uncompressed.extend_from_slice(&dev_x);
@@ -96,32 +124,35 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
 
         // pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
         let pin_hash_full = Sha256::digest(pin.as_bytes());
-        let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().map_err(|_| {
-            SoloError::DeviceError("Failed to slice pin hash".into())
-        })?;
+        let pin_hash: [u8; 16] = pin_hash_full[..16]
+            .try_into()
+            .map_err(|_| SoloError::DeviceError("Failed to slice pin hash".into()))?;
         let mut pin_hash_enc = [0u8; 16];
         #[allow(deprecated)]
         {
             use hybrid_array::Array as HybridArray;
             type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
             let iv = [0u8; 16];
-            let src: &[Block16] = unsafe {
-                std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1)
-            };
+            let src: &[Block16] =
+                unsafe { std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1) };
             let dst: &mut [Block16] = unsafe {
                 std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1)
             };
-            let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-                .encrypt_blocks_b2b(src, dst);
+            let _ =
+                Aes256CbcEnc::new(&shared_secret.into(), &iv.into()).encrypt_blocks_b2b(src, dst);
         }
 
-        let eph_x = ephemeral_point.x()
-            .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x".into()))?.to_vec();
-        let eph_y = ephemeral_point.y()
-            .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y".into()))?.to_vec();
+        let eph_x = ephemeral_point
+            .x()
+            .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x".into()))?
+            .to_vec();
+        let eph_y = ephemeral_point
+            .y()
+            .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y".into()))?
+            .to_vec();
         let eph_cose = Value::Map(vec![
-            (Value::Integer(1i64.into()),    Value::Integer(2i64.into())),
-            (Value::Integer(3i64.into()),    Value::Integer((-7i64).into())),
+            (Value::Integer(1i64.into()), Value::Integer(2i64.into())),
+            (Value::Integer(3i64.into()), Value::Integer((-7i64).into())),
             (Value::Integer((-1i64).into()), Value::Integer(1i64.into())),
             (Value::Integer((-2i64).into()), Value::Bytes(eph_x)),
             (Value::Integer((-3i64).into()), Value::Bytes(eph_y)),
@@ -131,7 +162,10 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
             (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())),
             (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())),
             (Value::Integer(0x03u64.into()), eph_cose),
-            (Value::Integer(0x06u64.into()), Value::Bytes(pin_hash_enc.to_vec())),
+            (
+                Value::Integer(0x06u64.into()),
+                Value::Bytes(pin_hash_enc.to_vec()),
+            ),
         ]);
         let mut gpt_req = vec![0x06u8];
         ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)
@@ -146,14 +180,19 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
                 _ => "",
             };
             return Err(SoloError::DeviceError(format!(
-                "getPINToken returned CTAP error 0x{:02X}{}", code, hint
+                "getPINToken returned CTAP error 0x{:02X}{}",
+                code, hint
             )));
         }
         let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])
             .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
         let gpt_pairs = match gpt_val {
             Value::Map(p) => p,
-            _ => return Err(SoloError::DeviceError("getPINToken response is not a map".into())),
+            _ => {
+                return Err(SoloError::DeviceError(
+                    "getPINToken response is not a map".into(),
+                ))
+            }
         };
         let pin_token_enc = gpt_pairs
             .iter()
@@ -161,14 +200,25 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
                 if let Value::Integer(i) = k {
                     let ki: u64 = (*i).try_into().ok()?;
                     if ki == 0x02 {
-                        if let Value::Bytes(b) = v { Some(b.clone()) } else { None }
-                    } else { None }
-                } else { None }
+                        if let Value::Bytes(b) = v {
+                            Some(b.clone())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             })
-            .ok_or_else(|| SoloError::DeviceError("pinTokenEnc missing from getPINToken response".into()))?;
+            .ok_or_else(|| {
+                SoloError::DeviceError("pinTokenEnc missing from getPINToken response".into())
+            })?;
         if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
             return Err(SoloError::DeviceError(format!(
-                "pinTokenEnc has unexpected length: {}", pin_token_enc.len()
+                "pinTokenEnc has unexpected length: {}",
+                pin_token_enc.len()
             )));
         }
         let n_token_blocks = pin_token_enc.len() / 16;
@@ -182,10 +232,13 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
                 std::slice::from_raw_parts(pin_token_enc.as_ptr() as *const Block16, n_token_blocks)
             };
             let dst: &mut [Block16] = unsafe {
-                std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut Block16, n_token_blocks)
+                std::slice::from_raw_parts_mut(
+                    pin_token.as_mut_ptr() as *mut Block16,
+                    n_token_blocks,
+                )
             };
-            let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
-                .decrypt_blocks_b2b(src, dst);
+            let _ =
+                Aes256CbcDec::new(&shared_secret.into(), &iv.into()).decrypt_blocks_b2b(src, dst);
         }
         let pin_token = &pin_token[..pin_token_enc.len()];
 
@@ -217,7 +270,10 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
             Value::Integer(0x02u64.into()),
             Value::Map(vec![
                 (Value::Text("id".into()), Value::Text("solokeys.com".into())),
-                (Value::Text("name".into()), Value::Text("solokeys.com".into())),
+                (
+                    Value::Text("name".into()),
+                    Value::Text("solokeys.com".into()),
+                ),
             ]),
         ),
         (
@@ -225,7 +281,10 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
             Value::Map(vec![
                 (Value::Text("id".into()), Value::Bytes(b"verify".to_vec())),
                 (Value::Text("name".into()), Value::Text("verify".into())),
-                (Value::Text("displayName".into()), Value::Text("verify".into())),
+                (
+                    Value::Text("displayName".into()),
+                    Value::Text("verify".into()),
+                ),
             ]),
         ),
         (
@@ -309,21 +368,11 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
     });
 
     let cert_der = match x5c {
-        Some(Value::Array(certs)) if !certs.is_empty() => {
-            match &certs[0] {
-                Value::Bytes(b) => b.clone(),
-                _ => {
-                    return Err(SoloError::DeviceError(
-                        "x5c[0] is not bytes".into(),
-                    ))
-                }
-            }
-        }
-        _ => {
-            return Err(SoloError::DeviceError(
-                "attStmt missing x5c array".into(),
-            ))
-        }
+        Some(Value::Array(certs)) if !certs.is_empty() => match &certs[0] {
+            Value::Bytes(b) => b.clone(),
+            _ => return Err(SoloError::DeviceError("x5c[0] is not bytes".into())),
+        },
+        _ => return Err(SoloError::DeviceError("attStmt missing x5c array".into())),
     };
 
     let fingerprint = sha256_hex(&cert_der);

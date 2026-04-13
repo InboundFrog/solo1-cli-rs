@@ -27,10 +27,16 @@ pub const SOLO_FINGERPRINT: &str =
     "327585e49e496cffdebc4b280608183134e7cbf4c01670679476291cd9b98104";
 
 pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
-    (SOLO_V3_FINGERPRINT, "Valid Solo (<=3.0.0) firmware from SoloKeys."),
+    (
+        SOLO_V3_FINGERPRINT,
+        "Valid Solo (<=3.0.0) firmware from SoloKeys.",
+    ),
     (SOLO_HACKER_FINGERPRINT, "Solo Hacker firmware."),
     (SOLO_EMULATION_FINGERPRINT, "Local software emulation."),
-    (SOLO_TAP_FINGERPRINT, "Valid Solo Tap with firmware from SoloKeys."),
+    (
+        SOLO_TAP_FINGERPRINT,
+        "Valid Solo Tap with firmware from SoloKeys.",
+    ),
     (SOMU_FINGERPRINT, "Valid Somu with firmware from SoloKeys."),
     (SOLO_FINGERPRINT, "Valid Solo with firmware from SoloKeys."),
 ];
@@ -60,8 +66,8 @@ pub fn load_signing_key(path: &Path) -> Result<SigningKey> {
 /// Sign the firmware bytes with the given key.
 /// Returns the DER-encoded signature bytes.
 pub fn sign_firmware(key: &SigningKey, firmware_bytes: &[u8]) -> Result<Vec<u8>> {
-    use p256::ecdsa::{DerSignature, Signature};
     use p256::ecdsa::signature::Signer;
+    use p256::ecdsa::{DerSignature, Signature};
     let hash = Sha256::digest(firmware_bytes);
     let sig: Signature = key.sign(&hash);
     let der_sig: DerSignature = sig.to_der();

@@ -15,12 +15,7 @@ use crate::error::{Result, SoloError};
 ///
 /// Parses the authData from the response to extract the credential ID,
 /// then prints it as hex for use with `challenge-response` and `sign-file`.
-pub fn cmd_make_credential(
-    hid: &SoloHid,
-    host: &str,
-    user: &str,
-    prompt: &str,
-) -> Result<()> {
+pub fn cmd_make_credential(hid: &SoloHid, host: &str, user: &str, prompt: &str) -> Result<()> {
     use ciborium::value::Value;
     use rand::RngCore;
 
@@ -55,7 +50,10 @@ pub fn cmd_make_credential(
         (
             Value::Integer(0x03u64.into()),
             Value::Map(vec![
-                (Value::Text("id".into()), Value::Bytes(user.as_bytes().to_vec())),
+                (
+                    Value::Text("id".into()),
+                    Value::Bytes(user.as_bytes().to_vec()),
+                ),
                 (Value::Text("name".into()), Value::Text(user.into())),
                 (Value::Text("displayName".into()), Value::Text(user.into())),
             ]),
@@ -69,15 +67,11 @@ pub fn cmd_make_credential(
         ),
         (
             Value::Integer(0x06u64.into()),
-            Value::Map(vec![
-                (Value::Text("hmac-secret".into()), Value::Bool(true)),
-            ]),
+            Value::Map(vec![(Value::Text("hmac-secret".into()), Value::Bool(true))]),
         ),
         (
             Value::Integer(0x07u64.into()),
-            Value::Map(vec![
-                (Value::Text("rk".into()), Value::Bool(true)),
-            ]),
+            Value::Map(vec![(Value::Text("rk".into()), Value::Bool(true))]),
         ),
     ]);
 
@@ -206,7 +200,7 @@ pub fn cmd_challenge_response(
 ) -> Result<()> {
     use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
-    use hmac::{Hmac, Mac as _, KeyInit as _};
+    use hmac::{Hmac, KeyInit as _, Mac as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -246,7 +240,11 @@ pub fn cmd_challenge_response(
 
     let resp_pairs = match resp_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("getKeyAgreement response is not a map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getKeyAgreement response is not a map".into(),
+            ))
+        }
     };
 
     let key_agreement = resp_pairs
@@ -254,7 +252,11 @@ pub fn cmd_challenge_response(
         .find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x01 { Some(v) } else { None }
+                if ki == 0x01 {
+                    Some(v)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -263,7 +265,11 @@ pub fn cmd_challenge_response(
 
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("keyAgreement is not a CBOR map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "keyAgreement is not a CBOR map".into(),
+            ))
+        }
     };
 
     let get_cose_bytes = |key: i64| -> Result<Vec<u8>> {
@@ -273,7 +279,11 @@ pub fn cmd_challenge_response(
                 if let Value::Integer(i) = k {
                     let ki: i64 = (*i).try_into().ok()?;
                     if ki == key {
-                        if let Value::Bytes(b) = v { Some(b.clone()) } else { None }
+                        if let Value::Bytes(b) = v {
+                            Some(b.clone())
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -320,12 +330,10 @@ pub fn cmd_challenge_response(
         use hybrid_array::Array as HybridArray;
         type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
-        let src_blocks: &[Block16] = unsafe {
-            std::slice::from_raw_parts(salt.as_ptr() as *const Block16, 2)
-        };
-        let dst_blocks: &mut [Block16] = unsafe {
-            std::slice::from_raw_parts_mut(salt_enc.as_mut_ptr() as *mut Block16, 2)
-        };
+        let src_blocks: &[Block16] =
+            unsafe { std::slice::from_raw_parts(salt.as_ptr() as *const Block16, 2) };
+        let dst_blocks: &mut [Block16] =
+            unsafe { std::slice::from_raw_parts_mut(salt_enc.as_mut_ptr() as *mut Block16, 2) };
         let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
             .encrypt_blocks_b2b(src_blocks, dst_blocks);
     }
@@ -348,18 +356,21 @@ pub fn cmd_challenge_response(
         .to_vec();
 
     let ephemeral_cose_key = Value::Map(vec![
-        (Value::Integer(1i64.into()),     Value::Integer(2i64.into())),    // kty = EC2
-        (Value::Integer(3i64.into()),     Value::Integer((-7i64).into())), // alg = ES256
-        (Value::Integer((-1i64).into()),  Value::Integer(1i64.into())),    // crv = P-256
-        (Value::Integer((-2i64).into()),  Value::Bytes(eph_x)),            // x
-        (Value::Integer((-3i64).into()),  Value::Bytes(eph_y)),            // y
+        (Value::Integer(1i64.into()), Value::Integer(2i64.into())), // kty = EC2
+        (Value::Integer(3i64.into()), Value::Integer((-7i64).into())), // alg = ES256
+        (Value::Integer((-1i64).into()), Value::Integer(1i64.into())), // crv = P-256
+        (Value::Integer((-2i64).into()), Value::Bytes(eph_x)),      // x
+        (Value::Integer((-3i64).into()), Value::Bytes(eph_y)),      // y
     ]);
 
     // hmac-secret extension input map: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
     let hmac_secret_ext = Value::Map(vec![
         (Value::Integer(1i64.into()), ephemeral_cose_key),
         (Value::Integer(2i64.into()), Value::Bytes(salt_enc.to_vec())),
-        (Value::Integer(3i64.into()), Value::Bytes(salt_auth.to_vec())),
+        (
+            Value::Integer(3i64.into()),
+            Value::Bytes(salt_auth.to_vec()),
+        ),
     ]);
 
     // clientDataHash: fixed bytes (device does not verify for hmac-secret use)
@@ -371,10 +382,7 @@ pub fn cmd_challenge_response(
     //   0x03: allowList  [{type: "public-key", id: cred_id_bytes}]
     //   0x04: extensions {"hmac-secret": hmac_secret_ext}
     let get_assertion_cbor = Value::Map(vec![
-        (
-            Value::Integer(0x01u64.into()),
-            Value::Text(host.into()),
-        ),
+        (Value::Integer(0x01u64.into()), Value::Text(host.into())),
         (
             Value::Integer(0x02u64.into()),
             Value::Bytes(client_data_hash),
@@ -383,14 +391,12 @@ pub fn cmd_challenge_response(
             Value::Integer(0x03u64.into()),
             Value::Array(vec![Value::Map(vec![
                 (Value::Text("type".into()), Value::Text("public-key".into())),
-                (Value::Text("id".into()),   Value::Bytes(cred_id_bytes)),
+                (Value::Text("id".into()), Value::Bytes(cred_id_bytes)),
             ])]),
         ),
         (
             Value::Integer(0x04u64.into()),
-            Value::Map(vec![
-                (Value::Text("hmac-secret".into()), hmac_secret_ext),
-            ]),
+            Value::Map(vec![(Value::Text("hmac-secret".into()), hmac_secret_ext)]),
         ),
     ]);
 
@@ -403,7 +409,9 @@ pub fn cmd_challenge_response(
     let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
 
     if ga_response.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from getAssertion".into()));
+        return Err(SoloError::DeviceError(
+            "Empty response from getAssertion".into(),
+        ));
     }
     let ga_status = ga_response[0];
     if ga_status != 0x00 {
@@ -419,14 +427,22 @@ pub fn cmd_challenge_response(
 
     let ga_pairs = match ga_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("getAssertion response is not a map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getAssertion response is not a map".into(),
+            ))
+        }
     };
 
     let get_ga_key = |key: u64| -> Option<&Value> {
         ga_pairs.iter().find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: u64 = (*i).try_into().ok()?;
-                if ki == key { Some(v) } else { None }
+                if ki == key {
+                    Some(v)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -468,7 +484,11 @@ pub fn cmd_challenge_response(
 
     let ext_pairs = match ext_val {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("Extensions is not a CBOR map".into())),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "Extensions is not a CBOR map".into(),
+            ))
+        }
     };
 
     // Find "hmac-secret" key in extensions
@@ -477,7 +497,11 @@ pub fn cmd_challenge_response(
         .find_map(|(k, v)| {
             if let Value::Text(s) = k {
                 if s == "hmac-secret" {
-                    if let Value::Bytes(b) = v { Some(b.clone()) } else { None }
+                    if let Value::Bytes(b) = v {
+                        Some(b.clone())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }

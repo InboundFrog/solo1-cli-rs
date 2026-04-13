@@ -113,7 +113,10 @@ pub enum KeyCommands {
         #[arg(long)]
         pin: Option<String>,
         /// Prompt text (use empty string to suppress, outputting only the credential_id)
-        #[arg(long, default_value = "Touch your authenticator to generate a credential...")]
+        #[arg(
+            long,
+            default_value = "Touch your authenticator to generate a credential..."
+        )]
         prompt: String,
     },
 

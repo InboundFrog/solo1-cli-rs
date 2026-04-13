@@ -6,7 +6,7 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use rusb::{Context, DeviceHandle, UsbContext};
 
-use crate::device::{FLASH_BASE, DFU_CHUNK_SIZE, SOLO_VID, SOLO_DFU_PID};
+use crate::device::{DFU_CHUNK_SIZE, FLASH_BASE, SOLO_DFU_PID, SOLO_VID};
 use crate::error::{Result, SoloError};
 use crate::vlog;
 

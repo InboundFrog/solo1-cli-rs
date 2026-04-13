@@ -44,8 +44,7 @@ pub fn cmd_rng_feedkernel(hid: &SoloHid) -> Result<()> {
     const COUNT: usize = 64;
     const ENTROPY_BITS_PER_BYTE: i32 = 2;
 
-    let before = std::fs::read_to_string(ENTROPY_INFO)
-        .unwrap_or_else(|_| "unknown".into());
+    let before = std::fs::read_to_string(ENTROPY_INFO).unwrap_or_else(|_| "unknown".into());
     println!("Entropy before: 0x{}", before.trim());
 
     let request = [COUNT as u8];
@@ -61,15 +60,12 @@ pub fn cmd_rng_feedkernel(hid: &SoloHid) -> Result<()> {
     buf.extend_from_slice(data);
 
     let dev_random = File::options().write(true).open("/dev/random")?;
-    let ret = unsafe {
-        libc::ioctl(dev_random.as_raw_fd(), RNDADDENTROPY, buf.as_ptr())
-    };
+    let ret = unsafe { libc::ioctl(dev_random.as_raw_fd(), RNDADDENTROPY, buf.as_ptr()) };
     if ret < 0 {
         return Err(std::io::Error::last_os_error().into());
     }
 
-    let after = std::fs::read_to_string(ENTROPY_INFO)
-        .unwrap_or_else(|_| "unknown".into());
+    let after = std::fs::read_to_string(ENTROPY_INFO).unwrap_or_else(|_| "unknown".into());
     println!("Entropy after:  0x{}", after.trim());
     Ok(())
 }

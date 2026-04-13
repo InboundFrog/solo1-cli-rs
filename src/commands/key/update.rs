@@ -7,9 +7,9 @@ use crate::vlog;
 
 /// Update the device firmware.
 pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
-    use crate::device::{CMD_ENTER_BOOT, CMD_WRITE, CMD_DONE, CMD_VERSION};
-    use crate::firmware::{fetch_latest_release, download_url, FirmwareJson};
     use crate::crypto::sha256_hex;
+    use crate::device::{CMD_DONE, CMD_ENTER_BOOT, CMD_VERSION, CMD_WRITE};
+    use crate::firmware::{download_url, fetch_latest_release, FirmwareJson};
     use indicatif::{ProgressBar, ProgressStyle};
 
     let fw_json = if let Some(path) = firmware_file {
@@ -65,7 +65,11 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
             fw_json.signature_bytes()?
         }
     };
-    vlog!("Using signature ({} bytes): {}", signature.len(), hex::encode(&signature));
+    vlog!(
+        "Using signature ({} bytes): {}",
+        signature.len(),
+        hex::encode(&signature)
+    );
 
     // Write firmware in 256-byte chunks
     const CHUNK_SIZE: usize = 256;

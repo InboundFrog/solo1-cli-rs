@@ -39,9 +39,7 @@ pub fn cmd_ping(hid: &SoloHid, count: u32, data: &[u8]) -> Result<()> {
         let elapsed = start.elapsed();
 
         if response != data {
-            return Err(SoloError::DeviceError(
-                "Ping response data mismatch".into(),
-            ));
+            return Err(SoloError::DeviceError("Ping response data mismatch".into()));
         }
         println!(
             "Ping {}: {} bytes, RTT = {:.3}ms",
@@ -91,9 +89,7 @@ pub fn cmd_reset(hid: &SoloHid) -> Result<()> {
 /// Permanently disable firmware updates on the device.
 pub fn cmd_disable_updates(hid: &SoloHid) -> Result<()> {
     use crate::device::CMD_DISABLE_BOOTLOADER;
-    println!(
-        "WARNING: This will permanently disable firmware updates on this device!"
-    );
+    println!("WARNING: This will permanently disable firmware updates on this device!");
     println!("This action cannot be undone. Are you sure? (type 'yes' to confirm)");
     let mut input = String::new();
     std::io::stdin().read_line(&mut input)?;
