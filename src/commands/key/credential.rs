@@ -1,6 +1,6 @@
 use crate::commands::key::ctap2::{
-    create_key_agreement_cbor, extract_cbor_text_responses, find_cbor_response_by_key,
-    find_key_agreement_response,
+    create_key_agreement_cbor, extract_cbor_text_responses, extract_cose_coord,
+    find_cbor_response_by_key, find_key_agreement_response,
 };
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -209,30 +209,8 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         }
     };
 
-    let get_coord = |key: i64| -> Result<Vec<u8>> {
-        cose_pairs
-            .iter()
-            .find_map(|(k, v)| {
-                if let Value::Integer(i) = k {
-                    let ki: i64 = (*i).try_into().ok()?;
-                    if ki == key {
-                        if let Value::Bytes(b) = v {
-                            Some(b.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
-    };
-
-    let dev_x = get_coord(-2)?;
-    let dev_y = get_coord(-3)?;
+    let dev_x = extract_cose_coord(cose_pairs, -2)?;
+    let dev_y = extract_cose_coord(cose_pairs, -3)?;
     if dev_x.len() != 32 || dev_y.len() != 32 {
         return Err(SoloError::DeviceError(
             "Device COSE key coordinates are not 32 bytes".into(),
@@ -748,30 +726,8 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
         }
     };
 
-    let get_coord = |key: i64| -> Result<Vec<u8>> {
-        cose_pairs
-            .iter()
-            .find_map(|(k, v)| {
-                if let Value::Integer(i) = k {
-                    let ki: i64 = (*i).try_into().ok()?;
-                    if ki == key {
-                        if let Value::Bytes(b) = v {
-                            Some(b.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
-    };
-
-    let dev_x = get_coord(-2)?;
-    let dev_y = get_coord(-3)?;
+    let dev_x = extract_cose_coord(cose_pairs, -2)?;
+    let dev_y = extract_cose_coord(cose_pairs, -3)?;
     if dev_x.len() != 32 || dev_y.len() != 32 {
         return Err(SoloError::DeviceError(
             "Device COSE key coordinates are not 32 bytes".into(),

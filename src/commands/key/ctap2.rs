@@ -98,6 +98,25 @@ pub fn find_key_agreement_response(
         .ok_or_else(|| SoloError::DeviceError("keyAgreement (0x01) missing in response".into()))
 }
 
+/// Extract a byte-valued coordinate from a COSE key map by its integer key.
+#[inline]
+pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec<u8>> {
+    cose_pairs
+        .iter()
+        .find_map(|(k, v)| {
+            if let Value::Integer(i) = k {
+                let ki: i64 = (*i).try_into().ok()?;
+                if ki == key {
+                    if let Value::Bytes(b) = v {
+                        return Some(b.clone());
+                    }
+                }
+            }
+            None
+        })
+        .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
+}
+
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
 pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
     let get_ka_cbor = create_key_agreement_cbor();
@@ -140,25 +159,8 @@ pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
         }
     };
 
-    let get_coord = |key: i64| -> Result<Vec<u8>> {
-        cose_pairs
-            .iter()
-            .find_map(|(k, v)| {
-                if let Value::Integer(i) = k {
-                    let ki: i64 = (*i).try_into().ok()?;
-                    if ki == key {
-                        if let Value::Bytes(b) = v {
-                            return Some(b.clone());
-                        }
-                    }
-                }
-                None
-            })
-            .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
-    };
-
-    let dev_x = get_coord(-2)?;
-    let dev_y = get_coord(-3)?;
+    let dev_x = extract_cose_coord(cose_pairs, -2)?;
+    let dev_y = extract_cose_coord(cose_pairs, -3)?;
     if dev_x.len() != 32 || dev_y.len() != 32 {
         return Err(SoloError::DeviceError(
             "Device COSE key coordinates are not 32 bytes".into(),

@@ -1,5 +1,7 @@
 use crate::commands::key::ctap2;
-use crate::commands::key::ctap2::{find_cbor_response_by_key, find_key_agreement_response};
+use crate::commands::key::ctap2::{
+    extract_cose_coord, find_cbor_response_by_key, find_key_agreement_response,
+};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
@@ -242,30 +244,8 @@ pub fn cmd_challenge_response(
         }
     };
 
-    let get_cose_bytes = |key: i64| -> Result<Vec<u8>> {
-        cose_pairs
-            .iter()
-            .find_map(|(k, v)| {
-                if let Value::Integer(i) = k {
-                    let ki: i64 = (*i).try_into().ok()?;
-                    if ki == key {
-                        if let Value::Bytes(b) = v {
-                            Some(b.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
-    };
-
-    let dev_x = get_cose_bytes(-2)?;
-    let dev_y = get_cose_bytes(-3)?;
+    let dev_x = extract_cose_coord(cose_pairs, -2)?;
+    let dev_y = extract_cose_coord(cose_pairs, -3)?;
 
     if dev_x.len() != 32 || dev_y.len() != 32 {
         return Err(SoloError::DeviceError(
