@@ -14,28 +14,28 @@ name = "solo1"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-hidapi = "2"
-rusb = "0.9"
-sha2 = "0.11"
-p256 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8", "ecdh"] }
+aes = "0.9"
 base64 = "0.22"
+cbc = { version = "0.2", features = ["alloc"] }
+ciborium = "0.2"
+clap = { version = "4", features = ["derive"] }
+digest = "0.11"
+hex = "0.4"
+hidapi = "2"
+hmac = "0.13"
+hybrid-array = "0.4"
+ihex = "3"
+indicatif = "0.18"
+p256 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8", "ecdh"] }
+rand = "0.8"
+reqwest = { version = "0.13", features = ["blocking", "json"] }
+rpassword = "7"
+rusb = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-ihex = "3"
 serialport = "4"
-reqwest = { version = "0.13", features = ["blocking", "json"] }
-indicatif = "0.18"
+sha2 = "0.11"
 thiserror = "2"
-hex = "0.4"
-rand = "0.8"
-rpassword = "7"
-digest = "0.11"
-hmac = "0.13"
-aes = "0.9"
-cbc = { version = "0.2", features = ["alloc"] }
-hybrid-array = "0.4"
-ciborium = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"
