@@ -92,24 +92,31 @@ pub fn cmd_rng_feedkernel(_hid: &SoloHid) -> Result<()> {
 /// TODO: Implement full CTAP2 command sequence:
 ///   1. Send CTAPHID_CBOR with CTAP2 command 0x01 (makeCredential)
 ///   2. clientDataHash: SHA256 of client data
-///   3. rp: {"id": rp_id, "name": rp_id}
-///   4. user: {"id": random 32 bytes, "name": "user"}
+///   3. rp: {"id": host, "name": host}
+///   4. user: {"id": user_id bytes, "name": user}
 ///   5. pubKeyCredParams: [{"type": "public-key", "alg": -7}] (ES256)
 ///   6. extensions: {"hmac-secret": true}
 ///   7. options: {"rk": true}  (resident key)
 ///   8. Parse CBOR response to get credential ID and public key
-pub fn cmd_make_credential(hid: &SoloHid, rp_id: &str) -> Result<()> {
-    // Stub: connect to device and show it's reachable, then explain TODO
+pub fn cmd_make_credential(
+    hid: &SoloHid,
+    host: &str,
+    user: &str,
+    prompt: &str,
+) -> Result<()> {
     let _version = get_device_version(hid)?;
-    println!("Connected to device.");
+    if !prompt.is_empty() {
+        println!("{}", prompt);
+    }
     println!(
-        "TODO: Full CTAP2 makeCredential for RP '{}' with hmac-secret extension not yet implemented.",
-        rp_id
+        "TODO: Full CTAP2 makeCredential for host '{}' user '{}' with hmac-secret not yet implemented.",
+        host, user
     );
     println!("The CTAP2 command sequence would:");
     println!("  1. Send CTAPHID_CBOR (0x90) with CBOR-encoded makeCredential (0x01) request");
-    println!("  2. Include hmac-secret extension in the request");
-    println!("  3. Return credential ID and public key from the response");
+    println!("  2. rp.id = '{}', user.name = '{}'", host, user);
+    println!("  3. Include hmac-secret extension and options.rk = true");
+    println!("  4. Return credential ID (hex) to stdout");
     Ok(())
 }
 

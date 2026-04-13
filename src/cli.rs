@@ -103,8 +103,18 @@ pub enum KeyCommands {
 
     /// Create FIDO2 credential with hmac-secret
     MakeCredential {
-        /// Relying party ID
-        rp_id: String,
+        /// Relying party host (e.g., solokeys.dev)
+        #[arg(long, default_value = "solokeys.dev")]
+        host: String,
+        /// User ID
+        #[arg(long, default_value = "they")]
+        user: String,
+        /// PIN (prompted if not provided and key has PIN set)
+        #[arg(long)]
+        pin: Option<String>,
+        /// Prompt text (use empty string to suppress, outputting only the credential_id)
+        #[arg(long, default_value = "Touch your authenticator to generate a credential...")]
+        prompt: String,
     },
 
     /// HMAC-secret challenge-response

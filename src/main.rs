@@ -84,9 +84,9 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> 
             }
         }
 
-        KeyCommands::MakeCredential { rp_id } => {
+        KeyCommands::MakeCredential { host, user, pin: _, prompt } => {
             let hid = SoloHid::open(serial)?;
-            key::cmd_make_credential(&hid, &rp_id)?;
+            key::cmd_make_credential(&hid, &host, &user, &prompt)?;
         }
 
         KeyCommands::ChallengeResponse { credential_id, challenge, host, user: _, pin: _ } => {
