@@ -9,7 +9,7 @@ use crate::error::{Result, SoloError};
 /// DER-encoded attestation certificate from attStmt.x5c[0], SHA-256 fingerprints
 /// it, and compares against known fingerprints in crypto.rs.
 pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
-    use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+    use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
     use crate::crypto::{check_attestation_fingerprint, sha256_hex};
     use hmac::{Hmac, Mac};
@@ -102,8 +102,8 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
         let mut pin_hash_enc = [0u8; 16];
         #[allow(deprecated)]
         {
-            use aes::cipher::generic_array::GenericArray;
-            type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+            use hybrid_array::Array as HybridArray;
+            type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
             let iv = [0u8; 16];
             let src: &[Block16] = unsafe {
                 std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1)
@@ -112,7 +112,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
                 std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1)
             };
             let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-                .encrypt_blocks_b2b_mut(src, dst);
+                .encrypt_blocks_b2b(src, dst);
         }
 
         let eph_x = ephemeral_point.x()
@@ -175,8 +175,8 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
         let mut pin_token = pin_token_enc.clone();
         #[allow(deprecated)]
         {
-            use aes::cipher::generic_array::GenericArray;
-            type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+            use hybrid_array::Array as HybridArray;
+            type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
             let iv = [0u8; 16];
             let src: &[Block16] = unsafe {
                 std::slice::from_raw_parts(pin_token_enc.as_ptr() as *const Block16, n_token_blocks)
@@ -185,7 +185,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
                 std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut Block16, n_token_blocks)
             };
             let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
-                .decrypt_blocks_b2b_mut(src, dst);
+                .decrypt_blocks_b2b(src, dst);
         }
         let pin_token = &pin_token[..pin_token_enc.len()];
 

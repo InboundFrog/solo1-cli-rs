@@ -12,7 +12,7 @@ use crate::error::{Result, SoloError};
 ///   6. HMAC-SHA-256(shared_secret, newPinEnc || pinHashEnc)[0..16] → pinUvAuthParam
 ///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
 pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
-    use aes::cipher::{BlockEncryptMut, KeyIvInit};
+    use aes::cipher::{BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
     use hmac::{Hmac, Mac};
     use p256::ecdh::EphemeralSecret;
@@ -141,8 +141,8 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
     let mut pin_hash_enc = [0u8; 16];
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src_blocks: &[Block16] = unsafe {
             std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1)
@@ -151,7 +151,7 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
             std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1)
         };
         let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-            .encrypt_blocks_b2b_mut(src_blocks, dst_blocks);
+            .encrypt_blocks_b2b(src_blocks, dst_blocks);
     }
 
     // ── Step 5: newPinEnc — AES-256-CBC encrypt padded new PIN (64 bytes) ──
@@ -163,8 +163,8 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
     let mut new_pin_enc = [0u8; 64];
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src_blocks: &[Block16] = unsafe {
             std::slice::from_raw_parts(padded_pin.as_ptr() as *const Block16, 4)
@@ -173,7 +173,7 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
             std::slice::from_raw_parts_mut(new_pin_enc.as_mut_ptr() as *mut Block16, 4)
         };
         let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-            .encrypt_blocks_b2b_mut(src_blocks, dst_blocks);
+            .encrypt_blocks_b2b(src_blocks, dst_blocks);
     }
 
     // ── Step 6: HMAC-SHA-256(shared_secret, newPinEnc || pinHashEnc)[0..16] ─
@@ -240,7 +240,7 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
 ///   5. HMAC-SHA-256(shared_secret, newPinEnc)[0..16] → pinUvAuthParam
 ///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
 pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
-    use aes::cipher::{BlockEncryptMut, KeyIvInit};
+    use aes::cipher::{BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
     use hmac::{Hmac, Mac};
     use p256::ecdh::EphemeralSecret;
@@ -368,8 +368,8 @@ pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
     let mut new_pin_enc = [0u8; 64];
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src_blocks: &[Block16] = unsafe {
             std::slice::from_raw_parts(padded_pin.as_ptr() as *const Block16, 4)
@@ -378,7 +378,7 @@ pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
             std::slice::from_raw_parts_mut(new_pin_enc.as_mut_ptr() as *mut Block16, 4)
         };
         let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-            .encrypt_blocks_b2b_mut(src_blocks, dst_blocks);
+            .encrypt_blocks_b2b(src_blocks, dst_blocks);
     }
 
     // ── Step 5: HMAC-SHA-256(shared_secret, newPinEnc)[0..16] ──────────────

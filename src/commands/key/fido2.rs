@@ -204,7 +204,7 @@ pub fn cmd_challenge_response(
     challenge: &str,
     host: &str,
 ) -> Result<()> {
-    use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+    use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
     use hmac::{Hmac, Mac};
     use p256::ecdh::EphemeralSecret;
@@ -317,8 +317,8 @@ pub fn cmd_challenge_response(
     let mut salt_enc = [0u8; 32];
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src_blocks: &[Block16] = unsafe {
             std::slice::from_raw_parts(salt.as_ptr() as *const Block16, 2)
@@ -327,7 +327,7 @@ pub fn cmd_challenge_response(
             std::slice::from_raw_parts_mut(salt_enc.as_mut_ptr() as *mut Block16, 2)
         };
         let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-            .encrypt_blocks_b2b_mut(src_blocks, dst_blocks);
+            .encrypt_blocks_b2b(src_blocks, dst_blocks);
     }
 
     // ── Step 6: saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16] ──────
@@ -502,8 +502,8 @@ pub fn cmd_challenge_response(
     let mut hmac_output = hmac_secret_enc.clone();
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src_blocks: &[Block16] = unsafe {
             std::slice::from_raw_parts(hmac_secret_enc.as_ptr() as *const Block16, n_blocks)
@@ -512,7 +512,7 @@ pub fn cmd_challenge_response(
             std::slice::from_raw_parts_mut(hmac_output.as_mut_ptr() as *mut Block16, n_blocks)
         };
         let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
-            .decrypt_blocks_b2b_mut(src_blocks, dst_blocks);
+            .decrypt_blocks_b2b(src_blocks, dst_blocks);
     }
 
     // ── Step 9: Print the HMAC output as hex ────────────────────────────────

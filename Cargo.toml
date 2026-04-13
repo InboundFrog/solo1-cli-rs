@@ -34,8 +34,9 @@ rand = "0.8"
 rpassword = "7"
 digest = "0.10"
 hmac = "0.12"
-aes = "0.8"
-cbc = { version = "0.1", features = ["alloc"] }
+aes = "0.9"
+cbc = { version = "0.2", features = ["alloc"] }
+hybrid-array = "0.4"
 ciborium = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]

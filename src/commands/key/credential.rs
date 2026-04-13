@@ -194,7 +194,7 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
 ///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
 ///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
 pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
-    use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+    use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use base64::Engine as _;
     use ciborium::value::Value;
     use hmac::{Hmac, Mac};
@@ -304,8 +304,8 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     let mut pin_hash_enc = [0u8; 16];
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src: &[Block16] = unsafe {
             std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1)
@@ -314,7 +314,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1)
         };
         let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-            .encrypt_blocks_b2b_mut(src, dst);
+            .encrypt_blocks_b2b(src, dst);
     }
 
     // 0d. getPINToken (subcommand 0x05)
@@ -390,8 +390,8 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     let mut pin_token = pin_token_enc.clone();
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src: &[Block16] = unsafe {
             std::slice::from_raw_parts(pin_token_enc.as_ptr() as *const Block16, n_token_blocks)
@@ -400,7 +400,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut Block16, n_token_blocks)
         };
         let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
-            .decrypt_blocks_b2b_mut(src, dst);
+            .decrypt_blocks_b2b(src, dst);
     }
     // Use the full decrypted token (Solo 1: 16 bytes; larger tokens also supported)
     let pin_token = &pin_token[..pin_token_enc.len()];
@@ -626,7 +626,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 /// Remove a credential by ID.
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
 pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
-    use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+    use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
     use hmac::{Hmac, Mac};
     use p256::ecdh::EphemeralSecret;
@@ -751,8 +751,8 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     let mut pin_hash_enc = [0u8; 16];
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src: &[Block16] = unsafe {
             std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1)
@@ -761,7 +761,7 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
             std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1)
         };
         let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
-            .encrypt_blocks_b2b_mut(src, dst);
+            .encrypt_blocks_b2b(src, dst);
     }
 
     // 0d. getPINToken (subcommand 0x05)
@@ -837,8 +837,8 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     let mut pin_token = pin_token_enc.clone();
     #[allow(deprecated)]
     {
-        use aes::cipher::generic_array::GenericArray;
-        type Block16 = GenericArray<u8, aes::cipher::typenum::U16>;
+        use hybrid_array::Array as HybridArray;
+        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
         let iv = [0u8; 16];
         let src: &[Block16] = unsafe {
             std::slice::from_raw_parts(pin_token_enc.as_ptr() as *const Block16, n_token_blocks)
@@ -847,7 +847,7 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
             std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut Block16, n_token_blocks)
         };
         let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
-            .decrypt_blocks_b2b_mut(src, dst);
+            .decrypt_blocks_b2b(src, dst);
     }
     // Use the full decrypted token (Solo 1: 16 bytes; larger tokens also supported)
     let pin_token = &pin_token[..pin_token_enc.len()];
