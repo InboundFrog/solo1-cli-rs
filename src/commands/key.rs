@@ -183,11 +183,21 @@ pub fn cmd_keyboard(hid: &SoloHid, data: &[u8]) -> Result<()> {
 
 /// Factory reset the device.
 pub fn cmd_reset(hid: &SoloHid) -> Result<()> {
+    println!("Warning: Your credentials will be lost!!! Do you wish to continue?");
+    print!("Type 'yes' to confirm: ");
+    std::io::stdout().flush()?;
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)?;
+    if input.trim() != "yes" {
+        println!("Aborted.");
+        return Ok(());
+    }
+    println!("Press the button to confirm -- again, your credentials will be lost!!!");
     // CTAP2 authenticatorReset = 0x07
     // Send via CTAPHID_CBOR
     let cbor_reset = vec![0x07u8];
     hid.send_recv(CTAPHID_CBOR, &cbor_reset)?;
-    println!("Device reset successfully.");
+    println!("....aaaand they're gone");
     Ok(())
 }
 
