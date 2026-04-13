@@ -112,7 +112,7 @@ mod tests {
         // The salt should be SHA256(challenge) - 32 bytes
         assert_eq!(salt.len(), 32);
         // Known value for SHA256("my-challenge-string")
-        let expected = sha2::Sha256::digest(challenge.as_bytes());
+        let expected = Sha256::digest(challenge.as_bytes());
         assert_eq!(salt.as_slice(), expected.as_slice());
     }
 }
