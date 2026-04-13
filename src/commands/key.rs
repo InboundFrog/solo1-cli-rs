@@ -14,6 +14,12 @@ use crate::firmware::FirmwareVersion;
 
 /// Get N random bytes from the device, return as hex string.
 pub fn cmd_rng_hexbytes(hid: &SoloHid, n: usize) -> Result<String> {
+    if n > 255 {
+        return Err(SoloError::DeviceError(format!(
+            "Number of bytes must be between 0 and 255, you passed {}",
+            n
+        )));
+    }
     let request = [n as u8];
     let response = hid.send_recv(CMD_RNG, &request)?;
     Ok(hex::encode(&response[..response.len().min(n)]))
