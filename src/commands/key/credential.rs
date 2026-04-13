@@ -6,50 +6,7 @@ use crate::error::{Result, SoloError};
 /// Returns `Ok(true)` when `options.clientPin == true`, `Ok(false)` when it is
 /// `false` or absent, and `Err(...)` on communication / parse failures.
 pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
-    use ciborium::value::Value;
-
-    let get_info_req = vec![0x04u8];
-    let info_resp = hid.send_recv(CTAPHID_CBOR, &get_info_req)?;
-    if info_resp.is_empty() || info_resp[0] != 0x00 {
-        return Err(SoloError::DeviceError("getInfo failed".into()));
-    }
-    let info_val: Value = ciborium::de::from_reader(&info_resp[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-    let pairs = match info_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getInfo response is not a CBOR map".into(),
-            ))
-        }
-    };
-    // Key 0x04 in getInfo response is the options map (text → bool)
-    let client_pin_set = pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x04 {
-                    if let Value::Map(opts) = v {
-                        return Some(opts.iter().find_map(|(ok, ov)| {
-                            if let (Value::Text(name), Value::Bool(b)) = (ok, ov) {
-                                if name == "clientPin" {
-                                    Some(*b)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        }));
-                    }
-                }
-            }
-            None
-        })
-        .flatten()
-        .unwrap_or(false);
-    Ok(client_pin_set)
+    super::ctap2::get_info_client_pin_set(hid)
 }
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
