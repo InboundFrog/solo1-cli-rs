@@ -1,5 +1,5 @@
 use sha2::{Digest, Sha256};
-
+use crate::commands::key::ctap2;
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -214,10 +214,7 @@ pub fn cmd_challenge_response(
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
     // ── Step 2: getKeyAgreement (subcommand 0x02) ────────────────────────────
-    let get_ka_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(2u64.into())), // subCommand = getKeyAgreement
-    ]);
+    let get_ka_cbor = ctap2::create_key_agreement_cbor();
     let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
     ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
         .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;

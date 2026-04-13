@@ -1,3 +1,4 @@
+use crate::commands::key::ctap2::create_key_agreement_cbor;
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -197,10 +198,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     }
 
     // 0a. getKeyAgreement (clientPIN 0x06, subcommand 0x02)
-    let get_ka_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(2u64.into())), // subCommand = getKeyAgreement
-    ]);
+    let get_ka_cbor = create_key_agreement_cbor();
     let mut ka_req = vec![0x06u8];
     ciborium::ser::into_writer(&get_ka_cbor, &mut ka_req)
         .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
@@ -770,10 +768,7 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     }
 
     // 0a. getKeyAgreement (clientPIN 0x06, subcommand 0x02)
-    let get_ka_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(2u64.into())), // subCommand = getKeyAgreement
-    ]);
+    let get_ka_cbor = create_key_agreement_cbor();
     let mut ka_req = vec![0x06u8];
     ciborium::ser::into_writer(&get_ka_cbor, &mut ka_req)
         .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;

@@ -55,12 +55,17 @@ pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
     Ok(client_pin_set)
 }
 
-/// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
-pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
-    let get_ka_cbor = Value::Map(vec![
+#[inline]
+pub fn create_key_agreement_cbor() -> Value {
+    Value::Map(vec![
         (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
         (Value::Integer(0x02u64.into()), Value::Integer(2u64.into())), // subCommand = getKeyAgreement
-    ]);
+    ])
+}
+
+/// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
+pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
+    let get_ka_cbor = create_key_agreement_cbor();
     let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
     ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
         .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
