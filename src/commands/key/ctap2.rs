@@ -360,3 +360,90 @@ impl ClientPinSession {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ciborium::value::Value;
+
+    #[test]
+    fn test_check_ctap_status() {
+        assert!(check_ctap_status(&[0x00, 0x01, 0x02], "test").is_ok());
+        let err = check_ctap_status(&[0x01, 0x01, 0x02], "test").unwrap_err();
+        assert!(err.to_string().contains("returned CTAP error 0x01"));
+        let err_empty = check_ctap_status(&[], "test").unwrap_err();
+        assert!(err_empty.to_string().contains("Empty response"));
+    }
+
+    #[test]
+    fn test_find_cbor_response_by_key() {
+        let pairs = vec![
+            (Value::Integer(1u64.into()), Value::Text("one".into())),
+            (Value::Integer(2u64.into()), Value::Bytes(vec![0x02])),
+        ];
+        assert_eq!(
+            find_cbor_response_by_key(&pairs, 1),
+            Some(&Value::Text("one".into()))
+        );
+        assert_eq!(
+            find_cbor_response_by_key(&pairs, 2),
+            Some(&Value::Bytes(vec![0x02]))
+        );
+        assert_eq!(find_cbor_response_by_key(&pairs, 3), None);
+    }
+
+    #[test]
+    fn test_extract_cbor_text_responses() {
+        let values = vec![
+            Value::Text("first".into()),
+            Value::Integer(123u64.into()),
+            Value::Text("second".into()),
+        ];
+        let texts = extract_cbor_text_responses(&values);
+        assert_eq!(texts, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn test_client_pin_session_crypto_roundtrip() {
+        // We need a dummy public key to initialize the session.
+        // P-256 public key is 65 bytes (0x04 || X || Y)
+        let secret = p256::ecdh::EphemeralSecret::random(&mut OsRng);
+        let pub_key = p256::PublicKey::from(&secret);
+
+        let session = ClientPinSession::new(&pub_key);
+
+        // Test encryption/decryption of a token (multi-block)
+        let _encrypted = session.encrypt_pin_hash("123456").unwrap(); // 16 bytes
+        // encrypt_pin_hash is one-way in practice (we don't have a decrypt_pin_hash)
+        // but we can test decrypt_pin_token with any encrypted data.
+        
+        // Let's test encrypt_pin (64 bytes)
+        let pin = "123456";
+        let enc_pin = session.encrypt_pin(pin).unwrap();
+        assert_eq!(enc_pin.len(), 64);
+        
+        let dec_pin = session.decrypt_pin_token(&enc_pin).unwrap();
+        assert_eq!(dec_pin.len(), 64);
+        assert_eq!(&dec_pin[..pin.len()], pin.as_bytes());
+        assert_eq!(&dec_pin[pin.len()..], &[0u8; 64-6][..]);
+
+        // Test authenticate (HMAC-SHA256 truncated to 16 bytes)
+        let msg = b"hello world";
+        let auth1 = session.authenticate(msg);
+        let auth2 = session.authenticate(msg);
+        assert_eq!(auth1, auth2);
+        assert_eq!(auth1.len(), 16);
+    }
+
+    #[test]
+    fn test_extract_cose_coord() {
+        let cose_pairs = vec![
+            (Value::Integer((-2i64).into()), Value::Bytes(vec![0xAA; 32])),
+            (Value::Integer((-3i64).into()), Value::Bytes(vec![0xBB; 32])),
+        ];
+        let x = extract_cose_coord(&cose_pairs, -2).unwrap();
+        assert_eq!(x, vec![0xAA; 32]);
+        let y = extract_cose_coord(&cose_pairs, -3).unwrap();
+        assert_eq!(y, vec![0xBB; 32]);
+        assert!(extract_cose_coord(&cose_pairs, -1).is_err());
+    }
+}
