@@ -1,4 +1,5 @@
 pub mod credential;
+pub mod ctap2;
 mod fido2;
 mod ops;
 mod pin;
