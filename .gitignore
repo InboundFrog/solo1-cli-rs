@@ -1,1 +1,6 @@
+# Cargo Build related
 /target
+
+# JetBrains IDEs
+.idea/
+*.iml
