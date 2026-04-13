@@ -1,5 +1,6 @@
 use sha2::{Digest, Sha256};
 use crate::commands::key::ctap2;
+use crate::commands::key::ctap2::find_key_agreement_response;
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -244,22 +245,7 @@ pub fn cmd_challenge_response(
         }
     };
 
-    let key_agreement = resp_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x01 {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| SoloError::DeviceError("keyAgreement (0x01) missing in response".into()))?;
-
+    let key_agreement = find_key_agreement_response(&resp_pairs)?;
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
         _ => {

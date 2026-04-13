@@ -63,6 +63,25 @@ pub fn create_key_agreement_cbor() -> Value {
     ])
 }
 
+#[inline]
+pub fn find_key_agreement_response(response_pairs: &[(Value, Value)]) -> core::result::Result<&Value, SoloError> {
+     response_pairs
+        .iter()
+        .find_map(|(k, v)| {
+            if let Value::Integer(i) = k {
+                let ki: u64 = (*i).try_into().ok()?;
+                if ki == 0x01 {
+                    Some(v)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| SoloError::DeviceError("keyAgreement (0x01) missing in response".into()))
+}
+
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
 pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
     let get_ka_cbor = create_key_agreement_cbor();
@@ -95,22 +114,7 @@ pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
         }
     };
 
-    let key_agreement = resp_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x01 {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| SoloError::DeviceError("keyAgreement (0x01) missing in response".into()))?;
-
+    let key_agreement = find_key_agreement_response(&resp_pairs)?;
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
         _ => {

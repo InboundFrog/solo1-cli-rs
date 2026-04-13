@@ -1,4 +1,4 @@
-use crate::commands::key::ctap2::create_key_agreement_cbor;
+use crate::commands::key::ctap2::{create_key_agreement_cbor, find_key_agreement_response};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -227,22 +227,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         }
     };
 
-    let key_agreement = ka_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x01 {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| SoloError::DeviceError("keyAgreement missing from response".into()))?;
-
+    let key_agreement = find_key_agreement_response(&ka_pairs)?;
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
         _ => {
@@ -797,22 +782,7 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
         }
     };
 
-    let key_agreement = ka_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x01 {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| SoloError::DeviceError("keyAgreement missing from response".into()))?;
-
+    let key_agreement = find_key_agreement_response(&ka_pairs)?;
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
         _ => {
