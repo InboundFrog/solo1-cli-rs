@@ -39,4 +39,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attestation fingerprints and crypto implementation to match Python reference values.
 - `cmd_verify` to include PIN authentication when a PIN is set on the device.
 
-[0.1.0]: https://github.com/solokeys/solo1-cli-rs/releases/tag/v0.1.0
+[0.1.0]: https://github.com/InboundFrog/solo1-cli-rs/releases/tag/v0.1.0
