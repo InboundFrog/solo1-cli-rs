@@ -1,5 +1,6 @@
 use crate::commands::key::ctap2::{
-    create_key_agreement_cbor, find_cbor_response_by_key, find_key_agreement_response,
+    create_key_agreement_cbor, extract_cbor_text_responses, find_cbor_response_by_key,
+    find_key_agreement_response,
 };
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -51,31 +52,13 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
 
     // 0x01: versions
     if let Some(Value::Array(versions)) = find_cbor_response_by_key(&pairs, 0x01) {
-        let strs: Vec<&str> = versions
-            .iter()
-            .filter_map(|v| {
-                if let Value::Text(s) = v {
-                    Some(s.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let strs: Vec<&str> = extract_cbor_text_responses(&versions);
         println!("Versions:                       {}", strs.join(", "));
     }
 
     // 0x02: extensions
     if let Some(Value::Array(exts)) = find_cbor_response_by_key(&pairs, 0x02) {
-        let strs: Vec<&str> = exts
-            .iter()
-            .filter_map(|v| {
-                if let Value::Text(s) = v {
-                    Some(s.as_str())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let strs: Vec<&str> = extract_cbor_text_responses(&exts);
         println!("Extensions:                     {}", strs.join(", "));
     }
 

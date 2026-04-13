@@ -77,6 +77,20 @@ pub fn find_cbor_response_by_key(response_pairs: &[(Value, Value)], key: u64) ->
 }
 
 #[inline]
+pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
+    response_values
+        .iter()
+        .filter_map(|v| {
+            if let Value::Text(s) = v {
+                Some(s.as_str())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[inline]
 pub fn find_key_agreement_response(
     response_pairs: &[(Value, Value)],
 ) -> core::result::Result<&Value, SoloError> {
