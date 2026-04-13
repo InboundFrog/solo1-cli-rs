@@ -151,9 +151,9 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> 
             key::cmd_probe(&hid, &hash_type)?;
         }
 
-        KeyCommands::SignFile { filename } => {
+        KeyCommands::SignFile { credential_id, filename } => {
             let hid = SoloHid::open(serial)?;
-            key::cmd_sign_file(&hid, &filename)?;
+            key::cmd_sign_file(&hid, &credential_id, &filename)?;
         }
 
         KeyCommands::Update { firmware } => {

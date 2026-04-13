@@ -341,16 +341,20 @@ pub fn cmd_probe(hid: &SoloHid, hash_type: &str) -> Result<()> {
 /// TODO: Full CTAP2 getAssertion sequence:
 ///   1. Hash the file with SHA-256
 ///   2. Use as clientDataHash in getAssertion
-///   3. No allowList (use resident key)
+///   3. Specify credential_id in allowList
 ///   4. Return the assertion response including signature
-pub fn cmd_sign_file(hid: &SoloHid, filename: &Path) -> Result<()> {
+///   5. Save signature to filename.sig
+pub fn cmd_sign_file(hid: &SoloHid, credential_id: &str, filename: &Path) -> Result<()> {
     let _version = get_device_version(hid)?;
     let data = std::fs::read(filename)?;
     let hash = sha2::Sha256::digest(&data);
-    println!("File: {:?}", filename);
-    println!("SHA-256: {}", hex::encode(hash));
-    println!("TODO: Full CTAP2 getAssertion with resident key not yet implemented.");
-    println!("The CTAP2 sequence would use the SHA-256 as clientDataHash in an assertion request.");
+    println!("{}  {:?}", hex::encode(hash), filename);
+    println!("Please press the button on your Solo key");
+    println!("TODO: Full CTAP2 getAssertion not yet implemented.");
+    println!("Credential ID (base64): {}", credential_id);
+    println!(
+        "The CTAP2 sequence would use the SHA-256 as clientDataHash with the given credential."
+    );
     Ok(())
 }
 
