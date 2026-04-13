@@ -239,17 +239,10 @@ impl SoloHid {
         }
 
         let info = if let Some(sn) = serial {
-            let matched: Vec<_> = devices
+            devices
                 .iter()
-                .filter(|d| d.serial_number().map(|s| s == sn).unwrap_or(false))
-                .collect();
-            if matched.is_empty() {
-                return Err(SoloError::DeviceError(format!(
-                    "No device with serial {}",
-                    sn
-                )));
-            }
-            matched[0]
+                .find(|d| d.serial_number().map_or(false, |s| s == sn))
+                .ok_or_else(|| SoloError::DeviceError(format!("No device with serial {}", sn)))?
         } else {
             if devices.len() > 1 {
                 return Err(SoloError::NonUniqueDevice);
