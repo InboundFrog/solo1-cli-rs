@@ -174,6 +174,75 @@ pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
         .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))
 }
 
+/// Perform the full CTAP2 clientPIN getPINToken flow and return the decrypted PIN token.
+///
+/// Steps:
+///   1. getKeyAgreement (subcommand 0x02) → device P-256 public key
+///   2. Generate ephemeral P-256 keypair, ECDH → shared_secret
+///   3. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
+///   4. getPINToken (subcommand 0x05) → decrypt response → pin token bytes
+pub fn get_pin_token(hid: &SoloHid, pin: &str) -> Result<Vec<u8>> {
+    let dev_pub_key = get_key_agreement(hid)?;
+    let session = ClientPinSession::new(&dev_pub_key);
+    let pin_hash_enc = session.encrypt_pin_hash(pin)?;
+
+    let get_pin_token_cbor = Value::Map(vec![
+        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
+        (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())), // subCommand = getPINToken
+        (Value::Integer(0x03u64.into()), session.ephemeral_pub_key.clone()), // keyAgreement
+        (
+            Value::Integer(0x06u64.into()),
+            Value::Bytes(pin_hash_enc.to_vec()),
+        ), // pinHashEnc
+    ]);
+
+    let mut gpt_req = vec![0x06u8]; // authenticatorClientPIN
+    ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+
+    let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
+    if gpt_resp.is_empty() {
+        return Err(SoloError::DeviceError(
+            "Empty response from getPINToken".into(),
+        ));
+    }
+    if gpt_resp[0] != 0x00 {
+        let code = gpt_resp[0];
+        let hint = match code {
+            0x31 => " (PIN_INVALID — wrong PIN)",
+            0x32 => " (PIN_BLOCKED — too many attempts; reset required)",
+            0x34 => " (PIN_AUTH_BLOCKED — power-cycle the key and retry)",
+            _ => "",
+        };
+        return Err(SoloError::DeviceError(format!(
+            "getPINToken returned CTAP error 0x{:02X}{}",
+            code, hint
+        )));
+    }
+
+    let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])
+        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+    let gpt_pairs = match gpt_val {
+        Value::Map(p) => p,
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getPINToken response is not a CBOR map".into(),
+            ))
+        }
+    };
+
+    let pin_token_enc = match find_cbor_response_by_key(&gpt_pairs, 0x02) {
+        Some(Value::Bytes(b)) => b.clone(),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "pinTokenEnc (0x02) missing from getPINToken response".into(),
+            ))
+        }
+    };
+
+    session.decrypt_pin_token(&pin_token_enc)
+}
+
 /// Represents an established shared secret with a CTAP2 device.
 pub struct ClientPinSession {
     shared_secret: [u8; 32],

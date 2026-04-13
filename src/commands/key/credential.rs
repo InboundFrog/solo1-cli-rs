@@ -1,6 +1,5 @@
 use crate::commands::key::ctap2::{
-    create_key_agreement_cbor, extract_cbor_text_responses, extract_cose_coord,
-    find_cbor_response_by_key, find_key_agreement_response,
+    extract_cbor_text_responses, find_cbor_response_by_key, get_pin_token,
 };
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -144,14 +143,10 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
 ///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
 ///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
 pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
-    use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use base64::Engine as _;
     use ciborium::value::Value;
     use hmac::{Hmac, KeyInit as _, Mac as _};
-    use p256::ecdh::EphemeralSecret;
-    use p256::EncodedPoint;
-    use rand::rngs::OsRng;
-    use sha2::{Digest as _, Sha256};
+    use sha2::Sha256;
 
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
@@ -169,200 +164,8 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         ));
     }
 
-    // 0a. getKeyAgreement (clientPIN 0x06, subcommand 0x02)
-    let get_ka_cbor = create_key_agreement_cbor();
-    let mut ka_req = vec![0x06u8];
-    ciborium::ser::into_writer(&get_ka_cbor, &mut ka_req)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-
-    let ka_resp = hid.send_recv(CTAPHID_CBOR, &ka_req)?;
-    if ka_resp.is_empty() {
-        return Err(SoloError::DeviceError(
-            "Empty response from getKeyAgreement".into(),
-        ));
-    }
-    if ka_resp[0] != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "getKeyAgreement returned CTAP error 0x{:02X}",
-            ka_resp[0]
-        )));
-    }
-
-    let ka_val: Value = ciborium::de::from_reader(&ka_resp[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-    let ka_pairs = match ka_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getKeyAgreement response is not a map".into(),
-            ))
-        }
-    };
-
-    let key_agreement = find_key_agreement_response(&ka_pairs)?;
-    let cose_pairs = match key_agreement {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "keyAgreement is not a CBOR map".into(),
-            ))
-        }
-    };
-
-    let dev_x = extract_cose_coord(cose_pairs, -2)?;
-    let dev_y = extract_cose_coord(cose_pairs, -3)?;
-    if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::DeviceError(
-            "Device COSE key coordinates are not 32 bytes".into(),
-        ));
-    }
-
-    let mut uncompressed = vec![0x04u8];
-    uncompressed.extend_from_slice(&dev_x);
-    uncompressed.extend_from_slice(&dev_y);
-    let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))?;
-
-    // 0b. Ephemeral keypair + ECDH → shared_secret
-    let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
-    let ephemeral_pub = p256::PublicKey::from(&ephemeral_secret);
-    let ephemeral_point = EncodedPoint::from(&ephemeral_pub);
-
-    let shared_secret_point = ephemeral_secret.diffie_hellman(&dev_pub_key);
-    let shared_secret: [u8; 32] = Sha256::digest(shared_secret_point.raw_secret_bytes()).into();
-
-    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-    type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
-
-    // 0c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
-    let pin_hash_full = Sha256::digest(pin.as_bytes());
-    let pin_hash: [u8; 16] = pin_hash_full[..16]
-        .try_into()
-        .map_err(|_| SoloError::DeviceError("Failed to slice pin hash".into()))?;
-    let mut pin_hash_enc = [0u8; 16];
-    #[allow(deprecated)]
-    {
-        use hybrid_array::Array as HybridArray;
-        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
-        let iv = [0u8; 16];
-        let src: &[Block16] =
-            unsafe { std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1) };
-        let dst: &mut [Block16] =
-            unsafe { std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1) };
-        let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into()).encrypt_blocks_b2b(src, dst);
-    }
-
-    // 0d. getPINToken (subcommand 0x05)
-    let eph_x = ephemeral_point
-        .x()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x".into()))?
-        .to_vec();
-    let eph_y = ephemeral_point
-        .y()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y".into()))?
-        .to_vec();
-
-    let eph_cose = Value::Map(vec![
-        (Value::Integer(1i64.into()), Value::Integer(2i64.into())),
-        (Value::Integer(3i64.into()), Value::Integer((-7i64).into())),
-        (Value::Integer((-1i64).into()), Value::Integer(1i64.into())),
-        (Value::Integer((-2i64).into()), Value::Bytes(eph_x)),
-        (Value::Integer((-3i64).into()), Value::Bytes(eph_y)),
-    ]);
-
-    let get_pin_token_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())), // subCommand = getPINToken
-        (Value::Integer(0x03u64.into()), eph_cose),                    // keyAgreement
-        (
-            Value::Integer(0x06u64.into()),
-            Value::Bytes(pin_hash_enc.to_vec()),
-        ), // pinHashEnc
-    ]);
-
-    let mut gpt_req = vec![0x06u8];
-    ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-
-    let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
-    if gpt_resp.is_empty() {
-        return Err(SoloError::DeviceError(
-            "Empty response from getPINToken".into(),
-        ));
-    }
-    if gpt_resp[0] != 0x00 {
-        let code = gpt_resp[0];
-        let hint = match code {
-            0x31 => " (PIN_INVALID — wrong PIN)",
-            0x32 => " (PIN_BLOCKED — too many attempts; reset required)",
-            0x34 => " (PIN_AUTH_BLOCKED — power-cycle the key and retry)",
-            _ => "",
-        };
-        return Err(SoloError::DeviceError(format!(
-            "getPINToken returned CTAP error 0x{:02X}{}",
-            code, hint
-        )));
-    }
-
-    let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-    let gpt_pairs = match gpt_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getPINToken response is not a map".into(),
-            ))
-        }
-    };
-
-    let pin_token_enc = gpt_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x02 {
-                    if let Value::Bytes(b) = v {
-                        Some(b.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| {
-            SoloError::DeviceError("pinTokenEnc (0x02) missing from getPINToken response".into())
-        })?;
-
-    if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
-        return Err(SoloError::DeviceError(format!(
-            "pinTokenEnc has unexpected length: {}",
-            pin_token_enc.len()
-        )));
-    }
-
-    // Decrypt pinToken: AES-256-CBC-decrypt(shared_secret, IV=0, pinTokenEnc)
-    // Solo 1 uses PIN_TOKEN_SIZE=16, so pinTokenEnc is exactly 16 bytes.
-    let n_token_blocks = pin_token_enc.len() / 16;
-    let mut pin_token = pin_token_enc.clone();
-    #[allow(deprecated)]
-    {
-        use hybrid_array::Array as HybridArray;
-        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
-        let iv = [0u8; 16];
-        let src: &[Block16] = unsafe {
-            std::slice::from_raw_parts(pin_token_enc.as_ptr() as *const Block16, n_token_blocks)
-        };
-        let dst: &mut [Block16] = unsafe {
-            std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut Block16, n_token_blocks)
-        };
-        let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into()).decrypt_blocks_b2b(src, dst);
-    }
-    // Use the full decrypted token (Solo 1: 16 bytes; larger tokens also supported)
-    let pin_token = &pin_token[..pin_token_enc.len()];
+    let pin_token = get_pin_token(hid, &pin)?;
+    let pin_token = pin_token.as_slice();
 
     // Helper: compute pinUvAuthParam = HMAC-SHA-256(pinToken, msg)[0..16]
     let pin_uv_auth = |msg: &[u8]| -> Result<Vec<u8>> {
@@ -644,13 +447,9 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 /// Remove a credential by ID.
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
 pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
-    use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
     use hmac::{Hmac, KeyInit as _, Mac as _};
-    use p256::ecdh::EphemeralSecret;
-    use p256::EncodedPoint;
-    use rand::rngs::OsRng;
-    use sha2::{Digest as _, Sha256};
+    use sha2::Sha256;
 
     let cred_id_bytes = hex::decode(credential_id)
         .map_err(|e| SoloError::DeviceError(format!("Invalid credential ID hex: {}", e)))?;
@@ -686,200 +485,8 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
         ));
     }
 
-    // 0a. getKeyAgreement (clientPIN 0x06, subcommand 0x02)
-    let get_ka_cbor = create_key_agreement_cbor();
-    let mut ka_req = vec![0x06u8];
-    ciborium::ser::into_writer(&get_ka_cbor, &mut ka_req)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-
-    let ka_resp = hid.send_recv(CTAPHID_CBOR, &ka_req)?;
-    if ka_resp.is_empty() {
-        return Err(SoloError::DeviceError(
-            "Empty response from getKeyAgreement".into(),
-        ));
-    }
-    if ka_resp[0] != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "getKeyAgreement returned CTAP error 0x{:02X}",
-            ka_resp[0]
-        )));
-    }
-
-    let ka_val: Value = ciborium::de::from_reader(&ka_resp[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-    let ka_pairs = match ka_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getKeyAgreement response is not a map".into(),
-            ))
-        }
-    };
-
-    let key_agreement = find_key_agreement_response(&ka_pairs)?;
-    let cose_pairs = match key_agreement {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "keyAgreement is not a CBOR map".into(),
-            ))
-        }
-    };
-
-    let dev_x = extract_cose_coord(cose_pairs, -2)?;
-    let dev_y = extract_cose_coord(cose_pairs, -3)?;
-    if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::DeviceError(
-            "Device COSE key coordinates are not 32 bytes".into(),
-        ));
-    }
-
-    let mut uncompressed = vec![0x04u8];
-    uncompressed.extend_from_slice(&dev_x);
-    uncompressed.extend_from_slice(&dev_y);
-    let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))?;
-
-    // 0b. Ephemeral keypair + ECDH → shared_secret
-    let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
-    let ephemeral_pub = p256::PublicKey::from(&ephemeral_secret);
-    let ephemeral_point = EncodedPoint::from(&ephemeral_pub);
-
-    let shared_secret_point = ephemeral_secret.diffie_hellman(&dev_pub_key);
-    let shared_secret: [u8; 32] = Sha256::digest(shared_secret_point.raw_secret_bytes()).into();
-
-    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-    type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
-
-    // 0c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
-    let pin_hash_full = Sha256::digest(pin.as_bytes());
-    let pin_hash: [u8; 16] = pin_hash_full[..16]
-        .try_into()
-        .map_err(|_| SoloError::DeviceError("Failed to slice pin hash".into()))?;
-    let mut pin_hash_enc = [0u8; 16];
-    #[allow(deprecated)]
-    {
-        use hybrid_array::Array as HybridArray;
-        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
-        let iv = [0u8; 16];
-        let src: &[Block16] =
-            unsafe { std::slice::from_raw_parts(pin_hash.as_ptr() as *const Block16, 1) };
-        let dst: &mut [Block16] =
-            unsafe { std::slice::from_raw_parts_mut(pin_hash_enc.as_mut_ptr() as *mut Block16, 1) };
-        let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into()).encrypt_blocks_b2b(src, dst);
-    }
-
-    // 0d. getPINToken (subcommand 0x05)
-    let eph_x = ephemeral_point
-        .x()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x".into()))?
-        .to_vec();
-    let eph_y = ephemeral_point
-        .y()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y".into()))?
-        .to_vec();
-
-    let eph_cose = Value::Map(vec![
-        (Value::Integer(1i64.into()), Value::Integer(2i64.into())),
-        (Value::Integer(3i64.into()), Value::Integer((-7i64).into())),
-        (Value::Integer((-1i64).into()), Value::Integer(1i64.into())),
-        (Value::Integer((-2i64).into()), Value::Bytes(eph_x)),
-        (Value::Integer((-3i64).into()), Value::Bytes(eph_y)),
-    ]);
-
-    let get_pin_token_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())), // subCommand = getPINToken
-        (Value::Integer(0x03u64.into()), eph_cose),                    // keyAgreement
-        (
-            Value::Integer(0x06u64.into()),
-            Value::Bytes(pin_hash_enc.to_vec()),
-        ), // pinHashEnc
-    ]);
-
-    let mut gpt_req = vec![0x06u8];
-    ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-
-    let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
-    if gpt_resp.is_empty() {
-        return Err(SoloError::DeviceError(
-            "Empty response from getPINToken".into(),
-        ));
-    }
-    if gpt_resp[0] != 0x00 {
-        let code = gpt_resp[0];
-        let hint = match code {
-            0x31 => " (PIN_INVALID — wrong PIN)",
-            0x32 => " (PIN_BLOCKED — too many attempts; reset required)",
-            0x34 => " (PIN_AUTH_BLOCKED — power-cycle the key and retry)",
-            _ => "",
-        };
-        return Err(SoloError::DeviceError(format!(
-            "getPINToken returned CTAP error 0x{:02X}{}",
-            code, hint
-        )));
-    }
-
-    let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-    let gpt_pairs = match gpt_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getPINToken response is not a map".into(),
-            ))
-        }
-    };
-
-    let pin_token_enc = gpt_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x02 {
-                    if let Value::Bytes(b) = v {
-                        Some(b.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| {
-            SoloError::DeviceError("pinTokenEnc (0x02) missing from getPINToken response".into())
-        })?;
-
-    if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
-        return Err(SoloError::DeviceError(format!(
-            "pinTokenEnc has unexpected length: {}",
-            pin_token_enc.len()
-        )));
-    }
-
-    // Decrypt pinToken: AES-256-CBC-decrypt(shared_secret, IV=0, pinTokenEnc)
-    // Solo 1 uses PIN_TOKEN_SIZE=16, so pinTokenEnc is exactly 16 bytes.
-    let n_token_blocks = pin_token_enc.len() / 16;
-    let mut pin_token = pin_token_enc.clone();
-    #[allow(deprecated)]
-    {
-        use hybrid_array::Array as HybridArray;
-        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
-        let iv = [0u8; 16];
-        let src: &[Block16] = unsafe {
-            std::slice::from_raw_parts(pin_token_enc.as_ptr() as *const Block16, n_token_blocks)
-        };
-        let dst: &mut [Block16] = unsafe {
-            std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut Block16, n_token_blocks)
-        };
-        let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into()).decrypt_blocks_b2b(src, dst);
-    }
-    // Use the full decrypted token (Solo 1: 16 bytes; larger tokens also supported)
-    let pin_token = &pin_token[..pin_token_enc.len()];
+    let pin_token = get_pin_token(hid, &pin)?;
+    let pin_token = pin_token.as_slice();
 
     // ── Step 1: deleteCredential (subcommand 0x06) ───────────────────────
     // subCommandParams = CBOR({0x01: credentialId bytes})

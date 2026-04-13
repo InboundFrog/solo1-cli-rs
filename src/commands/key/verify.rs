@@ -1,4 +1,4 @@
-use crate::commands::key::ctap2::find_cbor_response_by_key;
+use crate::commands::key::ctap2::{find_cbor_response_by_key, get_pin_token};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
@@ -25,73 +25,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
             ));
         }
 
-        let dev_pub_key = super::ctap2::get_key_agreement(hid)?;
-        let session = super::ctap2::ClientPinSession::new(&dev_pub_key);
-
-        let pin_hash_enc = session.encrypt_pin_hash(&pin)?;
-
-        let get_pin_token_cbor = Value::Map(vec![
-            (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-            (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())), // subCommand = getPinToken
-            (
-                Value::Integer(0x03u64.into()),
-                session.ephemeral_pub_key.clone(),
-            ),
-            (
-                Value::Integer(0x06u64.into()),
-                Value::Bytes(pin_hash_enc.to_vec()),
-            ),
-        ]);
-        let mut gpt_req = vec![0x06u8];
-        ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)
-            .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-        let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
-        if gpt_resp.is_empty() || gpt_resp[0] != 0x00 {
-            let code = gpt_resp.first().copied().unwrap_or(0xFF);
-            let hint = match code {
-                0x31 => " (PIN_INVALID — wrong PIN)",
-                0x32 => " (PIN_BLOCKED — too many attempts; reset required)",
-                0x34 => " (PIN_AUTH_BLOCKED — power-cycle the key and retry)",
-                _ => "",
-            };
-            return Err(SoloError::DeviceError(format!(
-                "getPINToken returned CTAP error 0x{:02X}{}",
-                code, hint
-            )));
-        }
-        let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])
-            .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-        let gpt_pairs = match gpt_val {
-            Value::Map(p) => p,
-            _ => {
-                return Err(SoloError::DeviceError(
-                    "getPINToken response is not a map".into(),
-                ))
-            }
-        };
-        let pin_token_enc = gpt_pairs
-            .iter()
-            .find_map(|(k, v)| {
-                if let Value::Integer(i) = k {
-                    let ki: u64 = (*i).try_into().ok()?;
-                    if ki == 0x02 {
-                        if let Value::Bytes(b) = v {
-                            Some(b.clone())
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                SoloError::DeviceError("pinTokenEnc missing from getPINToken response".into())
-            })?;
-
-        let pin_token = session.decrypt_pin_token(&pin_token_enc)?;
+        let pin_token = get_pin_token(hid, &pin)?;
 
         // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
         let mut mac = Hmac::<Sha256>::new_from_slice(&pin_token)
