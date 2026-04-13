@@ -174,8 +174,10 @@ pub enum KeyCommands {
 
     /// Calculate hash on device
     Probe {
-        /// Hash type: sha256, sha512, rsa2048, ed25519
+        /// Hash type: SHA256, SHA512, RSA2048, Ed25519 (case-insensitive)
         hash_type: String,
+        /// File to hash (must be <= 6144 bytes)
+        filename: PathBuf,
     },
 
     /// Sign file with resident credential

@@ -326,21 +326,66 @@ pub fn cmd_disable_updates(hid: &SoloHid) -> Result<()> {
 }
 
 /// Run a hash probe on the device.
-pub fn cmd_probe(hid: &SoloHid, hash_type: &str) -> Result<()> {
-    let hash_code: u8 = match hash_type {
-        "sha256" => 0x01,
-        "sha512" => 0x02,
-        "rsa2048" => 0x03,
-        "ed25519" => 0x04,
+///
+/// Sends a CBOR-encoded command to CMD_PROBE (0x70):
+///   {"subcommand": hash_type_str, "data": file_bytes}
+///
+/// Valid hash types (case-insensitive input, sent as canonical form):
+///   SHA256, SHA512, RSA2048, Ed25519
+///
+/// File must be <= 6144 bytes.
+pub fn cmd_probe(hid: &SoloHid, hash_type: &str, filename: &Path) -> Result<()> {
+    // Normalize hash type to the canonical form expected by the device
+    let hash_type_str = match hash_type.to_lowercase().as_str() {
+        "sha256" => "SHA256",
+        "sha512" => "SHA512",
+        "rsa2048" => "RSA2048",
+        "ed25519" => "Ed25519",
         other => {
             return Err(SoloError::DeviceError(format!(
-                "Unknown hash type: {}. Valid: sha256, sha512, rsa2048, ed25519",
+                "Unknown hash type: {}. Valid: SHA256, SHA512, RSA2048, Ed25519",
                 other
             )))
         }
     };
-    let response = hid.send_recv(CMD_PROBE, &[hash_code])?;
-    println!("Probe result ({}): {}", hash_type, hex::encode(&response));
+
+    let file_bytes = std::fs::read(filename)?;
+    if file_bytes.len() > 6 * 1024 {
+        return Err(SoloError::DeviceError(format!(
+            "File too large: {} bytes (max 6144)",
+            file_bytes.len()
+        )));
+    }
+
+    // CBOR-encode: {"subcommand": hash_type_str, "data": file_bytes}
+    use ciborium::value::Value;
+    let cbor_val = Value::Map(vec![
+        (
+            Value::Text("subcommand".into()),
+            Value::Text(hash_type_str.into()),
+        ),
+        (Value::Text("data".into()), Value::Bytes(file_bytes)),
+    ]);
+    let mut cbor_bytes = Vec::new();
+    ciborium::ser::into_writer(&cbor_val, &mut cbor_bytes)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+
+    let response = hid.send_recv(CMD_PROBE, &cbor_bytes)?;
+    let result_hex = hex::encode(&response);
+    println!("{}", result_hex);
+
+    if hash_type_str == "Ed25519" {
+        // First 64 bytes = signature (128 hex chars), rest = content
+        if response.len() > 64 {
+            println!("content: {:?}", &response[64..]);
+            println!(
+                "content from hex: {:?}",
+                &response[64..]
+            );
+            println!("signature: {}", &result_hex[..128.min(result_hex.len())]);
+        }
+    }
+
     Ok(())
 }
 

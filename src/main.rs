@@ -146,9 +146,9 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> 
             key::cmd_disable_updates(&hid)?;
         }
 
-        KeyCommands::Probe { hash_type } => {
+        KeyCommands::Probe { hash_type, filename } => {
             let hid = SoloHid::open(serial)?;
-            key::cmd_probe(&hid, &hash_type)?;
+            key::cmd_probe(&hid, &hash_type, &filename)?;
         }
 
         KeyCommands::SignFile { credential_id, filename } => {
