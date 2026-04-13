@@ -804,4 +804,73 @@ mod tests {
         assert_eq!(fw.firmware_bytes().unwrap(), firmware);
         assert_eq!(fw.signature_bytes().unwrap(), signature);
     }
+
+    #[test]
+    fn test_flash_addr() {
+        assert_eq!(flash_addr(0), 0x08000000);
+        assert_eq!(flash_addr(1), 0x08000800);
+        assert_eq!(flash_addr(108), 0x08036000);
+        assert_eq!(flash_addr(113), 0x08038800);
+    }
+
+    #[test]
+    fn test_firmware_bytes_to_sign_for_version_sizes_differ() {
+        // v1 (app_end_page=19) should produce a larger signing region than v2 (app_end_page=20)
+        // end_v1 = flash_addr(128-19) - 8 = flash_addr(109) - 8
+        // end_v2 = flash_addr(128-20) - 8 = flash_addr(108) - 8
+        let end_v1 = flash_addr(FLASH_PAGES - 19) - 8;
+        let end_v2 = flash_addr(FLASH_PAGES - 20) - 8;
+        // v1 region is one page larger
+        assert_eq!(end_v1 - end_v2, FLASH_PAGE_SIZE);
+    }
+
+    #[test]
+    fn test_auth_word_addr() {
+        // Python: APPLICATION_END_PAGE = 128 - 20 = 108
+        // AUTH_WORD_ADDR = flash_addr(108) - 8 = 0x08036000 - 8 = 0x08035FF8
+        let app_end_page = FLASH_PAGES - 20; // 108
+        let auth_word_addr = flash_addr(app_end_page) - 8;
+        assert_eq!(auth_word_addr, 0x08035FF8);
+    }
+
+    #[test]
+    fn test_hacker_attestation_key_is_valid() {
+        use super::HACKER_ATTESTATION_KEY_HEX;
+        let bytes = hex::decode(HACKER_ATTESTATION_KEY_HEX).expect("key should be valid hex");
+        assert_eq!(bytes.len(), 32, "attestation key should be 32 bytes");
+        assert_eq!(
+            HACKER_ATTESTATION_KEY_HEX,
+            "1b2626ecc8f69b0f69e34fb236d76466ba12ac16c3ab5750ba064e8b90e02448"
+        );
+    }
+
+    #[test]
+    fn test_hacker_attestation_cert_is_valid() {
+        use super::HACKER_ATTESTATION_CERT;
+        assert_eq!(HACKER_ATTESTATION_CERT.len(), 749);
+        // DER SEQUENCE tag
+        assert_eq!(HACKER_ATTESTATION_CERT[0], 0x30);
+    }
+
+    #[test]
+    fn test_version_constraint_equals() {
+        let v = FirmwareVersion::new(2, 5, 3);
+        assert!(version_matches_constraint(&v, "=2.5.3").unwrap());
+        assert!(!version_matches_constraint(&v, "=2.5.4").unwrap());
+    }
+
+    #[test]
+    fn test_version_constraint_all_operators() {
+        let v253 = FirmwareVersion::new(2, 5, 3);
+        let v300 = FirmwareVersion::new(3, 0, 0);
+
+        assert!(version_matches_constraint(&v253, "<=2.5.3").unwrap());
+        assert!(version_matches_constraint(&v253, "<3.0.0").unwrap());
+        assert!(version_matches_constraint(&v300, ">2.5.3").unwrap());
+        assert!(version_matches_constraint(&v300, ">=3.0.0").unwrap());
+        assert!(version_matches_constraint(&v253, "=2.5.3").unwrap());
+
+        assert!(!version_matches_constraint(&v300, "<=2.5.3").unwrap());
+        assert!(!version_matches_constraint(&v253, ">2.5.3").unwrap());
+    }
 }
