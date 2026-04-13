@@ -1555,6 +1555,49 @@ pub mod credential {
     use super::*;
     use crate::device::CTAPHID_CBOR;
 
+    /// Query CTAP2 getInfo (0x04) and return whether a PIN has been set on the device.
+    ///
+    /// Returns `Ok(true)` when `options.clientPin == true`, `Ok(false)` when it is
+    /// `false` or absent, and `Err(...)` on communication / parse failures.
+    fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
+        use ciborium::value::Value;
+
+        let get_info_req = vec![0x04u8];
+        let info_resp = hid.send_recv(CTAPHID_CBOR, &get_info_req)?;
+        if info_resp.is_empty() || info_resp[0] != 0x00 {
+            return Err(SoloError::DeviceError("getInfo failed".into()));
+        }
+        let info_val: Value = ciborium::de::from_reader(&info_resp[1..])
+            .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+        let pairs = match info_val {
+            Value::Map(p) => p,
+            _ => return Err(SoloError::DeviceError("getInfo response is not a CBOR map".into())),
+        };
+        // Key 0x04 in getInfo response is the options map (text → bool)
+        let client_pin_set = pairs
+            .iter()
+            .find_map(|(k, v)| {
+                if let Value::Integer(i) = k {
+                    let ki: u64 = (*i).try_into().ok()?;
+                    if ki == 0x04 {
+                        if let Value::Map(opts) = v {
+                            return Some(opts.iter().find_map(|(ok, ov)| {
+                                if let (Value::Text(name), Value::Bool(b)) = (ok, ov) {
+                                    if name == "clientPin" { Some(*b) } else { None }
+                                } else {
+                                    None
+                                }
+                            }));
+                        }
+                    }
+                }
+                None
+            })
+            .flatten()
+            .unwrap_or(false);
+        Ok(client_pin_set)
+    }
+
     /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
     pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
         use ciborium::de::from_reader;
@@ -1713,6 +1756,13 @@ pub mod credential {
         use p256::EncodedPoint;
         use rand::rngs::OsRng;
         use sha2::{Digest as _, Sha256};
+
+        // ── Pre-check: ensure a PIN has been set on the device ──────────────
+        if !get_info_client_pin_set(hid)? {
+            return Err(SoloError::DeviceError(
+                "Credential management requires a PIN. Please set a PIN first with 'solo1 key set-pin'.".into(),
+            ));
+        }
 
         // ── Step 0: get PIN token ────────────────────────────────────────────
 
@@ -2149,6 +2199,13 @@ pub mod credential {
         if confirmation.trim() != "yes" {
             println!("Aborted.");
             return Ok(());
+        }
+
+        // ── Pre-check: ensure a PIN has been set on the device ──────────────
+        if !get_info_client_pin_set(hid)? {
+            return Err(SoloError::DeviceError(
+                "Credential management requires a PIN. Please set a PIN first with 'solo1 key set-pin'.".into(),
+            ));
         }
 
         // ── Step 0: get PIN token ────────────────────────────────────────────
