@@ -11,18 +11,28 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{Result, SoloError};
 
-/// Known attestation certificate fingerprints (SHA-256 of DER).
-pub const SOLO_ATTEST_FINGERPRINT: &str =
-    "1b2626ecc8f69b0f69e34fb236d76466ba12ac16c3ab5750ba064e8b90e02448";
+/// Known attestation certificate fingerprints (SHA-256 of DER cert bytes).
+/// These match the fingerprints checked in the Python reference (key.py verify command).
+pub const SOLO_V3_FINGERPRINT: &str =
+    "72d5833126acfce9a8e8266018e6414934c8be4ab8685f91b0992113bbd43295";
 pub const SOLO_HACKER_FINGERPRINT: &str =
-    "a149e0eab7fce935901e4bb45df18f2f0f68ad44f3c47b28b9785c3f1217e4b5";
+    "d06d6ccbda7de56a1627c2a7899c35a2a316c851b36ad8ed7ed78479bb787ef7";
+pub const SOLO_EMULATION_FINGERPRINT: &str =
+    "0592e1b2ba8e610d629a9bc015197e4adadc3136e0a0a176d9b57d17a6b80b38";
+pub const SOLO_TAP_FINGERPRINT: &str =
+    "b36b03211164db1d60413ec0f8d827e0eec204be29065300940ed9c59b90533f";
 pub const SOMU_FINGERPRINT: &str =
-    "3e3169e0de4b7e68e8e96a5dff47f7ec5a2c7f89b7f2e76d57dc041fc70a46d0";
+    "8dde12db98e87c90c9d6231a9cd8fe3f54df82b73d732e8e72ec9f98f8b5c6c1";
+pub const SOLO_FINGERPRINT: &str =
+    "327585e49e496cffdebc4b280608183134e7cbf4c01670679476291cd9b98104";
 
 pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
-    (SOLO_ATTEST_FINGERPRINT, "Solo <= 3.0.0"),
-    (SOLO_HACKER_FINGERPRINT, "Solo Hacker"),
-    (SOMU_FINGERPRINT, "Somu"),
+    (SOLO_V3_FINGERPRINT, "Valid Solo (<=3.0.0) firmware from SoloKeys."),
+    (SOLO_HACKER_FINGERPRINT, "Solo Hacker firmware."),
+    (SOLO_EMULATION_FINGERPRINT, "Local software emulation."),
+    (SOLO_TAP_FINGERPRINT, "Valid Solo Tap with firmware from SoloKeys."),
+    (SOMU_FINGERPRINT, "Valid Somu with firmware from SoloKeys."),
+    (SOLO_FINGERPRINT, "Valid Solo with firmware from SoloKeys."),
 ];
 
 /// Generate a new ECDSA P-256 key pair.
@@ -174,15 +184,25 @@ mod tests {
     }
 
     #[test]
+    fn test_attestation_fingerprint_constants_valid_hex() {
+        // Verify all fingerprint constants are valid 32-byte hex strings
+        for (fp, _name) in KNOWN_FINGERPRINTS {
+            let bytes = hex::decode(fp).expect("fingerprint should be valid hex");
+            assert_eq!(bytes.len(), 32, "fingerprint should be 32 bytes: {}", fp);
+        }
+    }
+
+    #[test]
     fn test_attestation_fingerprint_match() {
-        // Construct data whose SHA256 equals SOLO_ATTEST_FINGERPRINT
-        // We test that the function returns None for random data (since we can't
-        // preimage a SHA256), and separately that it would return Some for a
-        // matching fingerprint by checking the logic path.
-        let fp_bytes = hex::decode(SOLO_ATTEST_FINGERPRINT).unwrap();
+        // Verify that fingerprint constants are valid hex
+        let fp_bytes = hex::decode(SOLO_V3_FINGERPRINT).unwrap();
         assert_eq!(fp_bytes.len(), 32);
-        // Just verify the fingerprint constants are valid hex
+        // Just verify all fingerprint constants are valid hex
         assert!(hex::decode(SOLO_HACKER_FINGERPRINT).is_ok());
         assert!(hex::decode(SOMU_FINGERPRINT).is_ok());
+        assert!(hex::decode(SOLO_TAP_FINGERPRINT).is_ok());
+        assert!(hex::decode(SOLO_EMULATION_FINGERPRINT).is_ok());
+        assert!(hex::decode(SOLO_FINGERPRINT).is_ok());
+        assert_eq!(KNOWN_FINGERPRINTS.len(), 6);
     }
 }
