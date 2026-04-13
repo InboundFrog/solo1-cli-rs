@@ -192,7 +192,7 @@ impl DfuDevice {
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} chunks")
-                .unwrap()
+                .map_err(|e| SoloError::FirmwareError(format!("Progress bar style error: {}", e)))?
                 .progress_chars("##-"),
         );
 
