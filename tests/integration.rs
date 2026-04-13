@@ -252,7 +252,7 @@ fn test_mergehex_key_cert_must_both_be_provided() {
         .unwrap();
     tmp_hex.flush().unwrap();
 
-    let mut tmp_out = NamedTempFile::new().unwrap();
+    let tmp_out = NamedTempFile::new().unwrap();
     let key_path = tmp_hex.path(); // reuse as fake key path
 
     // key without cert -> error
