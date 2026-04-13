@@ -1930,13 +1930,14 @@ pub mod credential {
             })
             .ok_or_else(|| SoloError::DeviceError("pinTokenEnc (0x02) missing from getPINToken response".into()))?;
 
-        if pin_token_enc.len() != 32 && pin_token_enc.len() != 48 {
+        if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
             return Err(SoloError::DeviceError(format!(
                 "pinTokenEnc has unexpected length: {}", pin_token_enc.len()
             )));
         }
 
         // Decrypt pinToken: AES-256-CBC-decrypt(shared_secret, IV=0, pinTokenEnc)
+        // Solo 1 uses PIN_TOKEN_SIZE=16, so pinTokenEnc is exactly 16 bytes.
         let n_token_blocks = pin_token_enc.len() / 16;
         let mut pin_token = pin_token_enc.clone();
         #[allow(deprecated)]
@@ -1953,8 +1954,8 @@ pub mod credential {
             let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
                 .decrypt_blocks_b2b_mut(src, dst);
         }
-        // pinToken is the first 32 bytes (may be padded to 48)
-        let pin_token = &pin_token[..32];
+        // Use the full decrypted token (Solo 1: 16 bytes; larger tokens also supported)
+        let pin_token = &pin_token[..pin_token_enc.len()];
 
         // Helper: compute pinUvAuthParam = HMAC-SHA-256(pinToken, msg)[0..16]
         let pin_uv_auth = |msg: &[u8]| -> Result<Vec<u8>> {
@@ -2374,13 +2375,14 @@ pub mod credential {
             })
             .ok_or_else(|| SoloError::DeviceError("pinTokenEnc (0x02) missing from getPINToken response".into()))?;
 
-        if pin_token_enc.len() != 32 && pin_token_enc.len() != 48 {
+        if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
             return Err(SoloError::DeviceError(format!(
                 "pinTokenEnc has unexpected length: {}", pin_token_enc.len()
             )));
         }
 
         // Decrypt pinToken: AES-256-CBC-decrypt(shared_secret, IV=0, pinTokenEnc)
+        // Solo 1 uses PIN_TOKEN_SIZE=16, so pinTokenEnc is exactly 16 bytes.
         let n_token_blocks = pin_token_enc.len() / 16;
         let mut pin_token = pin_token_enc.clone();
         #[allow(deprecated)]
@@ -2397,8 +2399,8 @@ pub mod credential {
             let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
                 .decrypt_blocks_b2b_mut(src, dst);
         }
-        // pinToken is the first 32 bytes (may be padded to 48)
-        let pin_token = &pin_token[..32];
+        // Use the full decrypted token (Solo 1: 16 bytes; larger tokens also supported)
+        let pin_token = &pin_token[..pin_token_enc.len()];
 
         // ── Step 1: deleteCredential (subcommand 0x06) ───────────────────────
         // subCommandParams = CBOR({0x01: credentialId bytes})
