@@ -1,6 +1,7 @@
 use crate::commands::key::ctap2;
 use crate::commands::key::ctap2::{
     extract_cose_coord, find_cbor_response_by_key, find_key_agreement_response,
+    parse_cbor_map_response,
 };
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -86,30 +87,7 @@ pub fn cmd_make_credential(hid: &SoloHid, host: &str, user: &str, prompt: &str) 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
     // First byte is CTAP2 status code; 0x00 = success
-    if response.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from device".into()));
-    }
-    let status = response[0];
-    if status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "makeCredential returned CTAP error 0x{:02X}",
-            status
-        )));
-    }
-
-    // Parse the CBOR response map
-    let cbor_bytes = &response[1..];
-    let resp_val: Value = ciborium::de::from_reader(cbor_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-
-    let pairs = match resp_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "makeCredential response is not a CBOR map".into(),
-            ))
-        }
-    };
+    let pairs = parse_cbor_map_response(&response, "makeCredential")?;
 
     // 0x02: authData bytes — contains rpIdHash, flags, signCount, AAGUID, credentialId
     let auth_data = match find_cbor_response_by_key(&pairs, 0x02) {
@@ -211,28 +189,7 @@ pub fn cmd_challenge_response(
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
-    if response.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from device".into()));
-    }
-    let status = response[0];
-    if status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "getKeyAgreement returned CTAP error 0x{:02X}",
-            status
-        )));
-    }
-
-    let resp_val: Value = ciborium::de::from_reader(&response[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-
-    let resp_pairs = match resp_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getKeyAgreement response is not a map".into(),
-            ))
-        }
-    };
+    let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
 
     let key_agreement = find_key_agreement_response(&resp_pairs)?;
     let cose_pairs = match key_agreement {
@@ -358,31 +315,8 @@ pub fn cmd_challenge_response(
 
     let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
 
-    if ga_response.is_empty() {
-        return Err(SoloError::DeviceError(
-            "Empty response from getAssertion".into(),
-        ));
-    }
-    let ga_status = ga_response[0];
-    if ga_status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "getAssertion returned CTAP error 0x{:02X}",
-            ga_status
-        )));
-    }
-
     // ── Step 8: Parse authData from getAssertion response ────────────────────
-    let ga_val: Value = ciborium::de::from_reader(&ga_response[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-
-    let ga_pairs = match ga_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getAssertion response is not a map".into(),
-            ))
-        }
-    };
+    let ga_pairs = parse_cbor_map_response(&ga_response, "getAssertion")?;
 
     // authData is at key 0x02 in the getAssertion response
     let auth_data = match find_cbor_response_by_key(&ga_pairs, 0x02) {

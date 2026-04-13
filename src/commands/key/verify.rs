@@ -1,4 +1,4 @@
-use crate::commands::key::ctap2::{find_cbor_response_by_key, get_pin_token};
+use crate::commands::key::ctap2::{find_cbor_response_by_key, get_pin_token, parse_cbor_map_response};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
@@ -94,30 +94,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
     // First byte is CTAP2 status code; 0x00 = success
-    if response.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from device".into()));
-    }
-    let status = response[0];
-    if status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "makeCredential returned CTAP error 0x{:02X}",
-            status
-        )));
-    }
-
-    // Parse the CBOR response map
-    let cbor_bytes = &response[1..];
-    let resp_val: Value = ciborium::de::from_reader(cbor_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-
-    let pairs = match resp_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "makeCredential response is not a CBOR map".into(),
-            ))
-        }
-    };
+    let pairs = parse_cbor_map_response(&response, "makeCredential")?;
 
     // 0x03: attStmt map — contains "x5c" array of DER-encoded certs
     let att_stmt = match find_cbor_response_by_key(&pairs, 0x03) {

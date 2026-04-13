@@ -1,5 +1,6 @@
 use crate::commands::key::ctap2::{
     extract_cbor_text_responses, find_cbor_response_by_key, get_pin_token,
+    parse_cbor_map_response,
 };
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -14,37 +15,13 @@ pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
 pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
-    use ciborium::de::from_reader;
     use ciborium::value::Value;
 
     // CTAP2 getInfo
     let cbor_get_info = vec![0x04u8];
     let response = hid.send_recv(CTAPHID_CBOR, &cbor_get_info)?;
 
-    // The first byte of a CTAP2 response is the status code; 0x00 = success.
-    if response.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from device".into()));
-    }
-    let status = response[0];
-    if status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "authenticatorGetInfo returned CTAP error 0x{:02X}",
-            status
-        )));
-    }
-    let cbor_bytes = &response[1..];
-
-    let val: Value = from_reader(cbor_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-
-    let pairs = match val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "authenticatorGetInfo response is not a CBOR map".into(),
-            ))
-        }
-    };
+    let pairs = parse_cbor_map_response(&response, "authenticatorGetInfo")?;
 
     println!("CTAP2 authenticatorGetInfo");
     println!("{}", "=".repeat(40));

@@ -13,19 +13,7 @@ use crate::error::{Result, SoloError};
 pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
     let get_info_req = vec![0x04u8];
     let info_resp = hid.send_recv(CTAPHID_CBOR, &get_info_req)?;
-    if info_resp.is_empty() || info_resp[0] != 0x00 {
-        return Err(SoloError::DeviceError("getInfo failed".into()));
-    }
-    let info_val: Value = ciborium::de::from_reader(&info_resp[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-    let pairs = match info_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getInfo response is not a CBOR map".into(),
-            ))
-        }
-    };
+    let pairs = parse_cbor_map_response(&info_resp, "getInfo")?;
     // Key 0x04 in getInfo response is the options map (text → bool)
     let client_pin_set = pairs
         .iter()
@@ -90,6 +78,42 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
         .collect()
 }
 
+/// Validate a raw CTAP2 response: checks it is non-empty and the status byte is 0x00.
+/// Returns `Ok(())` on success, `Err` with a context-tagged message otherwise.
+pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
+    if response.is_empty() {
+        return Err(SoloError::DeviceError(format!(
+            "Empty response from {}",
+            context
+        )));
+    }
+    if response[0] != 0x00 {
+        return Err(SoloError::DeviceError(format!(
+            "{} returned CTAP error 0x{:02X}",
+            context, response[0]
+        )));
+    }
+    Ok(())
+}
+
+/// Parse a raw CTAP2 response as a CBOR map: validates status, parses CBOR, checks it is a map.
+/// Returns the map pairs on success.
+pub fn parse_cbor_map_response(
+    response: &[u8],
+    context: &str,
+) -> Result<Vec<(Value, Value)>> {
+    check_ctap_status(response, context)?;
+    let val: Value = ciborium::de::from_reader(&response[1..])
+        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+    match val {
+        Value::Map(p) => Ok(p),
+        _ => Err(SoloError::DeviceError(format!(
+            "{} response is not a CBOR map",
+            context
+        ))),
+    }
+}
+
 #[inline]
 pub fn find_key_agreement_response(
     response_pairs: &[(Value, Value)],
@@ -126,28 +150,7 @@ pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
-    if response.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from device".into()));
-    }
-    let status = response[0];
-    if status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "getKeyAgreement returned CTAP error 0x{:02X}",
-            status
-        )));
-    }
-
-    let resp_val: Value = ciborium::de::from_reader(&response[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
-
-    let resp_pairs = match resp_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "getKeyAgreement response is not a map".into(),
-            ))
-        }
-    };
+    let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
 
     let key_agreement = find_key_agreement_response(&resp_pairs)?;
     let cose_pairs = match key_agreement {
