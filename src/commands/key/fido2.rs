@@ -404,23 +404,8 @@ pub fn cmd_challenge_response(
         }
     };
 
-    let get_ga_key = |key: u64| -> Option<&Value> {
-        ga_pairs.iter().find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == key {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-    };
-
     // authData is at key 0x02 in the getAssertion response
-    let auth_data = match get_ga_key(0x02) {
+    let auth_data = match find_cbor_response_by_key(&ga_pairs, 0x02) {
         Some(Value::Bytes(b)) => b,
         _ => {
             return Err(SoloError::DeviceError(

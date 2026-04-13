@@ -463,22 +463,6 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         }
     };
 
-    // Helper: look up an integer key in a CBOR map
-    fn find_int_key<'a>(pairs: &'a [(Value, Value)], key: u64) -> Option<&'a Value> {
-        pairs.iter().find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == key {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-    }
-
     // ── Step 1: enumerateRPsBegin (subcommand 0x02) ──────────────────────
     // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
     let rp_begin_auth = pin_uv_auth(&[0x02u8])?;
@@ -491,7 +475,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     }
 
     // Extract totalRPs from response (key 0x05); may be absent if only 1 RP
-    let total_rps: usize = find_int_key(&rp_begin_pairs, 0x05)
+    let total_rps: usize = find_cbor_response_by_key(&rp_begin_pairs, 0x05)
         .and_then(|v| {
             if let Value::Integer(i) = v {
                 (*i).try_into().ok()
@@ -518,7 +502,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     for rp_pairs in &rp_responses {
         // Extract rpId from key 0x03 (rp map with "id" field)
-        let rp_id: String = find_int_key(rp_pairs, 0x03)
+        let rp_id: String = find_cbor_response_by_key(rp_pairs, 0x03)
             .and_then(|v| {
                 if let Value::Map(m) = v {
                     m.iter().find_map(|(k, val)| {
@@ -543,7 +527,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             .unwrap_or_else(|| "<unknown>".into());
 
         // Extract rpIdHash from key 0x04 (32 bytes)
-        let rp_id_hash: Vec<u8> = find_int_key(rp_pairs, 0x04)
+        let rp_id_hash: Vec<u8> = find_cbor_response_by_key(rp_pairs, 0x04)
             .and_then(|v| {
                 if let Value::Bytes(b) = v {
                     Some(b.clone())
@@ -585,7 +569,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             continue;
         }
 
-        let total_creds: usize = find_int_key(&rk_begin_pairs, 0x09)
+        let total_creds: usize = find_cbor_response_by_key(&rk_begin_pairs, 0x09)
             .and_then(|v| {
                 if let Value::Integer(i) = v {
                     (*i).try_into().ok()
@@ -604,7 +588,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
         for cred_pairs in &cred_responses {
             // user: key 0x06 → map with "name" or "displayName"
-            let username: String = find_int_key(cred_pairs, 0x06)
+            let username: String = find_cbor_response_by_key(cred_pairs, 0x06)
                 .and_then(|v| {
                     if let Value::Map(m) = v {
                         // prefer "name", fall back to "displayName", then "id" as hex
@@ -648,7 +632,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
                 .unwrap_or_else(|| "<unknown>".into());
 
             // credentialId: key 0x07 → map with "id" (bytes)
-            let cred_id_b64: String = find_int_key(cred_pairs, 0x07)
+            let cred_id_b64: String = find_cbor_response_by_key(cred_pairs, 0x07)
                 .and_then(|v| {
                     if let Value::Map(m) = v {
                         m.iter().find_map(|(k, val)| {
