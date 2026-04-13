@@ -508,15 +508,136 @@ pub mod credential {
     use super::*;
     use crate::device::CTAPHID_CBOR;
 
-    /// Get credential slot info.
-    /// TODO: Full CTAP2 authenticatorGetInfo (0x04) to read credential capacity
+    /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
     pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
-        let _version = get_device_version(hid)?;
+        use ciborium::de::from_reader;
+        use ciborium::value::Value;
+
         // CTAP2 getInfo
         let cbor_get_info = vec![0x04u8];
-        let _response = hid.send_recv(CTAPHID_CBOR, &cbor_get_info)?;
-        println!("TODO: Full CTAP2 getInfo parsing not yet implemented.");
-        println!("The response would include 'maxCredentialCountInList' and 'remainingDiscoverableCredentials'.");
+        let response = hid.send_recv(CTAPHID_CBOR, &cbor_get_info)?;
+
+        // The first byte of a CTAP2 response is the status code; 0x00 = success.
+        if response.is_empty() {
+            return Err(SoloError::DeviceError("Empty response from device".into()));
+        }
+        let status = response[0];
+        if status != 0x00 {
+            return Err(SoloError::DeviceError(format!(
+                "authenticatorGetInfo returned CTAP error 0x{:02X}",
+                status
+            )));
+        }
+        let cbor_bytes = &response[1..];
+
+        let val: Value = from_reader(cbor_bytes)
+            .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+
+        let pairs = match val {
+            Value::Map(p) => p,
+            _ => {
+                return Err(SoloError::DeviceError(
+                    "authenticatorGetInfo response is not a CBOR map".into(),
+                ))
+            }
+        };
+
+        // Helper: look up a key (integer) in the map.
+        let get_key = |key: u64| -> Option<&Value> {
+            pairs.iter().find_map(|(k, v)| {
+                if let Value::Integer(i) = k {
+                    let ki: u64 = (*i).try_into().ok()?;
+                    if ki == key {
+                        return Some(v);
+                    }
+                }
+                None
+            })
+        };
+
+        println!("CTAP2 authenticatorGetInfo");
+        println!("{}", "=".repeat(40));
+
+        // 0x01: versions
+        if let Some(Value::Array(versions)) = get_key(0x01) {
+            let strs: Vec<&str> = versions
+                .iter()
+                .filter_map(|v| if let Value::Text(s) = v { Some(s.as_str()) } else { None })
+                .collect();
+            println!("Versions:                       {}", strs.join(", "));
+        }
+
+        // 0x02: extensions
+        if let Some(Value::Array(exts)) = get_key(0x02) {
+            let strs: Vec<&str> = exts
+                .iter()
+                .filter_map(|v| if let Value::Text(s) = v { Some(s.as_str()) } else { None })
+                .collect();
+            println!("Extensions:                     {}", strs.join(", "));
+        }
+
+        // 0x03: aaguid (16 bytes)
+        if let Some(Value::Bytes(aaguid)) = get_key(0x03) {
+            println!("AAGUID:                         {}", hex::encode(aaguid));
+        }
+
+        // 0x04: options (map of string -> bool)
+        if let Some(Value::Map(opts)) = get_key(0x04) {
+            let opt_strs: Vec<String> = opts
+                .iter()
+                .filter_map(|(k, v)| {
+                    if let (Value::Text(name), Value::Bool(b)) = (k, v) {
+                        Some(format!("{}: {}", name, b))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            println!("Options:                        {}", opt_strs.join(", "));
+        }
+
+        // 0x05: maxMsgSize
+        if let Some(Value::Integer(n)) = get_key(0x05) {
+            let size: u64 = (*n).try_into().unwrap_or(0);
+            println!("Max message size:               {}", size);
+        }
+
+        // 0x06: pinUvAuthProtocols
+        if let Some(Value::Array(protos)) = get_key(0x06) {
+            let nums: Vec<String> = protos
+                .iter()
+                .filter_map(|v| {
+                    if let Value::Integer(i) = v {
+                        let n: u64 = (*i).try_into().ok()?;
+                        Some(n.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            println!("PIN/UV auth protocols:          {}", nums.join(", "));
+        }
+
+        // 0x07: maxCredentialCountInList
+        if let Some(Value::Integer(n)) = get_key(0x07) {
+            let count: u64 = (*n).try_into().unwrap_or(0);
+            println!("Max credential count in list:   {}", count);
+        }
+
+        // 0x08: maxCredentialIdLength
+        if let Some(Value::Integer(n)) = get_key(0x08) {
+            let len: u64 = (*n).try_into().unwrap_or(0);
+            println!("Max credential ID length:       {}", len);
+        }
+
+        // 0x0A: remainingDiscoverableCredentials
+        if let Some(Value::Integer(n)) = get_key(0x0A) {
+            let remaining: u64 = (*n).try_into().unwrap_or(0);
+            println!("Remaining discoverable creds:   {}", remaining);
+        } else {
+            println!("Remaining discoverable creds:   (not reported by device)");
+        }
+
         Ok(())
     }
 
