@@ -56,7 +56,7 @@ fn test_version_hardware() {
 /// Test that firmware_bytes_to_sign_for_version produces different sizes for v1 and v2.
 #[test]
 fn test_firmware_sign_versioned_regions_differ() {
-    use solo1::firmware::{firmware_bytes_to_sign_for_version, FLASH_PAGES, FLASH_PAGE_SIZE};
+    use solo1::firmware::{FLASH_PAGES, FLASH_PAGE_SIZE};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -267,7 +267,7 @@ fn test_mergehex_key_cert_must_both_be_provided() {
 /// Test that mergehex with no attestation args uses default hacker attestation.
 #[test]
 fn test_mergehex_default_attestation() {
-    use solo1::firmware::{merge_hex_files, HACKER_ATTESTATION_CERT, HACKER_ATTESTATION_KEY_HEX};
+    use solo1::firmware::{merge_hex_files};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -314,7 +314,7 @@ fn test_mergehex_default_attestation() {
 /// Test that signed firmware JSON has both version signatures.
 #[test]
 fn test_firmware_sign_versioned_json_structure() {
-    use solo1::firmware::{create_firmware_json_versioned, FirmwareJson};
+    use solo1::firmware::{create_firmware_json_versioned};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
