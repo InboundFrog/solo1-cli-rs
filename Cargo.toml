@@ -17,7 +17,7 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive"] }
 hidapi = "2"
 rusb = "0.9"
-sha2 = "0.10"
+sha2 = "0.11"
 p256 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8", "ecdh"] }
 ecdsa = { version = "0.16", features = ["der"] }
 base64 = "0.22"
@@ -32,8 +32,8 @@ anyhow = "1"
 hex = "0.4"
 rand = "0.8"
 rpassword = "7"
-digest = "0.10"
-hmac = "0.12"
+digest = "0.11"
+hmac = "0.13"
 aes = "0.9"
 cbc = { version = "0.2", features = ["alloc"] }
 hybrid-array = "0.4"

@@ -12,7 +12,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
     use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
     use crate::crypto::{check_attestation_fingerprint, sha256_hex};
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, Mac as _, KeyInit as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -190,7 +190,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
         let pin_token = &pin_token[..pin_token_enc.len()];
 
         // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(pin_token)
+        let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
             .map_err(|e| SoloError::DeviceError(format!("HMAC key error: {}", e)))?;
         mac.update(&client_data_hash);
         let hmac_result = mac.finalize().into_bytes();

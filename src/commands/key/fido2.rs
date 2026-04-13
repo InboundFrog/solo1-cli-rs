@@ -206,7 +206,7 @@ pub fn cmd_challenge_response(
 ) -> Result<()> {
     use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, Mac as _, KeyInit as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -331,7 +331,7 @@ pub fn cmd_challenge_response(
     }
 
     // ── Step 6: saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16] ──────
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&shared_secret)
+    let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
         .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
     mac.update(&salt_enc);
     let mac_result = mac.finalize().into_bytes();

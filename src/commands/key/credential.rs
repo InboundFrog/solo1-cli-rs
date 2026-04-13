@@ -197,7 +197,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use base64::Engine as _;
     use ciborium::value::Value;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, Mac as _, KeyInit as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -407,7 +407,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     // Helper: compute pinUvAuthParam = HMAC-SHA-256(pinToken, msg)[0..16]
     let pin_uv_auth = |msg: &[u8]| -> Result<Vec<u8>> {
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(pin_token)
+        let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
             .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
         mac.update(msg);
         let result = mac.finalize().into_bytes();
@@ -628,7 +628,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, Mac as _, KeyInit as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -865,7 +865,7 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
     let mut del_auth_msg = vec![0x06u8];
     del_auth_msg.extend_from_slice(&del_params_cbor);
     let del_pin_uv_auth: Vec<u8> = {
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(pin_token)
+        let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
             .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
         mac.update(&del_auth_msg);
         let result = mac.finalize().into_bytes();

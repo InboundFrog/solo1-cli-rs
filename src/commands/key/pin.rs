@@ -14,7 +14,7 @@ use crate::error::{Result, SoloError};
 pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
     use aes::cipher::{BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, Mac as _, KeyInit as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -177,7 +177,7 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
     }
 
     // ── Step 6: HMAC-SHA-256(shared_secret, newPinEnc || pinHashEnc)[0..16] ─
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&shared_secret)
+    let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
         .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
     mac.update(&new_pin_enc);
     mac.update(&pin_hash_enc);
@@ -242,7 +242,7 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
 pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
     use aes::cipher::{BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, Mac as _, KeyInit as _};
     use p256::ecdh::EphemeralSecret;
     use p256::EncodedPoint;
     use rand::rngs::OsRng;
@@ -382,7 +382,7 @@ pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
     }
 
     // ── Step 5: HMAC-SHA-256(shared_secret, newPinEnc)[0..16] ──────────────
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&shared_secret)
+    let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
         .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
     mac.update(&new_pin_enc);
     let mac_result = mac.finalize().into_bytes();
