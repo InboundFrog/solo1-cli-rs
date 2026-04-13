@@ -117,20 +117,32 @@ pub fn cmd_make_credential(hid: &SoloHid, rp_id: &str) -> Result<()> {
 /// TODO: Implement full CTAP2 sequence:
 ///   1. Generate a client assertion using hmac-secret extension
 ///   2. CTAP2 getAssertion (0x02) with allowList containing credential
-///   3. salt = SHA256(secret || rp_id)
+///   3. salt = SHA256(challenge) sent as hmac-secret salt
 ///   4. Return the HMAC output from the device
-pub fn cmd_challenge_response(hid: &SoloHid, rp_id: &str, secret: &str) -> Result<()> {
+pub fn cmd_challenge_response(
+    hid: &SoloHid,
+    credential_id: &str,
+    challenge: &str,
+    host: &str,
+) -> Result<()> {
     let _version = get_device_version(hid)?;
+    // Hash the challenge with SHA-256 to produce the 32-byte salt
     let mut hasher = Sha256::new();
-    hasher.update(secret.as_bytes());
-    hasher.update(rp_id.as_bytes());
+    hasher.update(challenge.as_bytes());
     let salt = hasher.finalize();
     println!("Connected to device.");
-    println!("Salt (SHA256(secret || rp_id)): {}", hex::encode(salt));
+    println!("Credential ID: {}", credential_id);
+    println!("Host (RP): {}", host);
+    println!("Salt (SHA256(challenge)): {}", hex::encode(salt));
     println!(
         "TODO: Full CTAP2 getAssertion with hmac-secret for RP '{}' not yet implemented.",
-        rp_id
+        host
     );
+    println!("The CTAP2 sequence would:");
+    println!("  1. Send CTAPHID_CBOR (0x90) with CBOR-encoded getAssertion (0x02) request");
+    println!("  2. Include hmac-secret extension with the salt above");
+    println!("  3. Specify credential_id in the allowList");
+    println!("  4. Return the HMAC output (32 bytes) from the device");
     Ok(())
 }
 

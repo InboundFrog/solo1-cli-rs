@@ -109,10 +109,19 @@ pub enum KeyCommands {
 
     /// HMAC-secret challenge-response
     ChallengeResponse {
-        /// Relying party ID
-        rp_id: String,
-        /// Secret string
-        secret: String,
+        /// Credential ID (hex string from make-credential output)
+        credential_id: String,
+        /// Challenge/secret string to hash
+        challenge: String,
+        /// Relying party host
+        #[arg(long, default_value = "solokeys.dev")]
+        host: String,
+        /// User ID
+        #[arg(long, default_value = "they")]
+        user: String,
+        /// PIN (prompted if not provided)
+        #[arg(long)]
+        pin: Option<String>,
     },
 
     /// Verify key authenticity via attestation
