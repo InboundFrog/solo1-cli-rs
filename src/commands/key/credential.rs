@@ -298,7 +298,9 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     // 0c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
     let pin_hash_full = Sha256::digest(pin.as_bytes());
-    let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().unwrap();
+    let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().map_err(|_| {
+        SoloError::DeviceError("Failed to slice pin hash".into())
+    })?;
     let mut pin_hash_enc = [0u8; 16];
     #[allow(deprecated)]
     {
@@ -743,7 +745,9 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     // 0c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
     let pin_hash_full = Sha256::digest(pin.as_bytes());
-    let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().unwrap();
+    let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().map_err(|_| {
+        SoloError::DeviceError("Failed to slice pin hash".into())
+    })?;
     let mut pin_hash_enc = [0u8; 16];
     #[allow(deprecated)]
     {

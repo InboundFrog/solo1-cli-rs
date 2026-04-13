@@ -134,7 +134,9 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
     // ── Step 4: pinHashEnc — AES-256-CBC encrypt SHA-256(old_pin)[0..16] ───
     // pinHash = first 16 bytes of SHA-256(old_pin_utf8)
     let old_pin_hash_full = Sha256::digest(old_pin.as_bytes());
-    let pin_hash: [u8; 16] = old_pin_hash_full[..16].try_into().unwrap();
+    let pin_hash: [u8; 16] = old_pin_hash_full[..16].try_into().map_err(|_| {
+        SoloError::DeviceError("Failed to slice pin hash".into())
+    })?;
 
     let mut pin_hash_enc = [0u8; 16];
     #[allow(deprecated)]
