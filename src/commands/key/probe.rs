@@ -110,7 +110,11 @@ pub fn cmd_sign_file(hid: &SoloHid, credential_id: &str, filename: &Path) -> Res
         .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
 
     let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
+    check_ga_response(&ga_response, filename)
+}
 
+fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
+    use ciborium::value::Value;
     if ga_response.is_empty() {
         return Err(SoloError::DeviceError(
             "Empty response from getAssertion".into(),
@@ -175,4 +179,46 @@ pub fn cmd_sign_file(hid: &SoloHid, credential_id: &str, filename: &Path) -> Res
     println!("{}", hex::encode(&signature));
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_check_ga_response_ok() {
+        use ciborium::value::Value;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "test data").unwrap();
+        let path = file.path();
+
+        // status=0x00, map {0x03: bytes([0xAA, 0xBB])}
+        let ga_val = Value::Map(vec![(Value::Integer(0x03u64.into()), Value::Bytes(vec![0xAA, 0xBB]))]);
+        let mut ga_response = vec![0x00u8];
+        ciborium::ser::into_writer(&ga_val, &mut ga_response).unwrap();
+
+        let result = check_ga_response(&ga_response, path);
+        assert!(result.is_ok());
+
+        // Check if .sig file was created
+        let mut p = path.to_owned().into_os_string();
+        p.push(".sig");
+        let sig_path = std::path::PathBuf::from(p);
+        assert!(sig_path.exists());
+        let sig_data = std::fs::read(&sig_path).unwrap();
+        assert_eq!(sig_data, vec![0xAA, 0xBB]);
+        std::fs::remove_file(sig_path).unwrap();
+    }
+
+    #[test]
+    fn test_check_ga_response_error_status() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path();
+        let ga_response = vec![0x01u8]; // error status
+        let result = check_ga_response(&ga_response, path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("CTAP error 0x01"));
+    }
 }
