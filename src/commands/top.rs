@@ -5,7 +5,8 @@ use crate::crypto::{generate_keypair, load_signing_key, sign_firmware};
 use crate::device::list_solo_devices;
 use crate::error::Result;
 use crate::firmware::{
-    create_firmware_json, firmware_bytes_to_sign, merge_hex_files, parse_hex_file,
+    create_firmware_json_versioned, firmware_bytes_to_sign_for_version,
+    merge_hex_files,
 };
 
 /// Print the library version.
@@ -39,16 +40,29 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>) -> Result<
 }
 
 /// Sign a firmware hex file with the given key.
-/// Outputs JSON {firmware, signature} to stdout.
+///
+/// Generates two signatures for different bootloader versions (matching Python reference):
+///   - v1: signed over region using APPLICATION_END_PAGE=19 (bootloaders <=2.5.3)
+///   - v2: signed over region using APPLICATION_END_PAGE=20 (bootloaders >2.5.3)
+///
+/// The firmware field in the output JSON is the base64 of the HEX FILE TEXT,
+/// not the binary, matching the Python reference implementation.
+///
+/// Outputs JSON {firmware, signature, versions} to stdout.
 pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
     let signing_key = load_signing_key(key_path)?;
-    let firmware_bytes = firmware_bytes_to_sign(firmware_hex)?;
-    let sig_bytes = sign_firmware(&signing_key, &firmware_bytes)?;
 
-    // Read the full hex binary for the firmware field
-    let (_, full_bytes) = parse_hex_file(firmware_hex)?;
+    // Sign for v1 bootloaders (<=2.5.3) using app_end_page=19
+    let bytes_v1 = firmware_bytes_to_sign_for_version(firmware_hex, 19)?;
+    eprintln!("im_size (v1): {}", bytes_v1.len());
+    let sig_v1 = sign_firmware(&signing_key, &bytes_v1)?;
 
-    let fw_json = create_firmware_json(&full_bytes, &sig_bytes);
+    // Sign for v2 bootloaders (>2.5.3) using app_end_page=20
+    let bytes_v2 = firmware_bytes_to_sign_for_version(firmware_hex, 20)?;
+    eprintln!("im_size (v2): {}", bytes_v2.len());
+    let sig_v2 = sign_firmware(&signing_key, &bytes_v2)?;
+
+    let fw_json = create_firmware_json_versioned(firmware_hex, &sig_v1, &sig_v2)?;
     println!("{}", fw_json.to_json()?);
     Ok(())
 }

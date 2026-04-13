@@ -355,21 +355,123 @@ fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> u
     (0x100 - (sum & 0xFF)) as u8
 }
 
-/// Extract the firmware binary from an Intel HEX file, stripping the last 8 bytes.
-/// This is what is signed.
-pub fn firmware_bytes_to_sign(hex_path: &Path) -> Result<Vec<u8>> {
-    let (_, mut bytes) = parse_hex_file(hex_path)?;
-    if bytes.len() < 8 {
-        return Err(SoloError::FirmwareError(
-            "Firmware too small to sign".into(),
-        ));
-    }
-    let len = bytes.len() - 8;
-    bytes.truncate(len);
-    Ok(bytes)
+/// Flash base address for STM32L4.
+pub const FLASH_BASE: u32 = 0x08000000;
+/// Total number of flash pages.
+pub const FLASH_PAGES: u32 = 128;
+/// Flash page size in bytes.
+pub const FLASH_PAGE_SIZE: u32 = 2048;
+
+/// Compute the flash address for a given page number.
+pub fn flash_addr(page: u32) -> u32 {
+    FLASH_BASE + page * FLASH_PAGE_SIZE
 }
 
-/// Create a FirmwareJson from firmware bytes and a signature.
+/// Extract the firmware bytes to sign for a specific APPLICATION_END_PAGE value.
+///
+/// The signing region is:
+///   START = first address in the hex file
+///   END = flash_addr(FLASH_PAGES - app_end_page) - 8
+///   bytes = hex_data[START .. END]  (padded with 0xFF for gaps)
+///
+/// Two versions exist:
+///   app_end_page=19: for bootloaders <=2.5.3 (APPLICATION_END_PAGE_COUNT=19)
+///   app_end_page=20: for bootloaders >2.5.3  (APPLICATION_END_PAGE_COUNT=20)
+pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) -> Result<Vec<u8>> {
+    let content = std::fs::read_to_string(hex_path)?;
+    let reader = ihex::Reader::new(&content);
+    let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
+    let mut upper_linear: u32 = 0;
+
+    for record in reader {
+        let r = record.map_err(|e| {
+            SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e))
+        })?;
+        match r {
+            Record::Data { offset, value } => {
+                let addr = upper_linear + (offset as u32);
+                segments.push((addr, value));
+            }
+            Record::ExtendedLinearAddress(upper) => {
+                upper_linear = (upper as u32) << 16;
+            }
+            Record::EndOfFile => break,
+            _ => {}
+        }
+    }
+
+    if segments.is_empty() {
+        return Err(SoloError::FirmwareError("No data in HEX file".into()));
+    }
+
+    segments.sort_by_key(|(addr, _)| *addr);
+    let start = segments[0].0;
+
+    // END = flash_addr(PAGES - app_end_page) - 8
+    let end = flash_addr(FLASH_PAGES - app_end_page) - 8;
+
+    if end <= start {
+        return Err(SoloError::FirmwareError(format!(
+            "Signing region is empty: start=0x{:08X} end=0x{:08X}",
+            start, end
+        )));
+    }
+
+    let size = (end - start) as usize;
+    let mut binary = vec![0xFFu8; size];
+
+    for (addr, data) in &segments {
+        if *addr >= end {
+            continue;
+        }
+        let offset = (addr - start) as usize;
+        let copy_len = data.len().min(size.saturating_sub(offset));
+        if copy_len > 0 {
+            binary[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
+        }
+    }
+
+    Ok(binary)
+}
+
+/// Extract the firmware binary from an Intel HEX file, stripping the last 8 bytes.
+/// This uses the default app_end_page=20 (for bootloaders >2.5.3).
+pub fn firmware_bytes_to_sign(hex_path: &Path) -> Result<Vec<u8>> {
+    firmware_bytes_to_sign_for_version(hex_path, 20)
+}
+
+/// Create a FirmwareJson from the hex file text and both versioned signatures.
+///
+/// The firmware field contains the base64 of the HEX FILE TEXT (not binary),
+/// matching the Python reference which does:
+///   fw = base64.b64encode(open(hex_file, "r").read().encode())
+pub fn create_firmware_json_versioned(
+    hex_path: &Path,
+    sig_v1: &[u8],
+    sig_v2: &[u8],
+) -> Result<FirmwareJson> {
+    // Read the hex file as text and base64-encode it (matching Python reference)
+    let hex_text = std::fs::read_to_string(hex_path)?;
+    let firmware_b64 = websafe_b64_encode(hex_text.as_bytes());
+
+    let mut versions = HashMap::new();
+    versions.insert(
+        "<=2.5.3".to_string(),
+        VersionedSignature { signature: websafe_b64_encode(sig_v1) },
+    );
+    versions.insert(
+        ">2.5.3".to_string(),
+        VersionedSignature { signature: websafe_b64_encode(sig_v2) },
+    );
+
+    Ok(FirmwareJson {
+        firmware: firmware_b64,
+        signature: websafe_b64_encode(sig_v2), // default is v2 (new bootloaders)
+        versions,
+    })
+}
+
+/// Create a FirmwareJson from firmware bytes and a signature (legacy single-version form).
 pub fn create_firmware_json(firmware: &[u8], signature: &[u8]) -> FirmwareJson {
     FirmwareJson {
         firmware: websafe_b64_encode(firmware),
