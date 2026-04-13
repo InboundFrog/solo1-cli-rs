@@ -62,7 +62,6 @@ fn test_firmware_sign_versioned_regions_differ() {
 
     // Build a minimal Intel HEX file starting at 0x08005000 (app start)
     let app_start: u32 = 0x08005000;
-    let data_size = 0x1000u32; // 4KB of data
     let mut hex_content = String::new();
     // Extended linear address for 0x0800_xxxx
     hex_content.push_str(":020000040800F2\n");
