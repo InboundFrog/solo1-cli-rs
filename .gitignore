@@ -4,3 +4,6 @@
 # JetBrains IDEs
 .idea/
 *.iml
+
+# Claude Local Configs
+.claude/*.local.*
