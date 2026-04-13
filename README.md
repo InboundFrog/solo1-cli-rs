@@ -37,8 +37,8 @@ solo1 [OPTIONS] <COMMAND>
 
 Global options:
 
-| Flag | Description |
-|------|-------------|
+| Flag              | Description                                                  |
+|-------------------|--------------------------------------------------------------|
 | `-v`, `--verbose` | Enable verbose output (HID frames, bootloader packets, etc.) |
 
 ---
