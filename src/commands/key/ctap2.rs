@@ -294,9 +294,16 @@ impl ClientPinSession {
 
         let mut encrypted = [0u8; 64];
         let iv = [0u8; 16];
-        Aes256CbcEnc::new(&self.shared_secret.into(), &iv.into()).encrypt_blocks(unsafe {
-            std::slice::from_raw_parts_mut(encrypted.as_mut_ptr() as *mut aes::Block, 4)
-        });
+        let mut blocks = [aes::Block::default(); 4];
+        for (i, chunk) in padded_pin.chunks_exact(16).enumerate() {
+            blocks[i] = (*chunk).try_into().unwrap();
+        }
+        
+        Aes256CbcEnc::new(&self.shared_secret.into(), &iv.into()).encrypt_blocks(&mut blocks);
+        
+        for (i, block) in blocks.iter().enumerate() {
+            encrypted[i*16..(i+1)*16].copy_from_slice(block.as_slice());
+        }
 
         Ok(encrypted.to_vec())
     }
@@ -317,9 +324,9 @@ impl ClientPinSession {
 
         let mut pin_hash_enc = pin_hash;
         let iv = [0u8; 16];
-        Aes256CbcEnc::new(&self.shared_secret.into(), &iv.into()).encrypt_blocks(unsafe {
-            std::slice::from_raw_parts_mut(&mut pin_hash_enc as *mut _ as *mut aes::Block, 1)
-        });
+        let mut block = aes::Block::from(pin_hash_enc);
+        Aes256CbcEnc::new(&self.shared_secret.into(), &iv.into()).encrypt_blocks(std::slice::from_mut(&mut block));
+        pin_hash_enc.copy_from_slice(block.as_slice());
 
         Ok(pin_hash_enc)
     }
@@ -338,11 +345,18 @@ impl ClientPinSession {
         let mut pin_token = pin_token_enc.to_vec();
         let iv = [0u8; 16];
         let n_blocks = pin_token.len() / 16;
+        let mut blocks = vec![aes::Block::default(); n_blocks];
+        for (i, chunk) in pin_token.chunks_exact(16).enumerate() {
+            blocks[i] = (*chunk).try_into().unwrap();
+        }
 
-        Aes256CbcDec::new(&self.shared_secret.into(), &iv.into()).decrypt_blocks(unsafe {
-            std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut aes::Block, n_blocks)
-        });
+        Aes256CbcDec::new(&self.shared_secret.into(), &iv.into()).decrypt_blocks(&mut blocks);
+
+        for (i, block) in blocks.iter().enumerate() {
+            pin_token[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
+        }
 
         Ok(pin_token)
     }
 }
+
