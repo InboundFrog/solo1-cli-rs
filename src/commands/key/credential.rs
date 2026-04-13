@@ -1,4 +1,6 @@
-use crate::commands::key::ctap2::{create_key_agreement_cbor, find_key_agreement_response};
+use crate::commands::key::ctap2::{
+    create_key_agreement_cbor, find_cbor_response_by_key, find_key_agreement_response,
+};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -44,24 +46,11 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
         }
     };
 
-    // Helper: look up a key (integer) in the map.
-    let get_key = |key: u64| -> Option<&Value> {
-        pairs.iter().find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == key {
-                    return Some(v);
-                }
-            }
-            None
-        })
-    };
-
     println!("CTAP2 authenticatorGetInfo");
     println!("{}", "=".repeat(40));
 
     // 0x01: versions
-    if let Some(Value::Array(versions)) = get_key(0x01) {
+    if let Some(Value::Array(versions)) = find_cbor_response_by_key(&pairs, 0x01) {
         let strs: Vec<&str> = versions
             .iter()
             .filter_map(|v| {
@@ -76,7 +65,7 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
     }
 
     // 0x02: extensions
-    if let Some(Value::Array(exts)) = get_key(0x02) {
+    if let Some(Value::Array(exts)) = find_cbor_response_by_key(&pairs, 0x02) {
         let strs: Vec<&str> = exts
             .iter()
             .filter_map(|v| {
@@ -91,12 +80,12 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
     }
 
     // 0x03: aaguid (16 bytes)
-    if let Some(Value::Bytes(aaguid)) = get_key(0x03) {
+    if let Some(Value::Bytes(aaguid)) = find_cbor_response_by_key(&pairs, 0x03) {
         println!("AAGUID:                         {}", hex::encode(aaguid));
     }
 
     // 0x04: options (map of string -> bool)
-    if let Some(Value::Map(opts)) = get_key(0x04) {
+    if let Some(Value::Map(opts)) = find_cbor_response_by_key(&pairs, 0x04) {
         let opt_strs: Vec<String> = opts
             .iter()
             .filter_map(|(k, v)| {
@@ -111,13 +100,13 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
     }
 
     // 0x05: maxMsgSize
-    if let Some(Value::Integer(n)) = get_key(0x05) {
+    if let Some(Value::Integer(n)) = find_cbor_response_by_key(&pairs, 0x05) {
         let size: u64 = (*n).try_into().unwrap_or(0);
         println!("Max message size:               {}", size);
     }
 
     // 0x06: pinUvAuthProtocols
-    if let Some(Value::Array(protos)) = get_key(0x06) {
+    if let Some(Value::Array(protos)) = find_cbor_response_by_key(&pairs, 0x06) {
         let nums: Vec<String> = protos
             .iter()
             .filter_map(|v| {
@@ -133,19 +122,19 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
     }
 
     // 0x07: maxCredentialCountInList
-    if let Some(Value::Integer(n)) = get_key(0x07) {
+    if let Some(Value::Integer(n)) = find_cbor_response_by_key(&pairs, 0x07) {
         let count: u64 = (*n).try_into().unwrap_or(0);
         println!("Max credential count in list:   {}", count);
     }
 
     // 0x08: maxCredentialIdLength
-    if let Some(Value::Integer(n)) = get_key(0x08) {
+    if let Some(Value::Integer(n)) = find_cbor_response_by_key(&pairs, 0x08) {
         let len: u64 = (*n).try_into().unwrap_or(0);
         println!("Max credential ID length:       {}", len);
     }
 
     // 0x0A: remainingDiscoverableCredentials
-    if let Some(Value::Integer(n)) = get_key(0x0A) {
+    if let Some(Value::Integer(n)) = find_cbor_response_by_key(&pairs, 0x0A) {
         let remaining: u64 = (*n).try_into().unwrap_or(0);
         println!("Remaining discoverable creds:   {}", remaining);
     } else {

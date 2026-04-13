@@ -1,8 +1,8 @@
-use sha2::{Digest, Sha256};
 use crate::commands::key::ctap2;
-use crate::commands::key::ctap2::find_key_agreement_response;
+use crate::commands::key::ctap2::{find_cbor_response_by_key, find_key_agreement_response};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
+use sha2::{Digest, Sha256};
 
 /// Create a FIDO2 credential with hmac-secret extension.
 ///
@@ -109,21 +109,8 @@ pub fn cmd_make_credential(hid: &SoloHid, host: &str, user: &str, prompt: &str) 
         }
     };
 
-    // Helper to look up an integer key in the map
-    let get_key = |key: u64| -> Option<&Value> {
-        pairs.iter().find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == key {
-                    return Some(v);
-                }
-            }
-            None
-        })
-    };
-
     // 0x02: authData bytes — contains rpIdHash, flags, signCount, AAGUID, credentialId
-    let auth_data = match get_key(0x02) {
+    let auth_data = match find_cbor_response_by_key(&pairs, 0x02) {
         Some(Value::Bytes(b)) => b,
         _ => {
             return Err(SoloError::DeviceError(

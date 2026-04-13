@@ -64,21 +64,23 @@ pub fn create_key_agreement_cbor() -> Value {
 }
 
 #[inline]
-pub fn find_key_agreement_response(response_pairs: &[(Value, Value)]) -> core::result::Result<&Value, SoloError> {
-     response_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x01 {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
+pub fn find_cbor_response_by_key(response_pairs: &[(Value, Value)], key: u64) -> Option<&Value> {
+    response_pairs.iter().find_map(|(k, v)| {
+        if let Value::Integer(i) = k {
+            let ki: u64 = (*i).try_into().ok()?;
+            if ki == key {
+                return Some(v);
             }
-        })
+        }
+        None
+    })
+}
+
+#[inline]
+pub fn find_key_agreement_response(
+    response_pairs: &[(Value, Value)],
+) -> core::result::Result<&Value, SoloError> {
+    find_cbor_response_by_key(response_pairs, 0x01)
         .ok_or_else(|| SoloError::DeviceError("keyAgreement (0x01) missing in response".into()))
 }
 
@@ -250,10 +252,7 @@ impl ClientPinSession {
         let n_blocks = pin_token.len() / 16;
 
         Aes256CbcDec::new(&self.shared_secret.into(), &iv.into()).decrypt_blocks(unsafe {
-            std::slice::from_raw_parts_mut(
-                pin_token.as_mut_ptr() as *mut aes::Block,
-                n_blocks,
-            )
+            std::slice::from_raw_parts_mut(pin_token.as_mut_ptr() as *mut aes::Block, n_blocks)
         });
 
         Ok(pin_token)

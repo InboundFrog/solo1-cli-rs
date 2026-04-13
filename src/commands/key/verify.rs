@@ -1,7 +1,7 @@
-use sha2::{Digest, Sha256};
-
+use crate::commands::key::ctap2::find_cbor_response_by_key;
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
+use sha2::{Digest, Sha256};
 
 /// Verify key authenticity via attestation certificate.
 ///
@@ -33,7 +33,10 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
         let get_pin_token_cbor = Value::Map(vec![
             (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
             (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())), // subCommand = getPinToken
-            (Value::Integer(0x03u64.into()), session.ephemeral_pub_key.clone()),
+            (
+                Value::Integer(0x03u64.into()),
+                session.ephemeral_pub_key.clone(),
+            ),
             (
                 Value::Integer(0x06u64.into()),
                 Value::Bytes(pin_hash_enc.to_vec()),
@@ -182,21 +185,8 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
         }
     };
 
-    // Helper to look up an integer key in the map
-    let get_key = |key: u64| -> Option<&Value> {
-        pairs.iter().find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == key {
-                    return Some(v);
-                }
-            }
-            None
-        })
-    };
-
     // 0x03: attStmt map — contains "x5c" array of DER-encoded certs
-    let att_stmt = match get_key(0x03) {
+    let att_stmt = match find_cbor_response_by_key(&pairs, 0x03) {
         Some(Value::Map(m)) => m,
         _ => {
             return Err(SoloError::DeviceError(
