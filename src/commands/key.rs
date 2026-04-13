@@ -89,34 +89,182 @@ pub fn cmd_rng_feedkernel(_hid: &SoloHid) -> Result<()> {
 }
 
 /// Create a FIDO2 credential with hmac-secret extension.
-/// TODO: Implement full CTAP2 command sequence:
-///   1. Send CTAPHID_CBOR with CTAP2 command 0x01 (makeCredential)
-///   2. clientDataHash: SHA256 of client data
-///   3. rp: {"id": host, "name": host}
-///   4. user: {"id": user_id bytes, "name": user}
-///   5. pubKeyCredParams: [{"type": "public-key", "alg": -7}] (ES256)
-///   6. extensions: {"hmac-secret": true}
-///   7. options: {"rk": true}  (resident key)
-///   8. Parse CBOR response to get credential ID and public key
+///
+/// Sends a CTAP2 makeCredential (0x01) request via CTAPHID_CBOR with:
+///   - clientDataHash: SHA-256 of 32 random bytes
+///   - rp: {"id": host, "name": host}
+///   - user: {"id": user bytes, "name": user, "displayName": user}
+///   - pubKeyCredParams: [{"alg": -7, "type": "public-key"}] (ES256)
+///   - extensions: {"hmac-secret": true}
+///   - options: {"rk": true}  (resident key)
+///
+/// Parses the authData from the response to extract the credential ID,
+/// then prints it as hex for use with `challenge-response` and `sign-file`.
 pub fn cmd_make_credential(
     hid: &SoloHid,
     host: &str,
     user: &str,
     prompt: &str,
 ) -> Result<()> {
-    let _version = get_device_version(hid)?;
+    use ciborium::value::Value;
+    use rand::RngCore;
+
     if !prompt.is_empty() {
         println!("{}", prompt);
     }
-    println!(
-        "TODO: Full CTAP2 makeCredential for host '{}' user '{}' with hmac-secret not yet implemented.",
-        host, user
-    );
-    println!("The CTAP2 command sequence would:");
-    println!("  1. Send CTAPHID_CBOR (0x90) with CBOR-encoded makeCredential (0x01) request");
-    println!("  2. rp.id = '{}', user.name = '{}'", host, user);
-    println!("  3. Include hmac-secret extension and options.rk = true");
-    println!("  4. Return credential ID (hex) to stdout");
+
+    // Generate random challenge and hash it as clientDataHash
+    let mut challenge = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut challenge);
+    let client_data_hash: Vec<u8> = Sha256::digest(&challenge).to_vec();
+
+    // Build CTAP2 makeCredential CBOR request map (integer keys per CTAP2 spec):
+    //   0x01: clientDataHash
+    //   0x02: rp  {"id": host, "name": host}
+    //   0x03: user {"id": user bytes, "name": user, "displayName": user}
+    //   0x04: pubKeyCredParams [{"alg": -7, "type": "public-key"}]
+    //   0x06: extensions {"hmac-secret": true}
+    //   0x07: options {"rk": true}
+    let cbor_request = Value::Map(vec![
+        (
+            Value::Integer(0x01u64.into()),
+            Value::Bytes(client_data_hash),
+        ),
+        (
+            Value::Integer(0x02u64.into()),
+            Value::Map(vec![
+                (Value::Text("id".into()), Value::Text(host.into())),
+                (Value::Text("name".into()), Value::Text(host.into())),
+            ]),
+        ),
+        (
+            Value::Integer(0x03u64.into()),
+            Value::Map(vec![
+                (Value::Text("id".into()), Value::Bytes(user.as_bytes().to_vec())),
+                (Value::Text("name".into()), Value::Text(user.into())),
+                (Value::Text("displayName".into()), Value::Text(user.into())),
+            ]),
+        ),
+        (
+            Value::Integer(0x04u64.into()),
+            Value::Array(vec![Value::Map(vec![
+                (Value::Text("alg".into()), Value::Integer((-7i64).into())),
+                (Value::Text("type".into()), Value::Text("public-key".into())),
+            ])]),
+        ),
+        (
+            Value::Integer(0x06u64.into()),
+            Value::Map(vec![
+                (Value::Text("hmac-secret".into()), Value::Bool(true)),
+            ]),
+        ),
+        (
+            Value::Integer(0x07u64.into()),
+            Value::Map(vec![
+                (Value::Text("rk".into()), Value::Bool(true)),
+            ]),
+        ),
+    ]);
+
+    // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
+    let mut request_bytes = vec![0x01u8];
+    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+
+    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
+
+    // First byte is CTAP2 status code; 0x00 = success
+    if response.is_empty() {
+        return Err(SoloError::DeviceError("Empty response from device".into()));
+    }
+    let status = response[0];
+    if status != 0x00 {
+        return Err(SoloError::DeviceError(format!(
+            "makeCredential returned CTAP error 0x{:02X}",
+            status
+        )));
+    }
+
+    // Parse the CBOR response map
+    let cbor_bytes = &response[1..];
+    let resp_val: Value = ciborium::de::from_reader(cbor_bytes)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+
+    let pairs = match resp_val {
+        Value::Map(p) => p,
+        _ => {
+            return Err(SoloError::DeviceError(
+                "makeCredential response is not a CBOR map".into(),
+            ))
+        }
+    };
+
+    // Helper to look up an integer key in the map
+    let get_key = |key: u64| -> Option<&Value> {
+        pairs.iter().find_map(|(k, v)| {
+            if let Value::Integer(i) = k {
+                let ki: u64 = (*i).try_into().ok()?;
+                if ki == key {
+                    return Some(v);
+                }
+            }
+            None
+        })
+    };
+
+    // 0x02: authData bytes — contains rpIdHash, flags, signCount, AAGUID, credentialId
+    let auth_data = match get_key(0x02) {
+        Some(Value::Bytes(b)) => b,
+        _ => {
+            return Err(SoloError::DeviceError(
+                "makeCredential response missing authData (key 0x02)".into(),
+            ))
+        }
+    };
+
+    // authData layout (CTAP2 spec):
+    //   [0..32]   rpIdHash (32 bytes)
+    //   [32]      flags byte (bit 6 = AT: attested credential data present)
+    //   [33..37]  signCount (u32 BE)
+    //   [37..53]  AAGUID (16 bytes)          — only if AT bit set
+    //   [53..55]  credentialIdLength (u16 BE) — only if AT bit set
+    //   [55..]    credentialId               — only if AT bit set
+    if auth_data.len() < 37 {
+        return Err(SoloError::DeviceError(
+            "authData too short to contain credential info".into(),
+        ));
+    }
+
+    let flags = auth_data[32];
+    let at_flag = (flags & 0x40) != 0; // bit 6 = attested credential data present
+
+    if !at_flag {
+        return Err(SoloError::DeviceError(
+            "authData AT flag not set — no credential data present".into(),
+        ));
+    }
+
+    if auth_data.len() < 55 {
+        return Err(SoloError::DeviceError(
+            "authData too short to read credentialIdLength".into(),
+        ));
+    }
+
+    let cred_id_len = u16::from_be_bytes([auth_data[53], auth_data[54]]) as usize;
+    let cred_id_start = 55;
+    let cred_id_end = cred_id_start + cred_id_len;
+
+    if auth_data.len() < cred_id_end {
+        return Err(SoloError::DeviceError(format!(
+            "authData too short: need {} bytes for credential ID, have {}",
+            cred_id_end,
+            auth_data.len()
+        )));
+    }
+
+    let credential_id = &auth_data[cred_id_start..cred_id_end];
+    println!("{}", hex::encode(credential_id));
+
     Ok(())
 }
 
