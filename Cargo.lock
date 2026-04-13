@@ -1928,13 +1928,11 @@ name = "solo1"
 version = "0.1.0"
 dependencies = [
  "aes",
- "anyhow",
  "base64",
  "cbc",
  "ciborium",
  "clap",
  "digest 0.11.2",
- "ecdsa",
  "hex",
  "hidapi",
  "hmac 0.13.0",
