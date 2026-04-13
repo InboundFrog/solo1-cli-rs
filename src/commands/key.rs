@@ -1350,24 +1350,110 @@ pub fn cmd_probe(hid: &SoloHid, hash_type: &str, filename: &Path) -> Result<()> 
     Ok(())
 }
 
-/// Sign a file with a resident credential.
-/// TODO: Full CTAP2 getAssertion sequence:
-///   1. Hash the file with SHA-256
-///   2. Use as clientDataHash in getAssertion
-///   3. Specify credential_id in allowList
-///   4. Return the assertion response including signature
-///   5. Save signature to filename.sig
+/// Sign a file using CTAP2 getAssertion with the file's SHA-256 as clientDataHash.
+///
+/// Protocol:
+///   1. SHA-256 the file contents → clientDataHash
+///   2. getAssertion (0x02) with rp_id, clientDataHash, allowList[credential_id]
+///   3. Extract signature (key 0x03) from the CBOR response
+///   4. Save raw signature bytes to `{filename}.sig`
+///   5. Print signature hex to stdout
 pub fn cmd_sign_file(hid: &SoloHid, credential_id: &str, filename: &Path) -> Result<()> {
-    let _version = get_device_version(hid)?;
+    use ciborium::value::Value;
+
+    // Decode hex credential ID (same convention as cmd_challenge_response)
+    let cred_id_bytes = hex::decode(credential_id)
+        .map_err(|e| SoloError::DeviceError(format!("Invalid credential_id hex: {}", e)))?;
+
+    // Read file and compute SHA-256 → use directly as clientDataHash
     let data = std::fs::read(filename)?;
-    let hash = sha2::Sha256::digest(&data);
-    println!("{}  {:?}", hex::encode(hash), filename);
+    let file_hash: Vec<u8> = Sha256::digest(&data).to_vec();
+
+    println!("{}  {}", hex::encode(&file_hash), filename.display());
     println!("Please press the button on your Solo key");
-    println!("TODO: Full CTAP2 getAssertion not yet implemented.");
-    println!("Credential ID (base64): {}", credential_id);
-    println!(
-        "The CTAP2 sequence would use the SHA-256 as clientDataHash with the given credential."
-    );
+
+    // Build CTAP2 getAssertion CBOR request map:
+    //   0x01: rpId  (must match the rp used at credential creation)
+    //   0x02: clientDataHash  (SHA-256 of file)
+    //   0x03: allowList  [{type: "public-key", id: cred_id_bytes}]
+    let rp_id = "solokeys.dev";
+    let get_assertion_cbor = Value::Map(vec![
+        (
+            Value::Integer(0x01u64.into()),
+            Value::Text(rp_id.into()),
+        ),
+        (
+            Value::Integer(0x02u64.into()),
+            Value::Bytes(file_hash),
+        ),
+        (
+            Value::Integer(0x03u64.into()),
+            Value::Array(vec![Value::Map(vec![
+                (Value::Text("type".into()), Value::Text("public-key".into())),
+                (Value::Text("id".into()),   Value::Bytes(cred_id_bytes)),
+            ])]),
+        ),
+    ]);
+
+    let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command byte
+    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+
+    let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
+
+    if ga_response.is_empty() {
+        return Err(SoloError::DeviceError("Empty response from getAssertion".into()));
+    }
+    let ga_status = ga_response[0];
+    if ga_status != 0x00 {
+        return Err(SoloError::DeviceError(format!(
+            "getAssertion returned CTAP error 0x{:02X}",
+            ga_status
+        )));
+    }
+
+    // Parse CBOR response map
+    let ga_val: Value = ciborium::de::from_reader(&ga_response[1..])
+        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+
+    let ga_pairs = match ga_val {
+        Value::Map(p) => p,
+        _ => return Err(SoloError::DeviceError("getAssertion response is not a map".into())),
+    };
+
+    let get_ga_key = |key: u64| -> Option<&Value> {
+        ga_pairs.iter().find_map(|(k, v)| {
+            if let Value::Integer(i) = k {
+                let ki: u64 = (*i).try_into().ok()?;
+                if ki == key { Some(v) } else { None }
+            } else {
+                None
+            }
+        })
+    };
+
+    // 0x03: signature bytes
+    let signature = match get_ga_key(0x03) {
+        Some(Value::Bytes(b)) => b.clone(),
+        _ => {
+            return Err(SoloError::DeviceError(
+                "getAssertion response missing signature (key 0x03)".into(),
+            ))
+        }
+    };
+
+    // Save raw signature to {filename}.sig
+    let sig_path = {
+        let mut p = filename.as_os_str().to_owned();
+        p.push(".sig");
+        std::path::PathBuf::from(p)
+    };
+    println!("Saving signature to {}", sig_path.display());
+    std::fs::write(&sig_path, &signature)?;
+
+    // Print hex signature to stdout
+    println!("{}", hex::encode(&signature));
+
     Ok(())
 }
 
