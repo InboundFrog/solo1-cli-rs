@@ -1,16 +1,16 @@
 use std::time::Instant;
 
 use crate::commands::key::common;
-use crate::device::{SoloHid, CMD_GET_VERSION, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK};
+use crate::device::{HidDevice, CMD_GET_VERSION, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK};
 use crate::error::{Result, SoloError};
 use crate::firmware::FirmwareVersion;
 
 /// Get firmware version from the device.
-pub fn cmd_key_version(hid: &SoloHid) -> Result<FirmwareVersion> {
+pub fn cmd_key_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
     get_device_version(hid)
 }
 
-pub(super) fn get_device_version(hid: &SoloHid) -> Result<FirmwareVersion> {
+pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
     let response = hid.send_recv(CMD_GET_VERSION, &[])?;
     if response.len() < 3 {
         return Err(SoloError::ProtocolError(
@@ -25,14 +25,14 @@ pub(super) fn get_device_version(hid: &SoloHid) -> Result<FirmwareVersion> {
 }
 
 /// Blink the LED on the device.
-pub fn cmd_wink(hid: &SoloHid) -> Result<()> {
+pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
     hid.send_recv(CTAPHID_WINK, &[])?;
     println!("Winked!");
     Ok(())
 }
 
 /// Send ping(s) and measure round-trip time.
-pub fn cmd_ping(hid: &SoloHid, count: u32, data: &[u8]) -> Result<()> {
+pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8]) -> Result<()> {
     for i in 0..count {
         let start = Instant::now();
         let response = hid.send_recv(CTAPHID_PING, data)?;
@@ -52,7 +52,7 @@ pub fn cmd_ping(hid: &SoloHid, count: u32, data: &[u8]) -> Result<()> {
 }
 
 /// Program a keyboard sequence (HID keyboard emulation).
-pub fn cmd_keyboard(hid: &SoloHid, data: &[u8]) -> Result<()> {
+pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
     if data.len() > 64 {
         return Err(SoloError::DeviceError(
             "Keyboard data too long (max 64 bytes)".into(),
@@ -67,7 +67,7 @@ pub fn cmd_keyboard(hid: &SoloHid, data: &[u8]) -> Result<()> {
 }
 
 /// Factory reset the device.
-pub fn cmd_reset(hid: &SoloHid) -> Result<()> {
+pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
     if !common::confirm(
         "Warning: Your credentials will be lost!!! Type 'yes' to confirm:",
     )? {
@@ -84,7 +84,7 @@ pub fn cmd_reset(hid: &SoloHid) -> Result<()> {
 }
 
 /// Permanently disable firmware updates on the device.
-pub fn cmd_disable_updates(hid: &SoloHid) -> Result<()> {
+pub fn cmd_disable_updates(hid: &impl HidDevice) -> Result<()> {
     use crate::device::CMD_DISABLE_BOOTLOADER;
     if !common::confirm(
         "WARNING: This will permanently disable firmware updates on this device!\nThis action cannot be undone. Type 'yes' to confirm:",

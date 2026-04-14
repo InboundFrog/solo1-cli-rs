@@ -1,10 +1,10 @@
 use std::io::Write;
 
-use crate::device::{SoloHid, CMD_RNG};
+use crate::device::{HidDevice, CMD_RNG};
 use crate::error::{Result, SoloError};
 
 /// Get N random bytes from the device, return as hex string.
-pub fn cmd_rng_hexbytes(hid: &SoloHid, n: usize) -> Result<String> {
+pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
     if n > 255 {
         return Err(SoloError::DeviceError(format!(
             "Number of bytes must be between 0 and 255, you passed {}",
@@ -17,7 +17,7 @@ pub fn cmd_rng_hexbytes(hid: &SoloHid, n: usize) -> Result<String> {
 }
 
 /// Stream raw random bytes to stdout.
-pub fn cmd_rng_raw(hid: &SoloHid) -> Result<()> {
+pub fn cmd_rng_raw(hid: &impl HidDevice) -> Result<()> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     loop {
@@ -35,7 +35,7 @@ pub fn cmd_rng_raw(hid: &SoloHid) -> Result<()> {
 /// sent to the ioctl is: entropy_count (i32) | buf_size (i32) | data (bytes).
 /// entropy_count = count * 2 (2 bits per byte, pessimistic estimate).
 #[cfg(target_os = "linux")]
-pub fn cmd_rng_feedkernel(hid: &SoloHid) -> Result<()> {
+pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
 
@@ -71,6 +71,6 @@ pub fn cmd_rng_feedkernel(hid: &SoloHid) -> Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn cmd_rng_feedkernel(_hid: &SoloHid) -> Result<()> {
+pub fn cmd_rng_feedkernel(_hid: &impl HidDevice) -> Result<()> {
     Err(SoloError::UnsupportedPlatform)
 }

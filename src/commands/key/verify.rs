@@ -1,6 +1,6 @@
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, int_map};
 use crate::ctap2::{parse_cbor_map_response, prompt_and_get_pin_token};
-use crate::device::{SoloHid, CTAPHID_CBOR};
+use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
 
@@ -49,7 +49,7 @@ fn extract_attestation_cert(response: &[u8]) -> Result<Vec<u8>> {
 /// Sends a CTAP2 makeCredential (0x01) request via CTAPHID_CBOR, extracts the
 /// DER-encoded attestation certificate from attStmt.x5c[0], SHA-256 fingerprints
 /// it, and compares against known fingerprints in crypto.rs.
-pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
+pub fn cmd_verify(hid: &impl HidDevice) -> Result<()> {
     use crate::crypto::{check_attestation_fingerprint, sha256_hex};
     use ciborium::value::Value;
     use hmac::{Hmac, KeyInit as _, Mac as _};

@@ -7,7 +7,7 @@ use rand::rngs::OsRng;
 use sha2::{Digest as _, Sha256};
 
 use crate::cbor::{cbor_bytes, cbor_int, find_int_key, int_map};
-use crate::device::{SoloHid, CTAPHID_CBOR};
+use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// All-zero IV as mandated by the CTAP2 specification for clientPIN AES-256-CBC operations
@@ -21,7 +21,7 @@ use crate::error::{Result, SoloError};
 pub const CTAP2_AES_IV: [u8; 16] = [0u8; 16];
 
 /// Query CTAP2 getInfo (0x04) and return whether a PIN has been set on the device.
-pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
+pub fn get_info_client_pin_set(hid: &impl HidDevice) -> Result<bool> {
     let get_info_req = vec![0x04u8];
     let info_resp = hid.send_recv(CTAPHID_CBOR, &get_info_req)?;
     let pairs = parse_cbor_map_response(&info_resp, "getInfo")?;
@@ -145,7 +145,7 @@ pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec
 }
 
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
-pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
+pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let get_ka_cbor = create_key_agreement_cbor();
     let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
     ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
@@ -183,7 +183,7 @@ pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
 /// Prompt the user for a PIN, validate it is non-empty, and acquire a PIN token from the device.
 ///
 /// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
-pub fn prompt_and_get_pin_token(hid: &SoloHid) -> Result<Vec<u8>> {
+pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
     let pin = rpassword::prompt_password("Enter PIN: ")
         .map_err(|e| SoloError::IoError(e))?;
     if pin.is_empty() {
@@ -199,7 +199,7 @@ pub fn prompt_and_get_pin_token(hid: &SoloHid) -> Result<Vec<u8>> {
 ///   2. Generate ephemeral P-256 keypair, ECDH → shared_secret
 ///   3. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
 ///   4. getPINToken (subcommand 0x05) → decrypt response → pin token bytes
-pub fn get_pin_token(hid: &SoloHid, pin: &str) -> Result<Vec<u8>> {
+pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     let dev_pub_key = get_key_agreement(hid)?;
     let session = ClientPinSession::new(&dev_pub_key);
     let pin_hash_enc = session.encrypt_pin_hash(pin)?;

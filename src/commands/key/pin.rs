@@ -1,5 +1,5 @@
 use crate::cbor::{cbor_bytes, cbor_int, int_map};
-use crate::device::{SoloHid, CTAPHID_CBOR};
+use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// Change the existing PIN (prompts for old and new PIN).
@@ -12,7 +12,7 @@ use crate::error::{Result, SoloError};
 ///   5. AES-256-CBC encrypt padded new PIN → newPinEnc
 ///   6. HMAC-SHA-256(shared_secret, newPinEnc || pinHashEnc)[0..16] → pinUvAuthParam
 ///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
-pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
+pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
     let old_pin = rpassword::prompt_password("Current PIN: ").map_err(|e| SoloError::IoError(e))?;
     let new_pin = rpassword::prompt_password("New PIN: ").map_err(|e| SoloError::IoError(e))?;
@@ -79,7 +79,7 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
 ///   4. AES-256-CBC encrypt padded PIN → newPinEnc
 ///   5. HMAC-SHA-256(shared_secret, newPinEnc)[0..16] → pinUvAuthParam
 ///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
-pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
+pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
     let new_pin = rpassword::prompt_password("New PIN: ").map_err(|e| SoloError::IoError(e))?;
     let confirm_pin =

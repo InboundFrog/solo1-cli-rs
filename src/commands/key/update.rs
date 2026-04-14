@@ -1,12 +1,12 @@
 use std::path::Path;
 
-use crate::device::SoloHid;
+use crate::device::{HidDevice, SoloHid};
 use crate::error::{Result, SoloError};
 use crate::firmware;
 use crate::vlog;
 
 /// Update the device firmware.
-pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
+pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<()> {
     use crate::crypto::sha256_hex;
     use crate::device::{CMD_DONE, CMD_ENTER_BOOT, CMD_WRITE};
     use crate::firmware::{download_url, fetch_latest_release, FirmwareJson};
