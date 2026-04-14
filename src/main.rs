@@ -92,16 +92,6 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: 
             }
         }
 
-        KeyCommands::MakeCredential {
-            host,
-            user,
-            pin: _,
-            prompt,
-        } => {
-            let hid = SoloHid::open(serial, timeout)?;
-            key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
-        }
-
         KeyCommands::ChallengeResponse {
             credential_id,
             challenge,
@@ -196,6 +186,14 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: 
                 }
                 CredentialCommands::Rm { credential_id } => {
                     key::credential::cmd_credential_rm(&hid, &credential_id)?;
+                }
+                CredentialCommands::Create {
+                    host,
+                    user,
+                    pin: _,
+                    prompt,
+                } => {
+                    key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
                 }
             }
         }

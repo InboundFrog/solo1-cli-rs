@@ -109,25 +109,6 @@ pub enum KeyCommands {
         command: RngCommands,
     },
 
-    /// Create FIDO2 credential with hmac-secret
-    MakeCredential {
-        /// Relying party host (e.g., example.com)
-        #[arg(long)]
-        host: String,
-        /// User ID / username
-        #[arg(long)]
-        user: String,
-        /// PIN (prompted if not provided and key has PIN set)
-        #[arg(long)]
-        pin: Option<String>,
-        /// Prompt text (use empty string to suppress, outputting only the credential_id)
-        #[arg(
-            long,
-            default_value = "Touch your authenticator to generate a credential..."
-        )]
-        prompt: String,
-    },
-
     /// HMAC-secret challenge-response
     ChallengeResponse {
         /// Credential ID (hex string from make-credential output)
@@ -240,6 +221,25 @@ pub enum CredentialCommands {
     Rm {
         /// Credential ID (hex)
         credential_id: String,
+    },
+
+    /// Create FIDO2 credential with hmac-secret
+    Create {
+        /// Relying party host (e.g., example.com)
+        #[arg(long)]
+        host: String,
+        /// User ID / username
+        #[arg(long)]
+        user: String,
+        /// PIN (prompted if not provided and key has PIN set)
+        #[arg(long)]
+        pin: Option<String>,
+        /// Prompt text (use empty string to suppress, outputting only the credential_id)
+        #[arg(
+            long,
+            default_value = "Touch your authenticator to generate a credential..."
+        )]
+        prompt: String,
     },
 }
 
