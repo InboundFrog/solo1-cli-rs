@@ -139,6 +139,98 @@ pub fn cmd_make_credential(hid: &SoloHid, host: &str, user: &str, prompt: &str) 
     Ok(())
 }
 
+/// Perform ECDH key agreement with the device's COSE P-256 public key.
+///
+/// Extracts the x and y coordinates from `dev_pub_key_cbor_pairs` (a COSE key
+/// map), generates an ephemeral P-256 keypair, and computes the shared secret
+/// as SHA-256 of the ECDH x-coordinate. Returns the 32-byte shared secret and
+/// the ephemeral public key as a CBOR `Value` (COSE_Key map) suitable for use
+/// as `keyAgreement` in the hmac-secret extension input.
+fn derive_shared_secret(
+    dev_pub_key_cbor_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
+) -> Result<([u8; 32], ciborium::value::Value)> {
+    use p256::ecdh::EphemeralSecret;
+    use p256::EncodedPoint;
+    use rand::rngs::OsRng;
+
+    let dev_x = extract_cose_coord(dev_pub_key_cbor_pairs, -2)?;
+    let dev_y = extract_cose_coord(dev_pub_key_cbor_pairs, -3)?;
+
+    if dev_x.len() != 32 || dev_y.len() != 32 {
+        return Err(SoloError::DeviceError(
+            "Device COSE key coordinates are not 32 bytes".into(),
+        ));
+    }
+
+    let mut uncompressed = vec![0x04u8];
+    uncompressed.extend_from_slice(&dev_x);
+    uncompressed.extend_from_slice(&dev_y);
+    let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
+        .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))?;
+
+    // Generate ephemeral P-256 keypair
+    let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
+    let ephemeral_pub = p256::PublicKey::from(&ephemeral_secret);
+    let ephemeral_point = EncodedPoint::from(&ephemeral_pub);
+
+    // ECDH + SHA-256 → shared_secret
+    let shared_secret_point = ephemeral_secret.diffie_hellman(&dev_pub_key);
+    let raw_x = shared_secret_point.raw_secret_bytes();
+    let shared_secret: [u8; 32] = Sha256::digest(raw_x).into();
+
+    let eph_x = ephemeral_point
+        .x()
+        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x coordinate".into()))?
+        .to_vec();
+    let eph_y = ephemeral_point
+        .y()
+        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y coordinate".into()))?
+        .to_vec();
+
+    let ephemeral_cose_key = int_map([
+        (1,  cbor_int(2)),           // kty = EC2
+        (3,  cbor_int(-7)),          // alg = ES256
+        (-1, cbor_int(1)),           // crv = P-256
+        (-2, cbor_bytes(eph_x)),     // x
+        (-3, cbor_bytes(eph_y)),     // y
+    ]);
+
+    Ok((shared_secret, ephemeral_cose_key))
+}
+
+/// Decrypt the hmac-secret extension output returned by the authenticator.
+///
+/// The authenticator encrypts the HMAC output with AES-256-CBC using the
+/// shared secret and a zero IV. `encrypted` must be 32 or 64 bytes (one or
+/// two HMAC-SHA-256 outputs). Returns the decrypted bytes.
+fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec<u8>> {
+    use aes::cipher::{BlockModeDecrypt, KeyIvInit};
+
+    type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+
+    if encrypted.len() != 32 && encrypted.len() != 64 {
+        return Err(SoloError::DeviceError(format!(
+            "hmac-secret encrypted output has unexpected length: {}",
+            encrypted.len()
+        )));
+    }
+
+    let n_blocks = encrypted.len() / 16;
+    let mut output = encrypted.to_vec();
+    {
+        let mut blocks = vec![aes::Block::default(); n_blocks];
+        for (i, chunk) in encrypted.chunks_exact(16).enumerate() {
+            blocks[i] = (*chunk).try_into().unwrap();
+        }
+        Aes256CbcDec::new(&(*shared_secret).into(), &CTAP2_AES_IV.into())
+            .decrypt_blocks(&mut blocks);
+        for (i, block) in blocks.iter().enumerate() {
+            output[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
+        }
+    }
+    Ok(output)
+}
+
 /// HMAC-secret challenge-response using CTAP2 getAssertion with hmac-secret extension.
 ///
 /// Protocol (per CTAP2 spec and fido2 hmac-secret extension):
@@ -160,13 +252,10 @@ pub fn cmd_challenge_response(
     challenge: &str,
     host: &str,
 ) -> Result<()> {
-    use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
+    use aes::cipher::{BlockModeEncrypt, KeyIvInit};
     use ciborium::value::Value;
     use hmac::{Hmac, KeyInit as _, Mac as _};
-    use p256::ecdh::EphemeralSecret;
-    use p256::EncodedPoint;
-    use rand::rngs::OsRng;
-    use sha2::{Digest as _, Sha256};
+    use sha2::Digest as _;
 
     // Decode hex credential ID
     let cred_id_bytes = hex::decode(credential_id)
@@ -195,33 +284,10 @@ pub fn cmd_challenge_response(
         }
     };
 
-    let dev_x = extract_cose_coord(cose_pairs, -2)?;
-    let dev_y = extract_cose_coord(cose_pairs, -3)?;
-
-    if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::DeviceError(
-            "Device COSE key coordinates are not 32 bytes".into(),
-        ));
-    }
-
-    let mut uncompressed = vec![0x04u8];
-    uncompressed.extend_from_slice(&dev_x);
-    uncompressed.extend_from_slice(&dev_y);
-    let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))?;
-
-    // ── Step 3: Generate ephemeral P-256 keypair ─────────────────────────────
-    let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
-    let ephemeral_pub = p256::PublicKey::from(&ephemeral_secret);
-    let ephemeral_point = EncodedPoint::from(&ephemeral_pub);
-
-    // ── Step 4: ECDH + SHA-256 → shared_secret ──────────────────────────────
-    let shared_secret_point = ephemeral_secret.diffie_hellman(&dev_pub_key);
-    let raw_x = shared_secret_point.raw_secret_bytes();
-    let shared_secret: [u8; 32] = Sha256::digest(raw_x).into();
+    // ── Steps 3–4: ECDH → shared_secret + ephemeral COSE key ────────────────
+    let (shared_secret, ephemeral_cose_key) = derive_shared_secret(&cose_pairs)?;
 
     type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-    type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
     // ── Step 5: saltEnc = AES-256-CBC(shared_secret, IV=0, salt) ────────────
     // salt is 32 bytes = 2 × 16-byte AES blocks, no padding needed
@@ -245,24 +311,7 @@ pub fn cmd_challenge_response(
     let mac_result = mac.finalize().into_bytes();
     let salt_auth = &mac_result[..16];
 
-    // ── Step 7: Build ephemeral COSE key for hmac-secret extension ───────────
-    let eph_x = ephemeral_point
-        .x()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x coordinate".into()))?
-        .to_vec();
-    let eph_y = ephemeral_point
-        .y()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y coordinate".into()))?
-        .to_vec();
-
-    let ephemeral_cose_key = int_map([
-        (1,  cbor_int(2)),           // kty = EC2
-        (3,  cbor_int(-7)),          // alg = ES256
-        (-1, cbor_int(1)),           // crv = P-256
-        (-2, cbor_bytes(eph_x)),     // x
-        (-3, cbor_bytes(eph_y)),     // y
-    ]);
-
+    // ── Step 7: Build hmac-secret extension and getAssertion request ─────────
     // hmac-secret extension input map: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
     let hmac_secret_ext = int_map([
         (1, ephemeral_cose_key),
@@ -362,28 +411,8 @@ pub fn cmd_challenge_response(
             SoloError::DeviceError("hmac-secret missing from authData extensions".into())
         })?;
 
-    // The hmac-secret output is AES-256-CBC encrypted with shared_secret, IV=0x00*16
-    // Decrypt it to get the final HMAC output
-    if hmac_secret_enc.len() != 32 && hmac_secret_enc.len() != 64 {
-        return Err(SoloError::DeviceError(format!(
-            "hmac-secret encrypted output has unexpected length: {}",
-            hmac_secret_enc.len()
-        )));
-    }
-
-    let n_blocks = hmac_secret_enc.len() / 16;
-    let mut hmac_output = hmac_secret_enc.clone();
-    {
-        let mut blocks = vec![aes::Block::default(); n_blocks];
-        for (i, chunk) in hmac_secret_enc.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-        Aes256CbcDec::new(&shared_secret.into(), &CTAP2_AES_IV.into())
-            .decrypt_blocks(&mut blocks);
-        for (i, block) in blocks.iter().enumerate() {
-            hmac_output[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-    }
+    // ── Step 8 (cont): Decrypt the hmac-secret output ────────────────────────
+    let hmac_output = decrypt_hmac_secret(&shared_secret, &hmac_secret_enc)?;
 
     // ── Step 9: Print the HMAC output as hex ────────────────────────────────
     println!("{}", hex::encode(&hmac_output[..32]));
