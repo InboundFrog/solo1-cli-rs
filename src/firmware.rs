@@ -309,6 +309,70 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
     0xe5, 0xa2, 0x4f, 0xa0, 0xf3, 0x87, 0x61, 0x82, 0xd8, 0xcd, 0x48, 0xfc, 0x57,
 ];
 
+/// Write the boot-authorisation bytes into the byte map.
+///
+/// Sets the two-byte marker at `flash_addr(application_end_page - 1)` to
+/// `0x41 0x41` ('A' 'A'), then writes the 8-byte AUTH_WORD at `auth_word_addr`:
+/// bytes 0–3 are `0x00` (authorise boot) and bytes 4–7 are `0xFF` (enable
+/// bootloader).
+fn patch_auth_word(
+    byte_map: &mut HashMap<u32, u8>,
+    app_end_page_start: u32,
+    auth_word_addr: u32,
+) {
+    // Boot marker: flash_addr(APPLICATION_END_PAGE - 1) = 'A' 'A'
+    byte_map.insert(app_end_page_start, 0x41);
+    byte_map.insert(app_end_page_start + 1, 0x41);
+
+    // AUTH_WORD[0..3] = 0 (authorise boot)
+    for i in 0..4u32 {
+        byte_map.insert(auth_word_addr + i, 0x00);
+    }
+    // AUTH_WORD[4..7] = 0xFF (enable bootloader)
+    for i in 4..8u32 {
+        byte_map.insert(auth_word_addr + i, 0xFF);
+    }
+}
+
+/// Write the attestation region into the byte map starting at `attest_addr`.
+///
+/// Layout at `attest_addr`:
+///   [+0]:  32 bytes attestation key (first 32 bytes of `key`)
+///   [+32]:  8 bytes device settings (little-endian u64: `0xAA551E7900000000`)
+///   [+40]:  8 bytes cert size (little-endian u64)
+///   [+48]:  N bytes certificate
+fn patch_attestation(
+    byte_map: &mut HashMap<u32, u8>,
+    attest_addr: u32,
+    key: &[u8],
+    cert: &[u8],
+) {
+    // Attestation key at ATTEST_ADDR+0 (32 bytes)
+    for (i, &b) in key.iter().take(32).enumerate() {
+        byte_map.insert(attest_addr + i as u32, b);
+    }
+
+    // Device settings at ATTEST_ADDR+32 (8 bytes little-endian u64)
+    // 0xAA551E7900000000 | lock_byte (lock_byte=0 since no --lock flag)
+    let device_settings: u64 = 0xAA551E7900000000u64;
+    let ds_bytes = device_settings.to_le_bytes();
+    for (i, &b) in ds_bytes.iter().enumerate() {
+        byte_map.insert(attest_addr + 32 + i as u32, b);
+    }
+
+    // Cert size at ATTEST_ADDR+40 (8 bytes little-endian u64)
+    let cert_size: u64 = cert.len() as u64;
+    let cs_bytes = cert_size.to_le_bytes();
+    for (i, &b) in cs_bytes.iter().enumerate() {
+        byte_map.insert(attest_addr + 40 + i as u32, b);
+    }
+
+    // Certificate at ATTEST_ADDR+48
+    for (i, &b) in cert.iter().enumerate() {
+        byte_map.insert(attest_addr + 48 + i as u32, b);
+    }
+}
+
 /// Merge multiple Intel HEX files into one output HEX file.
 ///
 /// Matches the Python reference (operations.py mergehex) which:
@@ -416,46 +480,10 @@ pub fn merge_hex_files(
         }
     }
 
-    // Patch boot authorization bytes
-    // first[flash_addr(APPLICATION_END_PAGE - 1)] = 0x41  ('A')
-    // first[flash_addr(APPLICATION_END_PAGE - 1) + 1] = 0x41
+    // Patch boot authorization bytes and attestation region
     let app_end_page_start = flash_addr(application_end_page - 1);
-    byte_map.insert(app_end_page_start, 0x41);
-    byte_map.insert(app_end_page_start + 1, 0x41);
-
-    // AUTH_WORD[0..3] = 0 (authorize boot)
-    for i in 0..4u32 {
-        byte_map.insert(auth_word_addr + i, 0x00);
-    }
-    // AUTH_WORD[4..7] = 0xFF (enable bootloader)
-    for i in 4..8u32 {
-        byte_map.insert(auth_word_addr + i, 0xFF);
-    }
-
-    // Patch attestation key at ATTEST_ADDR+0 (32 bytes)
-    for (i, &b) in key_bytes.iter().take(32).enumerate() {
-        byte_map.insert(attest_addr + i as u32, b);
-    }
-
-    // Patch device settings at ATTEST_ADDR+32 (8 bytes little-endian u64)
-    // 0xAA551E7900000000 | lock_byte (lock_byte=0 since no --lock flag)
-    let device_settings: u64 = 0xAA551E7900000000u64;
-    let ds_bytes = device_settings.to_le_bytes();
-    for (i, &b) in ds_bytes.iter().enumerate() {
-        byte_map.insert(attest_addr + 32 + i as u32, b);
-    }
-
-    // Patch cert size at ATTEST_ADDR+40 (8 bytes little-endian u64)
-    let cert_size: u64 = cert_bytes.len() as u64;
-    let cs_bytes = cert_size.to_le_bytes();
-    for (i, &b) in cs_bytes.iter().enumerate() {
-        byte_map.insert(attest_addr + 40 + i as u32, b);
-    }
-
-    // Patch certificate at ATTEST_ADDR+48
-    for (i, &b) in cert_bytes.iter().enumerate() {
-        byte_map.insert(attest_addr + 48 + i as u32, b);
-    }
+    patch_auth_word(&mut byte_map, app_end_page_start, auth_word_addr);
+    patch_attestation(&mut byte_map, attest_addr, &key_bytes, &cert_bytes);
 
     // Convert byte_map back to sorted segments for HEX output
     let mut addrs: Vec<u32> = byte_map.keys().cloned().collect();

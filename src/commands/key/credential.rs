@@ -105,123 +105,111 @@ pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
     Ok(())
 }
 
-/// List resident credentials via CTAP2 authenticatorCredentialManagement (0x0A).
-///
-/// Protocol:
-///   1. Prompt for PIN, derive PIN token via clientPIN (0x06):
-///      a. getKeyAgreement (subcommand 0x02) → device COSE key
-///      b. Generate ephemeral P-256 keypair, ECDH → shared_secret = SHA-256(x)
-///      c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
-///      d. getPINToken (subcommand 0x05) → decrypt response → pinToken (32 bytes)
-///   2. enumerateRPsBegin (credMgmt 0x0A subcommand 0x02):
-///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
-///      Response: {0x03: rp, 0x04: rpIdHash, 0x05: totalRPs}
-///   3. enumerateRPsGetNextRP (subcommand 0x03) for remaining RPs
-///   4. For each RP, enumerateCredentialsBegin (subcommand 0x04):
-///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || CBOR({0x01: rpIdHash}))[0..16]
-///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
-///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
-pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
-    use base64::Engine as _;
-    use ciborium::value::Value;
+/// Compute `pinUvAuthParam = HMAC-SHA-256(pin_token, msg)[0..16]`.
+fn pin_uv_auth(pin_token: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
     use hmac::{Hmac, KeyInit as _, Mac as _};
     use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
+        .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
+    mac.update(msg);
+    let result = mac.finalize().into_bytes();
+    Ok(result[..16].to_vec())
+}
 
-    // ── Pre-check: ensure a PIN has been set on the device ──────────────
-    if !get_info_client_pin_set(hid)? {
+/// Send a credMgmt (0x0A) subcommand with optional params and pinUvAuthParam.
+///
+/// Encodes the request as a CBOR map with keys: subCommand (0x01),
+/// optional subCommandParams (0x02), pinUvAuthProtocol (0x03), and
+/// pinUvAuthParam (0x04), then forwards it over HID.
+fn send_cred_mgmt(
+    hid: &SoloHid,
+    subcommand: u8,
+    params: Option<ciborium::value::Value>,
+    pin_uv: Vec<u8>,
+) -> Result<Vec<u8>> {
+    let mut entries: Vec<(i64, ciborium::value::Value)> = vec![
+        (0x01, cbor_int(subcommand as i64)), // subCommand
+    ];
+    if let Some(p) = params {
+        entries.push((0x02, p)); // subCommandParams
+    }
+    entries.push((0x03, cbor_int(1)));        // pinUvAuthProtocol = 1
+    entries.push((0x04, cbor_bytes(pin_uv))); // pinUvAuthParam
+
+    let cm_cbor = int_map(entries);
+    let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
+    ciborium::ser::into_writer(&cm_cbor, &mut req)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+    hid.send_recv(CTAPHID_CBOR, &req)
+}
+
+/// Send a credMgmt (0x0A) subcommand with no authentication parameters.
+///
+/// Used for the *GetNext* subcommands (0x03 enumerateRPsGetNextRP,
+/// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
+fn send_cred_mgmt_next(hid: &SoloHid, subcommand: u8) -> Result<Vec<u8>> {
+    let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
+    let mut req = vec![0x0Au8];
+    ciborium::ser::into_writer(&cm_cbor, &mut req)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+    hid.send_recv(CTAPHID_CBOR, &req)
+}
+
+/// Parse a raw credMgmt HID response into a CBOR map, checking the status byte.
+///
+/// Returns an empty vec if the response contains only a success status byte
+/// with no CBOR payload. Returns `Err` for any non-zero status byte or
+/// malformed CBOR.
+fn parse_cm_response(resp: Vec<u8>, ctx: &str) -> Result<Vec<(ciborium::value::Value, ciborium::value::Value)>> {
+    use ciborium::value::Value;
+    if resp.is_empty() {
+        return Err(SoloError::DeviceError(format!(
+            "Empty response from {}",
+            ctx
+        )));
+    }
+    let status = resp[0];
+    if status == 0x2E {
         return Err(SoloError::DeviceError(
-            "Credential management requires a PIN. Please set a PIN first with 'solo1 key set-pin'.".into(),
+            "Authenticator does not support credential management (CTAP2_ERR_UNSUPPORTED_OPTION 0x2E)".into()
         ));
     }
+    if status != 0x00 {
+        return Err(SoloError::DeviceError(format!(
+            "{} returned CTAP error 0x{:02X}",
+            ctx, status
+        )));
+    }
+    if resp.len() == 1 {
+        return Ok(vec![]);
+    }
+    let val: Value = ciborium::de::from_reader(&resp[1..])
+        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error in {}: {}", ctx, e)))?;
+    match val {
+        Value::Map(p) => Ok(p),
+        _ => Err(SoloError::DeviceError(format!(
+            "{} response is not a CBOR map",
+            ctx
+        ))),
+    }
+}
 
-    // ── Step 0: get PIN token ────────────────────────────────────────────
+/// Send enumerateRPsBegin (subcommand 0x02) then enumerateRPsGetNextRP
+/// (subcommand 0x03) for all remaining RPs, returning `(rp_id, rp_id_hash)`
+/// pairs for every relying party that has at least one resident credential.
+fn enumerate_rps(hid: &SoloHid, pin_token: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+    use ciborium::value::Value;
 
-    let pin_token = prompt_and_get_pin_token(hid)?;
-    let pin_token = pin_token.as_slice();
-
-    // Helper: compute pinUvAuthParam = HMAC-SHA-256(pinToken, msg)[0..16]
-    let pin_uv_auth = |msg: &[u8]| -> Result<Vec<u8>> {
-        let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
-            .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
-        mac.update(msg);
-        let result = mac.finalize().into_bytes();
-        Ok(result[..16].to_vec())
-    };
-
-    // Helper: send a credMgmt (0x0A) subcommand with optional params and pinAuth
-    let send_cred_mgmt =
-        |subcommand: u8, params: Option<Value>, pin_uv: Vec<u8>| -> Result<Vec<u8>> {
-            let mut entries: Vec<(i64, Value)> = vec![
-                (0x01, cbor_int(subcommand as i64)), // subCommand
-            ];
-            if let Some(p) = params {
-                entries.push((0x02, p)); // subCommandParams
-            }
-            entries.push((0x03, cbor_int(1)));           // pinUvAuthProtocol = 1
-            entries.push((0x04, cbor_bytes(pin_uv)));    // pinUvAuthParam
-
-            let cm_cbor = int_map(entries);
-            let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
-            ciborium::ser::into_writer(&cm_cbor, &mut req)
-                .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-            hid.send_recv(CTAPHID_CBOR, &req)
-        };
-
-    // Helper: send a credMgmt subcommand with NO pinAuth (for *Next commands)
-    let send_cred_mgmt_next = |subcommand: u8| -> Result<Vec<u8>> {
-        let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
-        let mut req = vec![0x0Au8];
-        ciborium::ser::into_writer(&cm_cbor, &mut req)
-            .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-        hid.send_recv(CTAPHID_CBOR, &req)
-    };
-
-    // Helper: parse a CBOR map response, check status byte
-    let parse_cm_response = |resp: Vec<u8>, ctx: &str| -> Result<Vec<(Value, Value)>> {
-        if resp.is_empty() {
-            return Err(SoloError::DeviceError(format!(
-                "Empty response from {}",
-                ctx
-            )));
-        }
-        let status = resp[0];
-        if status == 0x2E {
-            return Err(SoloError::DeviceError(
-                "Authenticator does not support credential management (CTAP2_ERR_UNSUPPORTED_OPTION 0x2E)".into()
-            ));
-        }
-        if status != 0x00 {
-            return Err(SoloError::DeviceError(format!(
-                "{} returned CTAP error 0x{:02X}",
-                ctx, status
-            )));
-        }
-        if resp.len() == 1 {
-            return Ok(vec![]);
-        }
-        let val: Value = ciborium::de::from_reader(&resp[1..])
-            .map_err(|e| SoloError::DeviceError(format!("CBOR parse error in {}: {}", ctx, e)))?;
-        match val {
-            Value::Map(p) => Ok(p),
-            _ => Err(SoloError::DeviceError(format!(
-                "{} response is not a CBOR map",
-                ctx
-            ))),
-        }
-    };
-
-    // ── Step 1: enumerateRPsBegin (subcommand 0x02) ──────────────────────
-    // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
-    let rp_begin_auth = pin_uv_auth(&[0x02u8])?;
-    let rp_begin_resp = send_cred_mgmt(0x02, None, rp_begin_auth)?;
+    // enumerateRPsBegin — pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
+    let rp_begin_auth = pin_uv_auth(pin_token, &[0x02u8])?;
+    let rp_begin_resp = send_cred_mgmt(hid, 0x02, None, rp_begin_auth)?;
     let rp_begin_pairs = parse_cm_response(rp_begin_resp, "enumerateRPsBegin")?;
 
     if rp_begin_pairs.is_empty() {
-        println!("No resident credentials on this device.");
-        return Ok(());
+        return Ok(vec![]);
     }
 
-    // Extract totalRPs from response (key 0x05); may be absent if only 1 RP
+    // totalRPs (key 0x05); may be absent when there is only one RP
     let total_rps: usize = find_cbor_response_by_key(&rp_begin_pairs, 0x05)
         .and_then(|v| {
             if let Value::Integer(i) = v {
@@ -232,24 +220,17 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         })
         .unwrap_or(1usize);
 
-    // Collect all RP responses
     let mut rp_responses: Vec<Vec<(Value, Value)>> = vec![rp_begin_pairs];
     for _ in 1..total_rps {
-        let next_resp = send_cred_mgmt_next(0x03)?;
+        let next_resp = send_cred_mgmt_next(hid, 0x03)?;
         let next_pairs = parse_cm_response(next_resp, "enumerateRPsGetNextRP")?;
         rp_responses.push(next_pairs);
     }
 
-    // ── Step 2: For each RP, enumerate credentials ───────────────────────
-    println!(
-        "{:<32} {:<24} {}",
-        "Relying Party", "Username", "Credential ID (base64)"
-    );
-    println!("{}", "-".repeat(90));
-
-    for rp_pairs in &rp_responses {
-        // Extract rpId from key 0x03 (rp map with "id" field)
-        let rp_id: String = find_cbor_response_by_key(rp_pairs, 0x03)
+    let mut result = Vec::new();
+    for rp_pairs in rp_responses {
+        // rp map at key 0x03 — extract the "id" text field
+        let rp_id: String = find_cbor_response_by_key(&rp_pairs, 0x03)
             .and_then(|v| {
                 if let Value::Map(m) = v {
                     m.iter().find_map(|(k, val)| {
@@ -273,8 +254,8 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             })
             .unwrap_or_else(|| "<unknown>".into());
 
-        // Extract rpIdHash from key 0x04 (32 bytes)
-        let rp_id_hash: Vec<u8> = find_cbor_response_by_key(rp_pairs, 0x04)
+        // rpIdHash at key 0x04 (32 bytes)
+        let rp_id_hash: Vec<u8> = find_cbor_response_by_key(&rp_pairs, 0x04)
             .and_then(|v| {
                 if let Value::Bytes(b) = v {
                     Some(b.clone())
@@ -294,96 +275,75 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
             )));
         }
 
-        // enumerateCredentialsBegin (subcommand 0x04)
-        // subCommandParams = CBOR({0x01: rpIdHash})
-        // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || subCommandParamsCbor)[0..16]
-        let rk_begin_params = int_map([(0x01i64, cbor_bytes(rp_id_hash.clone()))]);
-        let mut rk_params_cbor: Vec<u8> = Vec::new();
-        ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)
-            .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        result.push((rp_id, rp_id_hash));
+    }
 
-        let mut rk_auth_msg = vec![0x04u8];
-        rk_auth_msg.extend_from_slice(&rk_params_cbor);
-        let rk_begin_auth = pin_uv_auth(&rk_auth_msg)?;
+    Ok(result)
+}
 
-        let rk_begin_resp = send_cred_mgmt(0x04, Some(rk_begin_params), rk_begin_auth)?;
-        let rk_begin_pairs = parse_cm_response(rk_begin_resp, "enumerateCredentialsBegin")?;
+/// Send enumerateCredentialsBegin (subcommand 0x04) for the given RP hash,
+/// then enumerateCredentialsGetNextCredential (subcommand 0x05) for all
+/// remaining credentials, returning `(username, cred_id_base64)` pairs.
+///
+/// `pin_auth_protocol` is always 1 for the current implementation (CTAP 2.0).
+fn enumerate_credentials_for_rp(
+    hid: &SoloHid,
+    pin_token: &[u8],
+    rp_id_hash: &[u8],
+    _pin_auth_protocol: u8,
+) -> Result<Vec<(String, Vec<u8>)>> {
+    use base64::Engine as _;
+    use ciborium::value::Value;
 
-        if rk_begin_pairs.is_empty() {
-            continue;
-        }
+    // subCommandParams = CBOR({0x01: rpIdHash})
+    // pinUvAuthParam   = HMAC-SHA-256(pinToken, [0x04] || subCommandParamsCbor)[0..16]
+    let rk_begin_params = int_map([(0x01i64, cbor_bytes(rp_id_hash.to_vec()))]);
+    let mut rk_params_cbor: Vec<u8> = Vec::new();
+    ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
 
-        let total_creds: usize = find_cbor_response_by_key(&rk_begin_pairs, 0x09)
+    let mut rk_auth_msg = vec![0x04u8];
+    rk_auth_msg.extend_from_slice(&rk_params_cbor);
+    let rk_begin_auth = pin_uv_auth(pin_token, &rk_auth_msg)?;
+
+    let rk_begin_resp = send_cred_mgmt(hid, 0x04, Some(rk_begin_params), rk_begin_auth)?;
+    let rk_begin_pairs = parse_cm_response(rk_begin_resp, "enumerateCredentialsBegin")?;
+
+    if rk_begin_pairs.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let total_creds: usize = find_cbor_response_by_key(&rk_begin_pairs, 0x09)
+        .and_then(|v| {
+            if let Value::Integer(i) = v {
+                (*i).try_into().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(1usize);
+
+    let mut cred_responses = vec![rk_begin_pairs];
+    for _ in 1..total_creds {
+        let next_resp = send_cred_mgmt_next(hid, 0x05)?;
+        let next_pairs =
+            parse_cm_response(next_resp, "enumerateCredentialsGetNextCredential")?;
+        cred_responses.push(next_pairs);
+    }
+
+    let mut result = Vec::new();
+    for cred_pairs in cred_responses {
+        // user: key 0x06 → map with "name" or "displayName"
+        let username: String = find_cbor_response_by_key(&cred_pairs, 0x06)
             .and_then(|v| {
-                if let Value::Integer(i) = v {
-                    (*i).try_into().ok()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(1usize);
-
-        let mut cred_responses = vec![rk_begin_pairs];
-        for _ in 1..total_creds {
-            let next_resp = send_cred_mgmt_next(0x05)?;
-            let next_pairs = parse_cm_response(next_resp, "enumerateCredentialsGetNextCredential")?;
-            cred_responses.push(next_pairs);
-        }
-
-        for cred_pairs in &cred_responses {
-            // user: key 0x06 → map with "name" or "displayName"
-            let username: String = find_cbor_response_by_key(cred_pairs, 0x06)
-                .and_then(|v| {
-                    if let Value::Map(m) = v {
-                        // prefer "name", fall back to "displayName", then "id" as hex
-                        m.iter()
-                            .find_map(|(k, val)| {
-                                if let Value::Text(s) = k {
-                                    if s == "name" || s == "displayName" {
-                                        if let Value::Text(n) = val {
-                                            Some(n.clone())
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
-                            .or_else(|| {
-                                m.iter().find_map(|(k, val)| {
-                                    if let Value::Text(s) = k {
-                                        if s == "id" {
-                                            match val {
-                                                Value::Text(t) => Some(t.clone()),
-                                                Value::Bytes(b) => Some(hex::encode(b)),
-                                                _ => None,
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                })
-                            })
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| "<unknown>".into());
-
-            // credentialId: key 0x07 → map with "id" (bytes)
-            let cred_id_b64: String = find_cbor_response_by_key(cred_pairs, 0x07)
-                .and_then(|v| {
-                    if let Value::Map(m) = v {
-                        m.iter().find_map(|(k, val)| {
+                if let Value::Map(m) = v {
+                    // prefer "name", fall back to "displayName", then "id" as hex
+                    m.iter()
+                        .find_map(|(k, val)| {
                             if let Value::Text(s) = k {
-                                if s == "id" {
-                                    if let Value::Bytes(b) = val {
-                                        Some(base64::engine::general_purpose::STANDARD.encode(b))
+                                if s == "name" || s == "displayName" {
+                                    if let Value::Text(n) = val {
+                                        Some(n.clone())
                                     } else {
                                         None
                                     }
@@ -394,12 +354,108 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
                                 None
                             }
                         })
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_else(|| "<unknown>".into());
+                        .or_else(|| {
+                            m.iter().find_map(|(k, val)| {
+                                if let Value::Text(s) = k {
+                                    if s == "id" {
+                                        match val {
+                                            Value::Text(t) => Some(t.clone()),
+                                            Value::Bytes(b) => Some(hex::encode(b)),
+                                            _ => None,
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_else(|| "<unknown>".into());
 
+        // credentialId: key 0x07 → map with "id" (bytes); store as base64
+        let cred_id: Vec<u8> = find_cbor_response_by_key(&cred_pairs, 0x07)
+            .and_then(|v| {
+                if let Value::Map(m) = v {
+                    m.iter().find_map(|(k, val)| {
+                        if let Value::Text(s) = k {
+                            if s == "id" {
+                                if let Value::Bytes(b) = val {
+                                    Some(b.clone())
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let cred_id_b64 = base64::engine::general_purpose::STANDARD.encode(&cred_id);
+        result.push((username, cred_id_b64.into_bytes()));
+    }
+
+    Ok(result)
+}
+
+/// List resident credentials via CTAP2 authenticatorCredentialManagement (0x0A).
+///
+/// Protocol:
+///   1. Prompt for PIN, derive PIN token via clientPIN (0x06):
+///      a. getKeyAgreement (subcommand 0x02) → device COSE key
+///      b. Generate ephemeral P-256 keypair, ECDH → shared_secret = SHA-256(x)
+///      c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
+///      d. getPINToken (subcommand 0x05) → decrypt response → pinToken (32 bytes)
+///   2. enumerateRPsBegin (credMgmt 0x0A subcommand 0x02):
+///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
+///      Response: {0x03: rp, 0x04: rpIdHash, 0x05: totalRPs}
+///   3. enumerateRPsGetNextRP (subcommand 0x03) for remaining RPs
+///   4. For each RP, enumerateCredentialsBegin (subcommand 0x04):
+///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || CBOR({0x01: rpIdHash}))[0..16]
+///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
+///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
+pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
+    // ── Pre-check: ensure a PIN has been set on the device ──────────────
+    if !get_info_client_pin_set(hid)? {
+        return Err(SoloError::DeviceError(
+            "Credential management requires a PIN. Please set a PIN first with 'solo1 key set-pin'.".into(),
+        ));
+    }
+
+    // ── Step 0: get PIN token ────────────────────────────────────────────
+    let pin_token = prompt_and_get_pin_token(hid)?;
+    let pin_token = pin_token.as_slice();
+
+    // ── Step 1: enumerate all relying parties ────────────────────────────
+    let rps = enumerate_rps(hid, pin_token)?;
+
+    if rps.is_empty() {
+        println!("No resident credentials on this device.");
+        return Ok(());
+    }
+
+    // ── Step 2: for each RP, enumerate credentials and print ─────────────
+    println!(
+        "{:<32} {:<24} {}",
+        "Relying Party", "Username", "Credential ID (base64)"
+    );
+    println!("{}", "-".repeat(90));
+
+    for (rp_id, rp_id_hash) in &rps {
+        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
+        for (username, cred_id_bytes) in credentials {
+            let cred_id_b64 = String::from_utf8(cred_id_bytes).unwrap_or_default();
             println!("{:<32} {:<24} {}", rp_id, username, cred_id_b64);
         }
     }

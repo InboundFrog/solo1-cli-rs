@@ -4,6 +4,46 @@ use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
 
+/// Parse a raw makeCredential CTAP2 response and extract the DER-encoded
+/// attestation certificate from `attStmt.x5c[0]`.
+///
+/// The response must start with a 0x00 status byte followed by a CBOR map.
+/// Key 0x03 of that map is `attStmt`, which must contain an `x5c` array
+/// whose first element is the leaf certificate as a byte string.
+fn extract_attestation_cert(response: &[u8]) -> Result<Vec<u8>> {
+    use ciborium::value::Value;
+
+    let pairs = parse_cbor_map_response(response, "makeCredential")?;
+
+    // 0x03: attStmt map — contains "x5c" array of DER-encoded certs
+    let att_stmt = match find_int_key(&pairs, 0x03) {
+        Some(Value::Map(m)) => m,
+        _ => {
+            return Err(SoloError::DeviceError(
+                "makeCredential response missing attStmt (key 0x03)".into(),
+            ))
+        }
+    };
+
+    // Find "x5c" key inside attStmt
+    let x5c = att_stmt.iter().find_map(|(k, v)| {
+        if let Value::Text(s) = k {
+            if s == "x5c" {
+                return Some(v);
+            }
+        }
+        None
+    });
+
+    match x5c {
+        Some(Value::Array(certs)) if !certs.is_empty() => match &certs[0] {
+            Value::Bytes(b) => Ok(b.clone()),
+            _ => Err(SoloError::DeviceError("x5c[0] is not bytes".into())),
+        },
+        _ => Err(SoloError::DeviceError("attStmt missing x5c array".into())),
+    }
+}
+
 /// Verify key authenticity via attestation certificate.
 ///
 /// Sends a CTAP2 makeCredential (0x01) request via CTAPHID_CBOR, extracts the
@@ -78,36 +118,8 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
-    // First byte is CTAP2 status code; 0x00 = success
-    let pairs = parse_cbor_map_response(&response, "makeCredential")?;
-
-    // 0x03: attStmt map — contains "x5c" array of DER-encoded certs
-    let att_stmt = match find_int_key(&pairs, 0x03) {
-        Some(Value::Map(m)) => m,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "makeCredential response missing attStmt (key 0x03)".into(),
-            ))
-        }
-    };
-
-    // Find "x5c" key inside attStmt
-    let x5c = att_stmt.iter().find_map(|(k, v)| {
-        if let Value::Text(s) = k {
-            if s == "x5c" {
-                return Some(v);
-            }
-        }
-        None
-    });
-
-    let cert_der = match x5c {
-        Some(Value::Array(certs)) if !certs.is_empty() => match &certs[0] {
-            Value::Bytes(b) => b.clone(),
-            _ => return Err(SoloError::DeviceError("x5c[0] is not bytes".into())),
-        },
-        _ => return Err(SoloError::DeviceError("attStmt missing x5c array".into())),
-    };
+    // Extract the DER attestation certificate from attStmt.x5c[0]
+    let cert_der = extract_attestation_cert(&response)?;
 
     let fingerprint = sha256_hex(&cert_der);
     println!("Attestation certificate SHA-256: {}", fingerprint);
