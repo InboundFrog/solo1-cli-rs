@@ -1,7 +1,7 @@
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, int_map};
 use crate::ctap2::{
     extract_cose_coord, find_key_agreement_response,
-    parse_cbor_map_response, CTAP2_AES_IV,
+    parse_cbor_map_response, prompt_and_get_pin_token, CTAP2_AES_IV,
 };
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -23,14 +23,25 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     use ciborium::value::Value;
     use rand::RngCore;
 
-    if !prompt.is_empty() {
-        eprintln!("{}", prompt);
-    }
-
     // Generate random challenge and hash it as clientDataHash
     let mut challenge = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut challenge);
     let client_data_hash: Vec<u8> = Sha256::digest(&challenge).to_vec();
+
+    // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
+    // PIN prompt comes first; the touch prompt is printed after PIN entry.
+    let pin_uv_auth: Option<Vec<u8>> = if crate::ctap2::get_info_client_pin_set(hid)? {
+        use hmac::{Hmac, KeyInit as _, Mac as _};
+        let pin_token = prompt_and_get_pin_token(hid)?;
+        // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
+        let mut mac = Hmac::<Sha256>::new_from_slice(&pin_token)
+            .map_err(|e| SoloError::CryptoError(format!("HMAC key error: {}", e)))?;
+        mac.update(&client_data_hash);
+        let result = mac.finalize().into_bytes();
+        Some(result[..16].to_vec())
+    } else {
+        None
+    };
 
     // Build CTAP2 makeCredential CBOR request map (integer keys per CTAP2 spec):
     //   0x01: clientDataHash
@@ -39,7 +50,9 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     //   0x04: pubKeyCredParams [{"alg": -7, "type": "public-key"}]
     //   0x06: extensions {"hmac-secret": true}
     //   0x07: options {"rk": true}
-    let cbor_request = int_map([
+    //   0x08: pinUvAuthParam (if PIN is set)
+    //   0x09: pinUvAuthProtocol = 1 (if PIN is set)
+    let mut cbor_entries: Vec<(i64, Value)> = vec![
         (0x01, cbor_bytes(client_data_hash)),
         (
             0x02,
@@ -71,7 +84,16 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
             0x07,
             Value::Map(vec![(cbor_text("rk"), Value::Bool(true))]),
         ),
-    ]);
+    ];
+    if let Some(auth_param) = pin_uv_auth {
+        cbor_entries.push((0x08, cbor_bytes(auth_param)));
+        cbor_entries.push((0x09, cbor_int(1)));
+    }
+    let cbor_request = int_map(cbor_entries);
+
+    if !prompt.is_empty() {
+        eprintln!("{}", prompt);
+    }
 
     // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
     let mut request_bytes = vec![0x01u8];
