@@ -7,3 +7,4 @@
 
 # Claude Local Configs
 .claude/*.local.*
+.claude/worktrees/
