@@ -309,11 +309,16 @@ impl ClientPinSession {
     }
 
     /// Compute pinUvAuthParam for a message.
-    pub fn authenticate(&self, message: &[u8]) -> Vec<u8> {
+    pub fn authenticate(&self, message: &[u8]) -> Result<Vec<u8>> {
         type HmacSha256 = Hmac<Sha256>;
-        let mut hmac = HmacSha256::new_from_slice(&self.shared_secret).unwrap();
+        let mut hmac = HmacSha256::new_from_slice(&self.shared_secret)
+            .map_err(|_| SoloError::CryptoError("HMAC key length invalid".into()))?;
         hmac.update(message);
-        hmac.finalize().into_bytes()[..16].to_vec()
+        let full = hmac.finalize().into_bytes();
+        let truncated: Vec<u8> = full[..16]
+            .try_into()
+            .map_err(|_| SoloError::CryptoError("HMAC output truncation failed".into()))?;
+        Ok(truncated)
     }
 
     /// Encrypt the PIN hash for getPinToken.
@@ -428,8 +433,8 @@ mod tests {
 
         // Test authenticate (HMAC-SHA256 truncated to 16 bytes)
         let msg = b"hello world";
-        let auth1 = session.authenticate(msg);
-        let auth2 = session.authenticate(msg);
+        let auth1 = session.authenticate(msg).unwrap();
+        let auth2 = session.authenticate(msg).unwrap();
         assert_eq!(auth1, auth2);
         assert_eq!(auth1.len(), 16);
     }

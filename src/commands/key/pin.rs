@@ -37,7 +37,7 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
 
     let mut auth_msg = new_pin_enc.clone();
     auth_msg.extend_from_slice(&pin_hash_enc);
-    let pin_uv_auth_param = session.authenticate(&auth_msg);
+    let pin_uv_auth_param = session.authenticate(&auth_msg)?;
 
     let change_pin_cbor = Value::Map(vec![
         (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
@@ -110,7 +110,7 @@ pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
     let session = crate::ctap2::ClientPinSession::new(&dev_pub_key);
 
     let new_pin_enc = session.encrypt_pin(&new_pin)?;
-    let pin_uv_auth_param = session.authenticate(&new_pin_enc);
+    let pin_uv_auth_param = session.authenticate(&new_pin_enc)?;
 
     let set_pin_cbor = Value::Map(vec![
         (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
