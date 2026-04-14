@@ -19,12 +19,12 @@ use sha2::{Digest, Sha256};
 ///
 /// Parses the authData from the response to extract the credential ID,
 /// then prints it as hex for use with `challenge-response` and `sign-file`.
-pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt: &str) -> Result<()> {
+pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt: &str, json: bool) -> Result<()> {
     use ciborium::value::Value;
     use rand::RngCore;
 
     if !prompt.is_empty() {
-        println!("{}", prompt);
+        eprintln!("{}", prompt);
     }
 
     // Generate random challenge and hash it as clientDataHash
@@ -134,6 +134,11 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     }
 
     let credential_id = &auth_data[cred_id_start..cred_id_end];
+
+    if json {
+        use crate::output::{MakeCredentialOutput, print_json};
+        return print_json(&MakeCredentialOutput { credential_id: hex::encode(credential_id) });
+    }
     println!("{}", hex::encode(credential_id));
 
     Ok(())
@@ -309,6 +314,7 @@ pub fn cmd_challenge_response(
     credential_id: &str,
     challenge: &str,
     host: &str,
+    json: bool,
 ) -> Result<()> {
     use ciborium::value::Value;
     use sha2::Digest as _;
@@ -358,7 +364,7 @@ pub fn cmd_challenge_response(
         ),
     ]);
 
-    println!("Touch your authenticator to generate a response...");
+    eprintln!("Touch your authenticator to generate a response...");
 
     let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command
     ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)
@@ -430,6 +436,10 @@ pub fn cmd_challenge_response(
     let hmac_output = decrypt_hmac_secret(&shared_secret, &hmac_secret_enc)?;
 
     // ── Step 9: Print the HMAC output as hex ────────────────────────────────
+    if json {
+        use crate::output::{ChallengeResponseOutput, print_json};
+        return print_json(&ChallengeResponseOutput { hmac_output: hex::encode(&hmac_output[..32]) });
+    }
     println!("{}", hex::encode(&hmac_output[..32]));
 
     Ok(())

@@ -80,8 +80,23 @@ pub fn cmd_mergehex(
 }
 
 /// List connected Solo devices.
-pub fn cmd_ls() -> Result<()> {
+pub fn cmd_ls(json: bool) -> Result<()> {
+    use crate::output::{DeviceInfo, ListOutput, print_json};
+
     let devices = list_solo_devices()?;
+
+    if json {
+        let out = ListOutput {
+            devices: devices.iter().map(|d| DeviceInfo {
+                path: d.path.clone(),
+                serial: d.serial.clone(),
+                product: d.product.clone(),
+                manufacturer: d.manufacturer.clone(),
+            }).collect(),
+        };
+        return print_json(&out);
+    }
+
     if devices.is_empty() {
         println!("No Solo devices found.");
     } else {

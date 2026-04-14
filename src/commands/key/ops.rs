@@ -6,8 +6,17 @@ use crate::error::{Result, SoloError};
 use crate::firmware::FirmwareVersion;
 
 /// Get firmware version from the device.
-pub fn cmd_key_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
-    get_device_version(hid)
+pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
+    use crate::output::{VersionOutput, print_json};
+
+    let version = get_device_version(hid)?;
+    if json {
+        return print_json(&VersionOutput {
+            firmware_version: version.to_string(),
+        });
+    }
+    println!("Firmware version: {}", version);
+    Ok(())
 }
 
 pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
@@ -167,7 +176,7 @@ mod tests {
     #[test]
     fn test_cmd_key_version_parses_bytes() {
         let device = MockDevice::new(vec![Ok(vec![4, 1, 2])]);
-        let version = cmd_key_version(&device).unwrap();
+        let version = get_device_version(&device).unwrap();
         assert_eq!(version, crate::firmware::FirmwareVersion::new(4, 1, 2));
     }
 
@@ -175,7 +184,7 @@ mod tests {
     #[test]
     fn test_cmd_key_version_zero() {
         let device = MockDevice::new(vec![Ok(vec![0, 0, 0])]);
-        let version = cmd_key_version(&device).unwrap();
+        let version = get_device_version(&device).unwrap();
         assert_eq!(version, crate::firmware::FirmwareVersion::new(0, 0, 0));
     }
 
@@ -183,7 +192,7 @@ mod tests {
     #[test]
     fn test_cmd_key_version_extra_bytes_ignored() {
         let device = MockDevice::new(vec![Ok(vec![2, 5, 3, 99, 42])]);
-        let version = cmd_key_version(&device).unwrap();
+        let version = get_device_version(&device).unwrap();
         assert_eq!(version, crate::firmware::FirmwareVersion::new(2, 5, 3));
     }
 
@@ -191,7 +200,7 @@ mod tests {
     #[test]
     fn test_cmd_key_version_too_short() {
         let device = MockDevice::new(vec![Ok(vec![1, 0])]);
-        let err = cmd_key_version(&device).unwrap_err();
+        let err = cmd_key_version(&device, false).unwrap_err();
         assert!(matches!(err, SoloError::ProtocolError(_)));
     }
 
@@ -199,7 +208,7 @@ mod tests {
     #[test]
     fn test_cmd_key_version_timeout() {
         let device = MockDevice::new(vec![]);
-        let err = cmd_key_version(&device).unwrap_err();
+        let err = cmd_key_version(&device, false).unwrap_err();
         assert!(matches!(err, SoloError::Timeout));
     }
 }

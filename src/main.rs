@@ -11,14 +11,15 @@ fn main() {
 
     solo1::verbose::set_verbose(cli.verbose);
 
-    let result = run(cli);
+    let json = cli.json;
+    let result = run(cli, json);
     if let Err(e) = result {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
 }
 
-fn run(cli: Cli) -> error::Result<()> {
+fn run(cli: Cli, json: bool) -> error::Result<()> {
     match cli.command {
         Commands::Version => {
             top::cmd_version();
@@ -47,11 +48,11 @@ fn run(cli: Cli) -> error::Result<()> {
         }
 
         Commands::Ls => {
-            top::cmd_ls()?;
+            top::cmd_ls(json)?;
         }
 
         Commands::Key(key_args) => {
-            run_key_command(key_args.serial.as_deref(), key_args.command)?;
+            run_key_command(key_args.serial.as_deref(), key_args.command, json)?;
         }
 
         Commands::Program(prog_args) => {
@@ -65,7 +66,7 @@ fn run(cli: Cli) -> error::Result<()> {
     Ok(())
 }
 
-fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> {
+fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool) -> error::Result<()> {
     match cmd {
         KeyCommands::Rng { command } => {
             // Open device for all RNG subcommands
@@ -91,7 +92,7 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> 
             prompt,
         } => {
             let hid = SoloHid::open(serial)?;
-            key::cmd_make_credential(&hid, &host, &user, &prompt)?;
+            key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
         }
 
         KeyCommands::ChallengeResponse {
@@ -102,18 +103,17 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> 
             pin: _,
         } => {
             let hid = SoloHid::open(serial)?;
-            key::cmd_challenge_response(&hid, &credential_id, &challenge, &host)?;
+            key::cmd_challenge_response(&hid, &credential_id, &challenge, &host, json)?;
         }
 
         KeyCommands::Verify => {
             let hid = SoloHid::open(serial)?;
-            key::cmd_verify(&hid)?;
+            key::cmd_verify(&hid, json)?;
         }
 
         KeyCommands::Version => {
             let hid = SoloHid::open(serial)?;
-            let version = key::cmd_key_version(&hid)?;
-            println!("Firmware version: {}", version);
+            key::cmd_key_version(&hid, json)?;
         }
 
         KeyCommands::Wink => {
@@ -185,7 +185,7 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands) -> error::Result<()> 
                     key::credential::cmd_credential_info(&hid)?;
                 }
                 CredentialCommands::Ls => {
-                    key::credential::cmd_credential_ls(&hid)?;
+                    key::credential::cmd_credential_ls(&hid, json)?;
                 }
                 CredentialCommands::Rm { credential_id } => {
                     key::credential::cmd_credential_rm(&hid, &credential_id)?;

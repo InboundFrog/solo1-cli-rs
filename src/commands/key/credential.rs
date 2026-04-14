@@ -419,7 +419,9 @@ fn enumerate_credentials_for_rp(
 ///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || CBOR({0x01: rpIdHash}))[0..16]
 ///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
 ///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
-pub fn cmd_credential_ls(hid: &impl HidDevice) -> Result<()> {
+pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
+    use crate::output::{CredentialEntry, CredentialListOutput, print_json};
+
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
         return Err(SoloError::ProtocolError(
@@ -435,8 +437,27 @@ pub fn cmd_credential_ls(hid: &impl HidDevice) -> Result<()> {
     let rps = enumerate_rps(hid, pin_token)?;
 
     if rps.is_empty() {
+        if json {
+            return print_json(&CredentialListOutput { credentials: vec![] });
+        }
         println!("No resident credentials on this device.");
         return Ok(());
+    }
+
+    if json {
+        let mut entries = Vec::new();
+        for (rp_id, rp_id_hash) in &rps {
+            let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
+            for (username, cred_id_bytes) in credentials {
+                let cred_id_b64 = String::from_utf8(cred_id_bytes).unwrap_or_default();
+                entries.push(CredentialEntry {
+                    rp_id: rp_id.clone(),
+                    user_name: username,
+                    credential_id: cred_id_b64,
+                });
+            }
+        }
+        return print_json(&CredentialListOutput { credentials: entries });
     }
 
     // ── Step 2: for each RP, enumerate credentials and print ─────────────

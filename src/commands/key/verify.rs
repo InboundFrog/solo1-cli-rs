@@ -49,7 +49,7 @@ fn extract_attestation_cert(response: &[u8]) -> Result<Vec<u8>> {
 /// Sends a CTAP2 makeCredential (0x01) request via CTAPHID_CBOR, extracts the
 /// DER-encoded attestation certificate from attStmt.x5c[0], SHA-256 fingerprints
 /// it, and compares against known fingerprints in crypto.rs.
-pub fn cmd_verify(hid: &impl HidDevice) -> Result<()> {
+pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::crypto::{check_attestation_fingerprint, sha256_hex};
     use ciborium::value::Value;
     use hmac::{Hmac, KeyInit as _, Mac as _};
@@ -71,7 +71,7 @@ pub fn cmd_verify(hid: &impl HidDevice) -> Result<()> {
         None
     };
 
-    println!("Please press the button on your Solo key");
+    eprintln!("Please press the button on your Solo key");
 
     // Build CTAP2 makeCredential CBOR request map (integer keys per CTAP2 spec):
     //   0x01: clientDataHash
@@ -122,10 +122,26 @@ pub fn cmd_verify(hid: &impl HidDevice) -> Result<()> {
     let cert_der = extract_attestation_cert(&response)?;
 
     let fingerprint = sha256_hex(&cert_der);
-    println!("Attestation certificate SHA-256: {}", fingerprint);
 
     use crate::crypto::AttestationResult;
-    match check_attestation_fingerprint(&cert_der) {
+    let result = check_attestation_fingerprint(&cert_der);
+
+    if json {
+        use crate::output::{VerifyOutput, print_json};
+        let (device_type, device_name) = match &result {
+            AttestationResult::GenuineConsumer(n) => ("genuine", Some(n.to_string())),
+            AttestationResult::DeveloperDevice(n) => ("developer", Some(n.to_string())),
+            AttestationResult::Unknown => ("unknown", None),
+        };
+        return print_json(&VerifyOutput {
+            device_type: device_type.to_string(),
+            device_name,
+            fingerprint: fingerprint.clone(),
+        });
+    }
+
+    println!("Attestation certificate SHA-256: {}", fingerprint);
+    match result {
         AttestationResult::GenuineConsumer(name) => {
             println!("OK: Genuine SoloKeys device: {}", name);
         }
