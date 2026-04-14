@@ -1,6 +1,6 @@
-use std::io::Write;
 use std::time::Instant;
 
+use crate::commands::key::common;
 use crate::device::{SoloHid, CMD_GET_VERSION, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK};
 use crate::error::{Result, SoloError};
 use crate::firmware::FirmwareVersion;
@@ -68,12 +68,9 @@ pub fn cmd_keyboard(hid: &SoloHid, data: &[u8]) -> Result<()> {
 
 /// Factory reset the device.
 pub fn cmd_reset(hid: &SoloHid) -> Result<()> {
-    println!("Warning: Your credentials will be lost!!! Do you wish to continue?");
-    print!("Type 'yes' to confirm: ");
-    std::io::stdout().flush()?;
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if input.trim() != "yes" {
+    if !common::confirm(
+        "Warning: Your credentials will be lost!!! Type 'yes' to confirm:",
+    )? {
         println!("Aborted.");
         return Ok(());
     }
@@ -89,11 +86,9 @@ pub fn cmd_reset(hid: &SoloHid) -> Result<()> {
 /// Permanently disable firmware updates on the device.
 pub fn cmd_disable_updates(hid: &SoloHid) -> Result<()> {
     use crate::device::CMD_DISABLE_BOOTLOADER;
-    println!("WARNING: This will permanently disable firmware updates on this device!");
-    println!("This action cannot be undone. Are you sure? (type 'yes' to confirm)");
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    if input.trim() != "yes" {
+    if !common::confirm(
+        "WARNING: This will permanently disable firmware updates on this device!\nThis action cannot be undone. Type 'yes' to confirm:",
+    )? {
         println!("Aborted.");
         return Ok(());
     }

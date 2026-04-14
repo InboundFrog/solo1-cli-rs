@@ -1,3 +1,4 @@
+use crate::commands::key::common;
 use crate::ctap2::{
     extract_cbor_text_responses, find_cbor_response_by_key, get_pin_token,
     parse_cbor_map_response,
@@ -432,16 +433,10 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
         .map_err(|e| SoloError::DeviceError(format!("Invalid credential ID hex: {}", e)))?;
 
     // Confirmation prompt
-    print!("Delete credential {}? (yes/N): ", credential_id);
-    use std::io::Write as _;
-    std::io::stdout()
-        .flush()
-        .map_err(|e| SoloError::IoError(e))?;
-    let mut confirmation = String::new();
-    std::io::stdin()
-        .read_line(&mut confirmation)
-        .map_err(|e| SoloError::IoError(e))?;
-    if confirmation.trim() != "yes" {
+    if !common::confirm(&format!(
+        "Delete credential {}? Type 'yes' to confirm:",
+        credential_id
+    ))? {
         println!("Aborted.");
         return Ok(());
     }
