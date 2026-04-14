@@ -120,12 +120,21 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
     let fingerprint = sha256_hex(&cert_der);
     println!("Attestation certificate SHA-256: {}", fingerprint);
 
+    use crate::crypto::AttestationResult;
     match check_attestation_fingerprint(&cert_der) {
-        Some(msg) => {
-            println!("Valid Solo key: {}", msg);
+        AttestationResult::GenuineConsumer(name) => {
+            println!("OK: Genuine SoloKeys device: {}", name);
         }
-        None => {
-            println!("Unknown fingerprint — this key may not be genuine SoloKeys hardware.");
+        AttestationResult::DeveloperDevice(name) => {
+            println!(
+                "WARNING: Developer/non-production device: {}. Not a genuine consumer key.",
+                name
+            );
+        }
+        AttestationResult::Unknown => {
+            println!(
+                "FAILED: Could not verify device authenticity. Certificate fingerprint not recognised."
+            );
         }
     }
 

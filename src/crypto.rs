@@ -86,15 +86,64 @@ pub fn sha256_file(path: &Path) -> Result<Vec<u8>> {
     Ok(Sha256::digest(&data).to_vec())
 }
 
-/// Check if a DER-encoded certificate matches a known fingerprint.
-pub fn check_attestation_fingerprint(cert_der: &[u8]) -> Option<&'static str> {
+/// The result of checking an attestation certificate fingerprint.
+///
+/// Variants carry the device name as a `&'static str`.
+#[derive(Debug, PartialEq)]
+pub enum AttestationResult {
+    /// The certificate fingerprint matched a known genuine consumer device.
+    GenuineConsumer(&'static str),
+    /// The certificate fingerprint matched a developer or non-production device.
+    /// These devices are real SoloKeys builds but are not genuine consumer hardware.
+    /// This variant is included for developer convenience and does **not** indicate
+    /// that the device is a genuine end-user product.
+    DeveloperDevice(&'static str),
+    /// The certificate fingerprint did not match any known fingerprint.
+    Unknown,
+}
+
+/// Check whether a DER-encoded attestation certificate matches a known SoloKeys fingerprint.
+///
+/// ## What this check does
+///
+/// Computes `SHA-256(cert_der)` and compares it against a hardcoded list of
+/// known-good fingerprints.  If a match is found the function returns the
+/// device category (`GenuineConsumer` or `DeveloperDevice`) together with the
+/// device name string.  If no match is found it returns `Unknown`.
+///
+/// ## What this check does NOT prove
+///
+/// - **No certificate chain validation.** The attestation certificate is not
+///   verified against a trusted root CA.  Chain validation is a FIDO requirement
+///   for full attestation verification (see CTAP2 §8.1 and WebAuthn §6.5.3).
+/// - **No validity date check.** An expired attestation certificate will still
+///   match if its full DER bytes are identical to the known fingerprint.
+/// - **No revocation check.** There is no CRL or OCSP query.
+/// - **Fingerprints cover the full certificate DER, not just the public key.**
+///   Any change to the certificate — e.g., updated validity dates or extensions —
+///   will cause a mismatch even for a device with a genuine SoloKeys attestation
+///   key.  Newer firmware builds may produce certificates whose fingerprints are
+///   not yet listed here.
+///
+/// ## Developer device fingerprints
+///
+/// `SOLO_HACKER_FINGERPRINT` and `SOLO_EMULATION_FINGERPRINT` match developer /
+/// non-production builds.  They are included here for developer convenience but
+/// are returned as `DeveloperDevice`, not `GenuineConsumer`.  A
+/// `DeveloperDevice` result does **not** indicate genuine consumer hardware.
+pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
     let fp = sha256_hex(cert_der);
-    for (known_fp, name) in KNOWN_FINGERPRINTS {
-        if fp == *known_fp {
-            return Some(name);
+    match fp.as_str() {
+        f if f == SOLO_V3_FINGERPRINT => AttestationResult::GenuineConsumer("Solo v3"),
+        f if f == SOLO_TAP_FINGERPRINT => AttestationResult::GenuineConsumer("Solo Tap"),
+        f if f == SOMU_FINGERPRINT => AttestationResult::GenuineConsumer("Solo Mu"),
+        f if f == SOLO_FINGERPRINT => AttestationResult::GenuineConsumer("Solo 1"),
+        f if f == SOLO_HACKER_FINGERPRINT => AttestationResult::DeveloperDevice("Solo Hacker"),
+        f if f == SOLO_EMULATION_FINGERPRINT => {
+            AttestationResult::DeveloperDevice("Solo Emulation")
         }
+        _ => AttestationResult::Unknown,
     }
-    None
 }
 
 /// Websafe base64 encoding (RFC 4648 URL-safe, no padding).
@@ -186,7 +235,7 @@ mod tests {
     fn test_attestation_fingerprint_no_match() {
         let data = b"not a real certificate";
         let result = check_attestation_fingerprint(data);
-        assert!(result.is_none());
+        assert_eq!(result, AttestationResult::Unknown);
     }
 
     #[test]
