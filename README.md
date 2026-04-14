@@ -84,7 +84,9 @@ solo1 key update [--firmware FILE]       # Update firmware (downloads latest if 
 ```sh
 solo1 key credential info                # Get credential slot info
 solo1 key credential ls                  # List resident credentials
-solo1 key credential rm <ID>            # Remove credential by ID (hex)
+solo1 key credential rm <ID>             # Remove credential by base64 ID
+solo1 key credential rm --host <HOST> --user <USER>
+                                         # Remove credential by relying party and username
 solo1 key credential create --host <HOST> --user <USER> [--pin <PIN>] [--prompt <TEXT>]
                                          # Create FIDO2 credential with hmac-secret
 ```
