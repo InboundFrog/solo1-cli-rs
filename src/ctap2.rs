@@ -187,6 +187,18 @@ pub fn get_key_agreement(hid: &SoloHid) -> Result<p256::PublicKey> {
         .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))
 }
 
+/// Prompt the user for a PIN, validate it is non-empty, and acquire a PIN token from the device.
+///
+/// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
+pub fn prompt_and_get_pin_token(hid: &SoloHid) -> Result<Vec<u8>> {
+    let pin = rpassword::prompt_password("Enter PIN: ")
+        .map_err(|e| SoloError::IoError(e))?;
+    if pin.is_empty() {
+        return Err(SoloError::ProtocolError("PIN is required".into()));
+    }
+    get_pin_token(hid, &pin)
+}
+
 /// Perform the full CTAP2 clientPIN getPINToken flow and return the decrypted PIN token.
 ///
 /// Steps:

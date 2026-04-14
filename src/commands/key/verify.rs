@@ -1,4 +1,4 @@
-use crate::ctap2::{find_cbor_response_by_key, get_pin_token, parse_cbor_map_response};
+use crate::ctap2::{find_cbor_response_by_key, parse_cbor_map_response, prompt_and_get_pin_token};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
@@ -18,14 +18,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     let pin_uv_auth: Option<Vec<u8>> = if crate::ctap2::get_info_client_pin_set(hid)? {
-        let pin = rpassword::prompt_password("PIN: ").map_err(|e| SoloError::IoError(e))?;
-        if pin.len() < 4 {
-            return Err(SoloError::DeviceError(
-                "PIN must be at least 4 characters".into(),
-            ));
-        }
-
-        let pin_token = get_pin_token(hid, &pin)?;
+        let pin_token = prompt_and_get_pin_token(hid)?;
 
         // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
         let mut mac = Hmac::<Sha256>::new_from_slice(&pin_token)
