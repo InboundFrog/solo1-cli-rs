@@ -7,6 +7,7 @@ use ihex::Record;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::{websafe_b64_decode, websafe_b64_encode};
+use crate::device::{SoloHid, CMD_VERSION};
 use crate::error::{Result, SoloError};
 
 /// The firmware JSON format used by the Solo 1 bootloader.
@@ -78,6 +79,31 @@ impl FirmwareJson {
     /// Serialize to JSON string.
     pub fn to_json(&self) -> Result<String> {
         Ok(serde_json::to_string_pretty(self)?)
+    }
+}
+
+/// Query the bootloader version from a connected device and select the
+/// appropriate firmware signature for that bootloader version.
+///
+/// Bootloaders <= 2.5.3 use the v1 signing region; later ones use v2.
+/// If the version query fails or returns no data, falls back to the default
+/// (latest) signature rather than incorrectly matching "<=2.5.3".
+pub fn select_signature(hid: &SoloHid, fw: &FirmwareJson) -> Result<Vec<u8>> {
+    match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
+        Ok(resp) if resp.len() >= 3 => {
+            let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
+            println!("Bootloader version: {}", v);
+            fw.signature_for_version(&v)
+        }
+        Ok(resp) if !resp.is_empty() => {
+            let v = FirmwareVersion::new(0, 0, resp[0] as u32);
+            println!("Bootloader version: {}", v);
+            fw.signature_for_version(&v)
+        }
+        _ => {
+            println!("Could not read bootloader version; using default signature.");
+            fw.signature_bytes()
+        }
     }
 }
 

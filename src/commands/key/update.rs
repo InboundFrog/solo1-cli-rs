@@ -2,13 +2,13 @@ use std::path::Path;
 
 use crate::device::SoloHid;
 use crate::error::{Result, SoloError};
-use crate::firmware::FirmwareVersion;
+use crate::firmware;
 use crate::vlog;
 
 /// Update the device firmware.
 pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
     use crate::crypto::sha256_hex;
-    use crate::device::{CMD_DONE, CMD_ENTER_BOOT, CMD_VERSION, CMD_WRITE};
+    use crate::device::{CMD_DONE, CMD_ENTER_BOOT, CMD_WRITE};
     use crate::firmware::{download_url, fetch_latest_release, FirmwareJson};
     use indicatif::{ProgressBar, ProgressStyle};
 
@@ -47,24 +47,7 @@ pub fn cmd_update(hid: &SoloHid, firmware_file: Option<&Path>) -> Result<()> {
     let bl_hid = SoloHid::open_bootloader(None)?;
 
     // Query bootloader version to select the correct signature.
-    // If CMD_VERSION fails, use the default (latest) signature directly rather than
-    // falling back to version 0.0.0 which would incorrectly match "<=2.5.3".
-    let signature = match bl_hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
-        Ok(resp) if resp.len() >= 3 => {
-            let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
-            println!("Bootloader version: {}", v);
-            fw_json.signature_for_version(&v)?
-        }
-        Ok(resp) if !resp.is_empty() => {
-            let v = FirmwareVersion::new(0, 0, resp[0] as u32);
-            println!("Bootloader version: {}", v);
-            fw_json.signature_for_version(&v)?
-        }
-        _ => {
-            println!("Could not read bootloader version; using default signature.");
-            fw_json.signature_bytes()?
-        }
-    };
+    let signature = firmware::select_signature(&bl_hid, &fw_json)?;
     vlog!(
         "Using signature ({} bytes): {}",
         signature.len(),

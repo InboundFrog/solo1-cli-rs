@@ -4,10 +4,10 @@ use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::device::{SoloHid, CMD_DONE, CMD_VERSION, CMD_WRITE};
+use crate::device::{SoloHid, CMD_DONE, CMD_WRITE};
 use crate::dfu::DfuDevice;
 use crate::error::Result;
-use crate::firmware::{FirmwareJson, FirmwareVersion};
+use crate::firmware::{self, FirmwareJson};
 use crate::vlog;
 
 /// Program via the Solo bootloader (firmware.json format).
@@ -27,24 +27,7 @@ pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()>
     // Query bootloader version BEFORE writing to select the correct signature.
     // (The BootVersion command resets the internal has_erased flag; querying it
     // before writes avoids any state confusion and mirrors the Python tool's flow.)
-    let signature = match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
-        Ok(resp) if resp.len() >= 3 => {
-            let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
-            println!("Bootloader version: {}", v);
-            fw.signature_for_version(&v)?
-        }
-        Ok(resp) if !resp.is_empty() => {
-            let v = FirmwareVersion::new(0, 0, resp[0] as u32);
-            println!("Bootloader version: {}", v);
-            fw.signature_for_version(&v)?
-        }
-        _ => {
-            // CMD_VERSION failed or returned no data — use the default (latest) signature.
-            // Do NOT fall back to version 0.0.0 which would incorrectly match "<=2.5.3".
-            println!("Could not read bootloader version; using default signature.");
-            fw.signature_bytes()?
-        }
-    };
+    let signature = firmware::select_signature(hid, &fw)?;
     vlog!(
         "Signature ({} bytes): {}",
         signature.len(),
