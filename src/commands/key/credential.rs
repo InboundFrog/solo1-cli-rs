@@ -555,7 +555,7 @@ pub fn cmd_credential_rm(
 
     // Confirmation prompt
     if !common::confirm(&format!(
-        "Delete credential {}? Type 'yes' to confirm:",
+        "Delete credential {}?\nType 'yes' to confirm:",
         display_label
     ))? {
         println!("Aborted.");
