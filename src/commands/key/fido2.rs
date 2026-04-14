@@ -231,16 +231,16 @@ pub fn cmd_challenge_response(
     // ── Step 5: saltEnc = AES-256-CBC(shared_secret, IV=0, salt) ────────────
     // salt is 32 bytes = 2 × 16-byte AES blocks, no padding needed
     let mut salt_enc = [0u8; 32];
-    #[allow(deprecated)]
     {
-        use hybrid_array::Array as HybridArray;
-        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
-        let src_blocks: &[Block16] =
-            unsafe { std::slice::from_raw_parts(salt.as_ptr() as *const Block16, 2) };
-        let dst_blocks: &mut [Block16] =
-            unsafe { std::slice::from_raw_parts_mut(salt_enc.as_mut_ptr() as *mut Block16, 2) };
-        let _ = Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into())
-            .encrypt_blocks_b2b(src_blocks, dst_blocks);
+        let mut blocks = [aes::Block::default(); 2];
+        for (i, chunk) in salt.chunks_exact(16).enumerate() {
+            blocks[i] = (*chunk).try_into().unwrap();
+        }
+        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into())
+            .encrypt_blocks(&mut blocks);
+        for (i, block) in blocks.iter().enumerate() {
+            salt_enc[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
+        }
     }
 
     // ── Step 6: saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16] ──────
@@ -391,18 +391,16 @@ pub fn cmd_challenge_response(
 
     let n_blocks = hmac_secret_enc.len() / 16;
     let mut hmac_output = hmac_secret_enc.clone();
-    #[allow(deprecated)]
     {
-        use hybrid_array::Array as HybridArray;
-        type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
-        let src_blocks: &[Block16] = unsafe {
-            std::slice::from_raw_parts(hmac_secret_enc.as_ptr() as *const Block16, n_blocks)
-        };
-        let dst_blocks: &mut [Block16] = unsafe {
-            std::slice::from_raw_parts_mut(hmac_output.as_mut_ptr() as *mut Block16, n_blocks)
-        };
-        let _ = Aes256CbcDec::new(&shared_secret.into(), &CTAP2_AES_IV.into())
-            .decrypt_blocks_b2b(src_blocks, dst_blocks);
+        let mut blocks = vec![aes::Block::default(); n_blocks];
+        for (i, chunk) in hmac_secret_enc.chunks_exact(16).enumerate() {
+            blocks[i] = (*chunk).try_into().unwrap();
+        }
+        Aes256CbcDec::new(&shared_secret.into(), &CTAP2_AES_IV.into())
+            .decrypt_blocks(&mut blocks);
+        for (i, block) in blocks.iter().enumerate() {
+            hmac_output[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
+        }
     }
 
     // ── Step 9: Print the HMAC output as hex ────────────────────────────────
