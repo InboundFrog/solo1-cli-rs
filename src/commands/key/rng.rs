@@ -6,7 +6,7 @@ use crate::error::{Result, SoloError};
 /// Get N random bytes from the device, return as hex string.
 pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
     if n > 255 {
-        return Err(SoloError::DeviceError(format!(
+        return Err(SoloError::ProtocolError(format!(
             "Number of bytes must be between 0 and 255, you passed {}",
             n
         )));
@@ -119,7 +119,7 @@ mod tests {
         // The validation must fire before any send_recv is attempted.
         let device = MockDevice::new(vec![]);
         let err = cmd_rng_hexbytes(&device, 256).unwrap_err();
-        assert!(matches!(err, SoloError::DeviceError(_)));
+        assert!(matches!(err, SoloError::ProtocolError(_)));
         let msg = err.to_string();
         assert!(msg.contains("256"), "error should mention the bad value: {}", msg);
     }

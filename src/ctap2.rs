@@ -10,6 +10,52 @@ use crate::cbor::{cbor_bytes, cbor_int, find_int_key, int_map};
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
+/// Map a CTAP2 status byte to a human-readable description.
+pub fn ctap2_status_message(code: u8) -> &'static str {
+    match code {
+        0x01 => "invalid command",
+        0x02 => "invalid parameter",
+        0x03 => "invalid length",
+        0x04 => "invalid sequence",
+        0x05 => "timeout",
+        0x06 => "channel busy",
+        0x0A => "lock required",
+        0x0B => "invalid channel",
+        0x11 => "CBOR unexpected type",
+        0x12 => "invalid CBOR",
+        0x14 => "missing parameter",
+        0x15 => "limit exceeded",
+        0x16 => "unsupported extension",
+        0x19 => "credential excluded",
+        0x21 => "processing",
+        0x22 => "invalid credential",
+        0x23 => "user action pending",
+        0x24 => "operation pending",
+        0x25 => "no operations pending",
+        0x26 => "unsupported algorithm",
+        0x27 => "operation denied",
+        0x28 => "key store full",
+        0x2A => "unsupported option",
+        0x2B => "invalid option",
+        0x2C => "keepalive cancel",
+        0x2D => "no credentials",
+        0x2E => "user action timeout — touch the key when the LED blinks",
+        0x2F => "not allowed",
+        0x30 => "PIN invalid",
+        0x31 => "PIN blocked",
+        0x32 => "PIN auth invalid",
+        0x33 => "PIN auth blocked",
+        0x34 => "PIN not set",
+        0x35 => "PIN required",
+        0x36 => "PIN policy violation",
+        0x37 => "PIN token expired",
+        0x38 => "request too large",
+        0x39 => "action timeout",
+        0x3A => "user presence required — touch the key",
+        _ => "unknown error",
+    }
+}
+
 /// All-zero IV as mandated by the CTAP2 specification for clientPIN AES-256-CBC operations
 /// (PIN/UV Auth Protocol One, §6.5.4).
 ///
@@ -85,16 +131,15 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
 /// Returns `Ok(())` on success, `Err` with a context-tagged message otherwise.
 pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
     if response.is_empty() {
-        return Err(SoloError::DeviceError(format!(
+        return Err(SoloError::MalformedResponse(format!(
             "Empty response from {}",
             context
         )));
     }
     if response[0] != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "{} returned CTAP error 0x{:02X}",
-            context, response[0]
-        )));
+        let code = response[0];
+        let message = ctap2_status_message(code);
+        return Err(SoloError::AuthenticatorError { code, message });
     }
     Ok(())
 }
@@ -107,10 +152,10 @@ pub fn parse_cbor_map_response(
 ) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
     let val: Value = ciborium::de::from_reader(&response[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
     match val {
         Value::Map(p) => Ok(p),
-        _ => Err(SoloError::DeviceError(format!(
+        _ => Err(SoloError::MalformedResponse(format!(
             "{} response is not a CBOR map",
             context
         ))),
@@ -122,7 +167,7 @@ pub fn find_key_agreement_response(
     response_pairs: &[(Value, Value)],
 ) -> core::result::Result<&Value, SoloError> {
     find_cbor_response_by_key(response_pairs, 0x01)
-        .ok_or_else(|| SoloError::DeviceError("keyAgreement (0x01) missing in response".into()))
+        .ok_or_else(|| SoloError::MalformedResponse("keyAgreement (0x01) missing in response".into()))
 }
 
 /// Extract a byte-valued coordinate from a COSE key map by its integer key.
@@ -141,7 +186,7 @@ pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec
             }
             None
         })
-        .ok_or_else(|| SoloError::DeviceError(format!("COSE key missing coordinate {}", key)))
+        .ok_or_else(|| SoloError::MalformedResponse(format!("COSE key missing coordinate {}", key)))
 }
 
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
@@ -149,7 +194,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let get_ka_cbor = create_key_agreement_cbor();
     let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
     ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
@@ -159,7 +204,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
         _ => {
-            return Err(SoloError::DeviceError(
+            return Err(SoloError::MalformedResponse(
                 "keyAgreement is not a CBOR map".into(),
             ))
         }
@@ -168,7 +213,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let dev_x = extract_cose_coord(cose_pairs, -2)?;
     let dev_y = extract_cose_coord(cose_pairs, -3)?;
     if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "Device COSE key coordinates are not 32 bytes".into(),
         ));
     }
@@ -177,7 +222,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     uncompressed.extend_from_slice(&dev_x);
     uncompressed.extend_from_slice(&dev_y);
     p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))
+        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))
 }
 
 /// Prompt the user for a PIN, validate it is non-empty, and acquire a PIN token from the device.
@@ -213,34 +258,26 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
 
     let mut gpt_req = vec![0x06u8]; // authenticatorClientPIN
     ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
     if gpt_resp.is_empty() {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "Empty response from getPINToken".into(),
         ));
     }
     if gpt_resp[0] != 0x00 {
         let code = gpt_resp[0];
-        let hint = match code {
-            0x31 => " (PIN_INVALID — wrong PIN)",
-            0x32 => " (PIN_BLOCKED — too many attempts; reset required)",
-            0x34 => " (PIN_AUTH_BLOCKED — power-cycle the key and retry)",
-            _ => "",
-        };
-        return Err(SoloError::DeviceError(format!(
-            "getPINToken returned CTAP error 0x{:02X}{}",
-            code, hint
-        )));
+        let message = ctap2_status_message(code);
+        return Err(SoloError::AuthenticatorError { code, message });
     }
 
     let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
     let gpt_pairs = match gpt_val {
         Value::Map(p) => p,
         _ => {
-            return Err(SoloError::DeviceError(
+            return Err(SoloError::MalformedResponse(
                 "getPINToken response is not a CBOR map".into(),
             ))
         }
@@ -249,7 +286,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     let pin_token_enc = match find_cbor_response_by_key(&gpt_pairs, 0x02) {
         Some(Value::Bytes(b)) => b.clone(),
         _ => {
-            return Err(SoloError::DeviceError(
+            return Err(SoloError::MalformedResponse(
                 "pinTokenEnc (0x02) missing from getPINToken response".into(),
             ))
         }
@@ -345,7 +382,7 @@ impl ClientPinSession {
         type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
         if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
-            return Err(SoloError::DeviceError(format!(
+            return Err(SoloError::MalformedResponse(format!(
                 "pinTokenEnc has unexpected length: {}",
                 pin_token_enc.len()
             )));
@@ -377,7 +414,11 @@ mod tests {
     fn test_check_ctap_status() {
         assert!(check_ctap_status(&[0x00, 0x01, 0x02], "test").is_ok());
         let err = check_ctap_status(&[0x01, 0x01, 0x02], "test").unwrap_err();
-        assert!(err.to_string().contains("returned CTAP error 0x01"));
+        assert!(
+            matches!(err, SoloError::AuthenticatorError { code: 0x01, .. }),
+            "unexpected error: {}",
+            err
+        );
         let err_empty = check_ctap_status(&[], "test").unwrap_err();
         assert!(err_empty.to_string().contains("Empty response"));
     }

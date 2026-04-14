@@ -48,7 +48,7 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
     ]);
     let mut cbor_bytes = Vec::new();
     ciborium::ser::into_writer(&cbor_val, &mut cbor_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let response = hid.send_recv(CMD_PROBE, &cbor_bytes)?;
     let result_hex = hex::encode(&response);
@@ -78,8 +78,7 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
     use ciborium::value::Value;
 
     // Decode hex credential ID (same convention as cmd_challenge_response)
-    let cred_id_bytes = hex::decode(credential_id)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid credential_id hex: {}", e)))?;
+    let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // Read file and compute SHA-256 → use directly as clientDataHash
     let data = std::fs::read(filename)?;
@@ -107,7 +106,7 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
 
     let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command byte
     ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
     check_ga_response(&ga_response, filename)
@@ -115,27 +114,27 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
 
 fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
     use ciborium::value::Value;
+    use crate::ctap2::ctap2_status_message;
     if ga_response.is_empty() {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "Empty response from getAssertion".into(),
         ));
     }
     let ga_status = ga_response[0];
     if ga_status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "getAssertion returned CTAP error 0x{:02X}",
-            ga_status
-        )));
+        let code = ga_status;
+        let message = ctap2_status_message(code);
+        return Err(SoloError::AuthenticatorError { code, message });
     }
 
     // Parse CBOR response map
     let ga_val: Value = ciborium::de::from_reader(&ga_response[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let ga_pairs = match ga_val {
         Value::Map(p) => p,
         _ => {
-            return Err(SoloError::DeviceError(
+            return Err(SoloError::MalformedResponse(
                 "getAssertion response is not a map".into(),
             ))
         }
@@ -160,7 +159,7 @@ fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
     let signature = match get_ga_key(0x03) {
         Some(Value::Bytes(b)) => b.clone(),
         _ => {
-            return Err(SoloError::DeviceError(
+            return Err(SoloError::MalformedResponse(
                 "getAssertion response missing signature (key 0x03)".into(),
             ))
         }
@@ -219,6 +218,11 @@ mod tests {
         let ga_response = vec![0x01u8]; // error status
         let result = check_ga_response(&ga_response, path);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("CTAP error 0x01"));
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, SoloError::AuthenticatorError { code: 0x01, .. }),
+            "unexpected error: {}",
+            err
+        );
     }
 }

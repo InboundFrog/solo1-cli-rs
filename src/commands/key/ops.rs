@@ -39,7 +39,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8]) -> Result<()> {
         let elapsed = start.elapsed();
 
         if response != data {
-            return Err(SoloError::DeviceError("Ping response data mismatch".into()));
+            return Err(SoloError::ProtocolError("Ping response data mismatch".into()));
         }
         println!(
             "Ping {}: {} bytes, RTT = {:.3}ms",
@@ -54,7 +54,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8]) -> Result<()> {
 /// Program a keyboard sequence (HID keyboard emulation).
 pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
     if data.len() > 64 {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::ProtocolError(
             "Keyboard data too long (max 64 bytes)".into(),
         ));
     }
@@ -123,7 +123,7 @@ mod tests {
         let result = cmd_ping(&device, 1, &sent);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("mismatch") || msg.contains("Device error"), "unexpected error: {}", msg);
+        assert!(msg.contains("mismatch") || msg.contains("Protocol error"), "unexpected error: {}", msg);
     }
 
     /// When the mock queue is empty, send_recv returns Timeout: cmd_ping must propagate it.

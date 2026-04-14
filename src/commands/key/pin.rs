@@ -20,10 +20,10 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
         rpassword::prompt_password("Confirm new PIN: ").map_err(|e| SoloError::IoError(e))?;
 
     if new_pin != confirm_pin {
-        return Err(SoloError::DeviceError("PINs do not match".into()));
+        return Err(SoloError::ProtocolError("PINs do not match".into()));
     }
     if new_pin.len() < 4 || old_pin.len() < 4 {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::ProtocolError(
             "PIN must be at least 4 characters".into(),
         ));
     }
@@ -49,21 +49,20 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 
     let mut change_pin_bytes = vec![0x06u8];
     ciborium::ser::into_writer(&change_pin_cbor, &mut change_pin_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let change_pin_response = hid.send_recv(CTAPHID_CBOR, &change_pin_bytes)?;
 
     if change_pin_response.is_empty() {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "Empty response from changePin".into(),
         ));
     }
     let change_pin_status = change_pin_response[0];
     if change_pin_status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "changePin returned CTAP error 0x{:02X}",
-            change_pin_status
-        )));
+        let code = change_pin_status;
+        let message = crate::ctap2::ctap2_status_message(code);
+        return Err(SoloError::AuthenticatorError { code, message });
     }
 
     println!("PIN changed successfully.");
@@ -86,10 +85,10 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
         rpassword::prompt_password("Confirm PIN: ").map_err(|e| SoloError::IoError(e))?;
 
     if new_pin != confirm_pin {
-        return Err(SoloError::DeviceError("PINs do not match".into()));
+        return Err(SoloError::ProtocolError("PINs do not match".into()));
     }
     if new_pin.len() < 4 {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::ProtocolError(
             "PIN must be at least 4 characters".into(),
         ));
     }
@@ -110,19 +109,18 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
 
     let mut set_pin_bytes = vec![0x06u8];
     ciborium::ser::into_writer(&set_pin_cbor, &mut set_pin_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let set_pin_response = hid.send_recv(CTAPHID_CBOR, &set_pin_bytes)?;
 
     if set_pin_response.is_empty() {
-        return Err(SoloError::DeviceError("Empty response from setPin".into()));
+        return Err(SoloError::MalformedResponse("Empty response from setPin".into()));
     }
     let set_pin_status = set_pin_response[0];
     if set_pin_status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "setPin returned CTAP error 0x{:02X}",
-            set_pin_status
-        )));
+        let code = set_pin_status;
+        let message = crate::ctap2::ctap2_status_message(code);
+        return Err(SoloError::AuthenticatorError { code, message });
     }
 
     println!("PIN set successfully.");

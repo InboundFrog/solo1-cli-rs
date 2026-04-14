@@ -76,7 +76,7 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
     let mut request_bytes = vec![0x01u8];
     ciborium::ser::into_writer(&cbor_request, &mut request_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
@@ -87,7 +87,7 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     let auth_data = match find_int_key(&pairs, 0x02) {
         Some(Value::Bytes(b)) => b,
         _ => {
-            return Err(SoloError::DeviceError(
+            return Err(SoloError::MalformedResponse(
                 "makeCredential response missing authData (key 0x02)".into(),
             ))
         }
@@ -101,7 +101,7 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     //   [53..55]  credentialIdLength (u16 BE) — only if AT bit set
     //   [55..]    credentialId               — only if AT bit set
     if auth_data.len() < 37 {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "authData too short to contain credential info".into(),
         ));
     }
@@ -110,13 +110,13 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     let at_flag = (flags & 0x40) != 0; // bit 6 = attested credential data present
 
     if !at_flag {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "authData AT flag not set — no credential data present".into(),
         ));
     }
 
     if auth_data.len() < 55 {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "authData too short to read credentialIdLength".into(),
         ));
     }
@@ -126,7 +126,7 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     let cred_id_end = cred_id_start + cred_id_len;
 
     if auth_data.len() < cred_id_end {
-        return Err(SoloError::DeviceError(format!(
+        return Err(SoloError::MalformedResponse(format!(
             "authData too short: need {} bytes for credential ID, have {}",
             cred_id_end,
             auth_data.len()
@@ -168,7 +168,7 @@ fn ecdh_key_agreement(
     let dev_y = extract_cose_coord(dev_pub_key_cbor_pairs, -3)?;
 
     if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "Device COSE key coordinates are not 32 bytes".into(),
         ));
     }
@@ -177,7 +177,7 @@ fn ecdh_key_agreement(
     uncompressed.extend_from_slice(&dev_x);
     uncompressed.extend_from_slice(&dev_y);
     let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))?;
+        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))?;
 
     let ephemeral_pub = p256::PublicKey::from(&ephemeral_secret);
     let ephemeral_point = EncodedPoint::from(&ephemeral_pub);
@@ -189,11 +189,11 @@ fn ecdh_key_agreement(
 
     let eph_x = ephemeral_point
         .x()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing x coordinate".into()))?
+        .ok_or_else(|| SoloError::MalformedResponse("Ephemeral key missing x coordinate".into()))?
         .to_vec();
     let eph_y = ephemeral_point
         .y()
-        .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y coordinate".into()))?
+        .ok_or_else(|| SoloError::MalformedResponse("Ephemeral key missing y coordinate".into()))?
         .to_vec();
 
     let ephemeral_cose_key = int_map([
@@ -218,7 +218,7 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
     type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
     if encrypted.len() != 32 && encrypted.len() != 64 {
-        return Err(SoloError::DeviceError(format!(
+        return Err(SoloError::MalformedResponse(format!(
             "hmac-secret encrypted output has unexpected length: {}",
             encrypted.len()
         )));
@@ -279,7 +279,7 @@ fn prepare_hmac_secret_input(
 
     // saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
     let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
-        .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
     mac.update(&salt_enc);
     let mac_result = mac.finalize().into_bytes();
     let salt_auth = &mac_result[..16];
@@ -314,14 +314,13 @@ pub fn cmd_challenge_response(
     use sha2::Digest as _;
 
     // Decode hex credential ID
-    let cred_id_bytes = hex::decode(credential_id)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid credential_id hex: {}", e)))?;
+    let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
     let get_ka_cbor = crate::ctap2::create_key_agreement_cbor();
     let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
     ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
     let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
@@ -329,7 +328,7 @@ pub fn cmd_challenge_response(
     let key_agreement = find_key_agreement_response(&resp_pairs)?;
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
-        _ => return Err(SoloError::DeviceError("keyAgreement is not a CBOR map".into())),
+        _ => return Err(SoloError::MalformedResponse("keyAgreement is not a CBOR map".into())),
     };
 
     let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&cose_pairs, challenge)?;
@@ -363,7 +362,7 @@ pub fn cmd_challenge_response(
 
     let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command
     ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
 
@@ -374,7 +373,7 @@ pub fn cmd_challenge_response(
     let auth_data = match find_int_key(&ga_pairs, 0x02) {
         Some(Value::Bytes(b)) => b,
         _ => {
-            return Err(SoloError::DeviceError(
+            return Err(SoloError::MalformedResponse(
                 "getAssertion response missing authData (key 0x02)".into(),
             ))
         }
@@ -386,14 +385,14 @@ pub fn cmd_challenge_response(
     //   [33..37] signCount (u32 BE)
     //   [37..]   extensions CBOR (if ED flag set)
     if auth_data.len() < 37 {
-        return Err(SoloError::DeviceError("authData too short".into()));
+        return Err(SoloError::MalformedResponse("authData too short".into()));
     }
 
     let flags = auth_data[32];
     let ed_flag = (flags & 0x80) != 0; // bit 7 = extensions data present
 
     if !ed_flag {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "authData ED flag not set — no extensions data in response".into(),
         ));
     }
@@ -401,7 +400,7 @@ pub fn cmd_challenge_response(
     // Parse extensions CBOR starting at byte 37
     let ext_cbor_bytes = &auth_data[37..];
     let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("Extensions CBOR parse error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
 
@@ -424,7 +423,7 @@ pub fn cmd_challenge_response(
             }
         })
         .ok_or_else(|| {
-            SoloError::DeviceError("hmac-secret missing from authData extensions".into())
+            SoloError::MalformedResponse("hmac-secret missing from authData extensions".into())
         })?;
 
     // ── Step 8 (cont): Decrypt the hmac-secret output ────────────────────────
@@ -454,7 +453,7 @@ fn ecdh_key_agreement_with_scalar(
     let dev_y = extract_cose_coord(dev_pub_key_cbor_pairs, -3)?;
 
     if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "Device COSE key coordinates are not 32 bytes".into(),
         ));
     }
@@ -463,7 +462,7 @@ fn ecdh_key_agreement_with_scalar(
     uncompressed.extend_from_slice(&dev_x);
     uncompressed.extend_from_slice(&dev_y);
     let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))?;
+        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))?;
 
     // Compute DH with the raw scalar (equivalent to EphemeralSecret::diffie_hellman)
     let shared_point = p256::ecdh::diffie_hellman(&platform_scalar, dev_pub_key.as_affine());
@@ -476,11 +475,11 @@ fn ecdh_key_agreement_with_scalar(
 
     let eph_x = platform_point
         .x()
-        .ok_or_else(|| SoloError::DeviceError("Platform key missing x coordinate".into()))?
+        .ok_or_else(|| SoloError::MalformedResponse("Platform key missing x coordinate".into()))?
         .to_vec();
     let eph_y = platform_point
         .y()
-        .ok_or_else(|| SoloError::DeviceError("Platform key missing y coordinate".into()))?
+        .ok_or_else(|| SoloError::MalformedResponse("Platform key missing y coordinate".into()))?
         .to_vec();
 
     let ephemeral_cose_key = int_map([
@@ -525,7 +524,7 @@ fn prepare_hmac_secret_input_with_scalar(
     }
 
     let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
-        .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
     mac.update(&salt_enc);
     let mac_result = mac.finalize().into_bytes();
     let salt_auth = &mac_result[..16];

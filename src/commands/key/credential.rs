@@ -110,7 +110,7 @@ fn pin_uv_auth(pin_token: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
     use hmac::{Hmac, KeyInit as _, Mac as _};
     use sha2::Sha256;
     let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
-        .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
     mac.update(msg);
     let result = mac.finalize().into_bytes();
     Ok(result[..16].to_vec())
@@ -139,7 +139,7 @@ fn send_cred_mgmt(
     let cm_cbor = int_map(entries);
     let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
     ciborium::ser::into_writer(&cm_cbor, &mut req)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
     hid.send_recv(CTAPHID_CBOR, &req)
 }
 
@@ -151,7 +151,7 @@ fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> 
     let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
     let mut req = vec![0x0Au8];
     ciborium::ser::into_writer(&cm_cbor, &mut req)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
     hid.send_recv(CTAPHID_CBOR, &req)
 }
 
@@ -162,32 +162,26 @@ fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> 
 /// malformed CBOR.
 fn parse_cm_response(resp: Vec<u8>, ctx: &str) -> Result<Vec<(ciborium::value::Value, ciborium::value::Value)>> {
     use ciborium::value::Value;
+    use crate::ctap2::ctap2_status_message;
     if resp.is_empty() {
-        return Err(SoloError::DeviceError(format!(
+        return Err(SoloError::MalformedResponse(format!(
             "Empty response from {}",
             ctx
         )));
     }
     let status = resp[0];
-    if status == 0x2E {
-        return Err(SoloError::DeviceError(
-            "Authenticator does not support credential management (CTAP2_ERR_UNSUPPORTED_OPTION 0x2E)".into()
-        ));
-    }
     if status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "{} returned CTAP error 0x{:02X}",
-            ctx, status
-        )));
+        let message = ctap2_status_message(status);
+        return Err(SoloError::AuthenticatorError { code: status, message });
     }
     if resp.len() == 1 {
         return Ok(vec![]);
     }
     let val: Value = ciborium::de::from_reader(&resp[1..])
-        .map_err(|e| SoloError::DeviceError(format!("CBOR parse error in {}: {}", ctx, e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
     match val {
         Value::Map(p) => Ok(p),
-        _ => Err(SoloError::DeviceError(format!(
+        _ => Err(SoloError::MalformedResponse(format!(
             "{} response is not a CBOR map",
             ctx
         ))),
@@ -264,11 +258,11 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
                 }
             })
             .ok_or_else(|| {
-                SoloError::DeviceError(format!("rpIdHash (0x04) missing for RP '{}'", rp_id))
+                SoloError::MalformedResponse(format!("rpIdHash (0x04) missing for RP '{}'", rp_id))
             })?;
 
         if rp_id_hash.len() != 32 {
-            return Err(SoloError::DeviceError(format!(
+            return Err(SoloError::MalformedResponse(format!(
                 "rpIdHash for '{}' is {} bytes, expected 32",
                 rp_id,
                 rp_id_hash.len()
@@ -300,7 +294,7 @@ fn enumerate_credentials_for_rp(
     let rk_begin_params = int_map([(0x01i64, cbor_bytes(rp_id_hash.to_vec()))]);
     let mut rk_params_cbor: Vec<u8> = Vec::new();
     ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let mut rk_auth_msg = vec![0x04u8];
     rk_auth_msg.extend_from_slice(&rk_params_cbor);
@@ -428,7 +422,7 @@ fn enumerate_credentials_for_rp(
 pub fn cmd_credential_ls(hid: &impl HidDevice) -> Result<()> {
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::ProtocolError(
             "Credential management requires a PIN. Please set a PIN first with 'solo1 key set-pin'.".into(),
         ));
     }
@@ -469,8 +463,7 @@ pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()
     use hmac::{Hmac, KeyInit as _, Mac as _};
     use sha2::Sha256;
 
-    let cred_id_bytes = hex::decode(credential_id)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid credential ID hex: {}", e)))?;
+    let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // Confirmation prompt
     if !common::confirm(&format!(
@@ -483,7 +476,7 @@ pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()
 
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::ProtocolError(
             "Credential management requires a PIN. Please set a PIN first with 'solo1 key set-pin'.".into(),
         ));
     }
@@ -498,14 +491,14 @@ pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()
     let del_params = int_map([(0x01i64, cbor_bytes(cred_id_bytes))]);
     let mut del_params_cbor: Vec<u8> = Vec::new();
     ciborium::ser::into_writer(&del_params, &mut del_params_cbor)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x06] || subCommandParamsCbor)[0..16]
     let mut del_auth_msg = vec![0x06u8];
     del_auth_msg.extend_from_slice(&del_params_cbor);
     let del_pin_uv_auth: Vec<u8> = {
         let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
-            .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
+            .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
         mac.update(&del_auth_msg);
         let result = mac.finalize().into_bytes();
         result[..16].to_vec()
@@ -521,25 +514,18 @@ pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()
     ]);
     let mut del_req = vec![0x0Au8]; // authenticatorCredentialManagement
     ciborium::ser::into_writer(&del_cbor, &mut del_req)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let del_resp = hid.send_recv(CTAPHID_CBOR, &del_req)?;
     if del_resp.is_empty() {
-        return Err(SoloError::DeviceError(
+        return Err(SoloError::MalformedResponse(
             "Empty response from deleteCredential".into(),
         ));
     }
     let status = del_resp[0];
-    if status == 0x2E {
-        return Err(SoloError::DeviceError(
-            "Authenticator does not support credential management (CTAP2_ERR_UNSUPPORTED_OPTION 0x2E)".into()
-        ));
-    }
     if status != 0x00 {
-        return Err(SoloError::DeviceError(format!(
-            "deleteCredential returned CTAP error 0x{:02X}",
-            status
-        )));
+        let message = crate::ctap2::ctap2_status_message(status);
+        return Err(SoloError::AuthenticatorError { code: status, message });
     }
 
     println!("Credential deleted.");

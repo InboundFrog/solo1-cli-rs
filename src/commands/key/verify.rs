@@ -19,7 +19,7 @@ fn extract_attestation_cert(response: &[u8]) -> Result<Vec<u8>> {
     let att_stmt = match find_int_key(&pairs, 0x03) {
         Some(Value::Map(m)) => m,
         _ => {
-            return Err(SoloError::DeviceError(
+            return Err(SoloError::MalformedResponse(
                 "makeCredential response missing attStmt (key 0x03)".into(),
             ))
         }
@@ -38,9 +38,9 @@ fn extract_attestation_cert(response: &[u8]) -> Result<Vec<u8>> {
     match x5c {
         Some(Value::Array(certs)) if !certs.is_empty() => match &certs[0] {
             Value::Bytes(b) => Ok(b.clone()),
-            _ => Err(SoloError::DeviceError("x5c[0] is not bytes".into())),
+            _ => Err(SoloError::MalformedResponse("x5c[0] is not bytes".into())),
         },
-        _ => Err(SoloError::DeviceError("attStmt missing x5c array".into())),
+        _ => Err(SoloError::MalformedResponse("attStmt missing x5c array".into())),
     }
 }
 
@@ -63,7 +63,7 @@ pub fn cmd_verify(hid: &impl HidDevice) -> Result<()> {
 
         // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
         let mut mac = Hmac::<Sha256>::new_from_slice(&pin_token)
-            .map_err(|e| SoloError::DeviceError(format!("HMAC key error: {}", e)))?;
+            .map_err(|e| SoloError::CryptoError(format!("HMAC key error: {}", e)))?;
         mac.update(&client_data_hash);
         let hmac_result = mac.finalize().into_bytes();
         Some(hmac_result[..16].to_vec())
@@ -114,7 +114,7 @@ pub fn cmd_verify(hid: &impl HidDevice) -> Result<()> {
     // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
     let mut request_bytes = vec![0x01u8];
     ciborium::ser::into_writer(&cbor_request, &mut request_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+        .map_err(|e| SoloError::CborError(e.to_string()))?;
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
