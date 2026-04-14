@@ -1,3 +1,4 @@
+use crate::cbor::{cbor_bytes, cbor_int, int_map};
 use crate::commands::key::common;
 use crate::ctap2::{
     extract_cbor_text_responses, find_cbor_response_by_key, parse_cbor_map_response,
@@ -150,19 +151,16 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
     // Helper: send a credMgmt (0x0A) subcommand with optional params and pinAuth
     let send_cred_mgmt =
         |subcommand: u8, params: Option<Value>, pin_uv: Vec<u8>| -> Result<Vec<u8>> {
-            let mut map_entries = vec![
-                (
-                    Value::Integer(0x01u64.into()),
-                    Value::Integer((subcommand as u64).into()),
-                ), // subCommand
+            let mut entries: Vec<(i64, Value)> = vec![
+                (0x01, cbor_int(subcommand as i64)), // subCommand
             ];
             if let Some(p) = params {
-                map_entries.push((Value::Integer(0x02u64.into()), p)); // subCommandParams
+                entries.push((0x02, p)); // subCommandParams
             }
-            map_entries.push((Value::Integer(0x03u64.into()), Value::Integer(1u64.into()))); // pinUvAuthProtocol = 1
-            map_entries.push((Value::Integer(0x04u64.into()), Value::Bytes(pin_uv))); // pinUvAuthParam
+            entries.push((0x03, cbor_int(1)));           // pinUvAuthProtocol = 1
+            entries.push((0x04, cbor_bytes(pin_uv)));    // pinUvAuthParam
 
-            let cm_cbor = Value::Map(map_entries);
+            let cm_cbor = int_map(entries);
             let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
             ciborium::ser::into_writer(&cm_cbor, &mut req)
                 .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
@@ -171,10 +169,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     // Helper: send a credMgmt subcommand with NO pinAuth (for *Next commands)
     let send_cred_mgmt_next = |subcommand: u8| -> Result<Vec<u8>> {
-        let cm_cbor = Value::Map(vec![(
-            Value::Integer(0x01u64.into()),
-            Value::Integer((subcommand as u64).into()),
-        )]);
+        let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
         let mut req = vec![0x0Au8];
         ciborium::ser::into_writer(&cm_cbor, &mut req)
             .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
@@ -302,10 +297,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
         // enumerateCredentialsBegin (subcommand 0x04)
         // subCommandParams = CBOR({0x01: rpIdHash})
         // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || subCommandParamsCbor)[0..16]
-        let rk_begin_params = Value::Map(vec![(
-            Value::Integer(0x01u64.into()),
-            Value::Bytes(rp_id_hash.clone()),
-        )]);
+        let rk_begin_params = int_map([(0x01i64, cbor_bytes(rp_id_hash.clone()))]);
         let mut rk_params_cbor: Vec<u8> = Vec::new();
         ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)
             .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
@@ -418,7 +410,6 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 /// Remove a credential by ID.
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
 pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
-    use ciborium::value::Value;
     use hmac::{Hmac, KeyInit as _, Mac as _};
     use sha2::Sha256;
 
@@ -448,10 +439,7 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     // ── Step 1: deleteCredential (subcommand 0x06) ───────────────────────
     // subCommandParams = CBOR({0x01: credentialId bytes})
-    let del_params = Value::Map(vec![(
-        Value::Integer(0x01u64.into()),
-        Value::Bytes(cred_id_bytes),
-    )]);
+    let del_params = int_map([(0x01i64, cbor_bytes(cred_id_bytes))]);
     let mut del_params_cbor: Vec<u8> = Vec::new();
     ciborium::ser::into_writer(&del_params, &mut del_params_cbor)
         .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
@@ -469,14 +457,11 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     // Send: authenticatorCredentialManagement CBOR =
     //   {0x01: 6, 0x02: {0x01: cred_id_bytes}, 0x03: 1, 0x04: pinUvAuthParam}
-    let del_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(6u64.into())), // subCommand = deleteCredential
-        (Value::Integer(0x02u64.into()), del_params),                  // subCommandParams
-        (Value::Integer(0x03u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (
-            Value::Integer(0x04u64.into()),
-            Value::Bytes(del_pin_uv_auth),
-        ), // pinUvAuthParam
+    let del_cbor = int_map([
+        (0x01, cbor_int(6)),                    // subCommand = deleteCredential
+        (0x02, del_params),                     // subCommandParams
+        (0x03, cbor_int(1)),                    // pinUvAuthProtocol = 1
+        (0x04, cbor_bytes(del_pin_uv_auth)),    // pinUvAuthParam
     ]);
     let mut del_req = vec![0x0Au8]; // authenticatorCredentialManagement
     ciborium::ser::into_writer(&del_cbor, &mut del_req)

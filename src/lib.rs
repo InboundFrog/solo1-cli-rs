@@ -1,3 +1,4 @@
+pub mod cbor;
 pub mod cli;
 pub mod commands;
 pub mod crypto;

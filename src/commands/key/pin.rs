@@ -1,3 +1,4 @@
+use crate::cbor::{cbor_bytes, cbor_int, int_map};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -12,8 +13,6 @@ use crate::error::{Result, SoloError};
 ///   6. HMAC-SHA-256(shared_secret, newPinEnc || pinHashEnc)[0..16] → pinUvAuthParam
 ///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
 pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
-    use ciborium::value::Value;
-
     let _version = super::ops::get_device_version(hid)?;
     let old_pin = rpassword::prompt_password("Current PIN: ").map_err(|e| SoloError::IoError(e))?;
     let new_pin = rpassword::prompt_password("New PIN: ").map_err(|e| SoloError::IoError(e))?;
@@ -39,22 +38,13 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
     auth_msg.extend_from_slice(&pin_hash_enc);
     let pin_uv_auth_param = session.authenticate(&auth_msg)?;
 
-    let change_pin_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(4u64.into())), // subCommand = changePin (0x04)
-        (Value::Integer(0x03u64.into()), session.ephemeral_pub_key.clone()), // keyAgreement
-        (
-            Value::Integer(0x04u64.into()),
-            Value::Bytes(pin_uv_auth_param),
-        ), // pinUvAuthParam (16 bytes)
-        (
-            Value::Integer(0x05u64.into()),
-            Value::Bytes(new_pin_enc),
-        ), // newPinEnc (64 bytes)
-        (
-            Value::Integer(0x06u64.into()),
-            Value::Bytes(pin_hash_enc.to_vec()),
-        ), // pinHashEnc (16 bytes)
+    let change_pin_cbor = int_map([
+        (0x01, cbor_int(1)),                                          // pinUvAuthProtocol = 1
+        (0x02, cbor_int(4)),                                          // subCommand = changePin (0x04)
+        (0x03, session.ephemeral_pub_key.clone()),                    // keyAgreement
+        (0x04, cbor_bytes(pin_uv_auth_param)),                        // pinUvAuthParam (16 bytes)
+        (0x05, cbor_bytes(new_pin_enc)),                              // newPinEnc (64 bytes)
+        (0x06, cbor_bytes(pin_hash_enc.to_vec())),                    // pinHashEnc (16 bytes)
     ]);
 
     let mut change_pin_bytes = vec![0x06u8];
@@ -90,8 +80,6 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
 ///   5. HMAC-SHA-256(shared_secret, newPinEnc)[0..16] → pinUvAuthParam
 ///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
 pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
-    use ciborium::value::Value;
-
     let _version = super::ops::get_device_version(hid)?;
     let new_pin = rpassword::prompt_password("New PIN: ").map_err(|e| SoloError::IoError(e))?;
     let confirm_pin =
@@ -112,18 +100,12 @@ pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
     let new_pin_enc = session.encrypt_pin(&new_pin)?;
     let pin_uv_auth_param = session.authenticate(&new_pin_enc)?;
 
-    let set_pin_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(3u64.into())), // subCommand = setPin
-        (Value::Integer(0x03u64.into()), session.ephemeral_pub_key.clone()),   // keyAgreement
-        (
-            Value::Integer(0x04u64.into()),
-            Value::Bytes(pin_uv_auth_param),
-        ), // pinUvAuthParam
-        (
-            Value::Integer(0x05u64.into()),
-            Value::Bytes(new_pin_enc),
-        ), // newPinEnc
+    let set_pin_cbor = int_map([
+        (0x01, cbor_int(1)),                                          // pinUvAuthProtocol = 1
+        (0x02, cbor_int(3)),                                          // subCommand = setPin
+        (0x03, session.ephemeral_pub_key.clone()),                    // keyAgreement
+        (0x04, cbor_bytes(pin_uv_auth_param)),                        // pinUvAuthParam
+        (0x05, cbor_bytes(new_pin_enc)),                              // newPinEnc
     ]);
 
     let mut set_pin_bytes = vec![0x06u8];

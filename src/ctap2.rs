@@ -6,6 +6,7 @@ use p256::EncodedPoint;
 use rand::rngs::OsRng;
 use sha2::{Digest as _, Sha256};
 
+use crate::cbor::{cbor_bytes, cbor_int, find_int_key, int_map};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -55,23 +56,15 @@ pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
 
 #[inline]
 pub fn create_key_agreement_cbor() -> Value {
-    Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(2u64.into())), // subCommand = getKeyAgreement
+    int_map([
+        (0x01, cbor_int(1)), // pinUvAuthProtocol = 1
+        (0x02, cbor_int(2)), // subCommand = getKeyAgreement
     ])
 }
 
 #[inline]
 pub fn find_cbor_response_by_key(response_pairs: &[(Value, Value)], key: u64) -> Option<&Value> {
-    response_pairs.iter().find_map(|(k, v)| {
-        if let Value::Integer(i) = k {
-            let ki: u64 = (*i).try_into().ok()?;
-            if ki == key {
-                return Some(v);
-            }
-        }
-        None
-    })
+    find_int_key(response_pairs, key as i64)
 }
 
 #[inline]
@@ -211,14 +204,11 @@ pub fn get_pin_token(hid: &SoloHid, pin: &str) -> Result<Vec<u8>> {
     let session = ClientPinSession::new(&dev_pub_key);
     let pin_hash_enc = session.encrypt_pin_hash(pin)?;
 
-    let get_pin_token_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Integer(1u64.into())), // pinUvAuthProtocol = 1
-        (Value::Integer(0x02u64.into()), Value::Integer(5u64.into())), // subCommand = getPINToken
-        (Value::Integer(0x03u64.into()), session.ephemeral_pub_key.clone()), // keyAgreement
-        (
-            Value::Integer(0x06u64.into()),
-            Value::Bytes(pin_hash_enc.to_vec()),
-        ), // pinHashEnc
+    let get_pin_token_cbor = int_map([
+        (0x01, cbor_int(1)),                                          // pinUvAuthProtocol = 1
+        (0x02, cbor_int(5)),                                          // subCommand = getPINToken
+        (0x03, session.ephemeral_pub_key.clone()),                    // keyAgreement
+        (0x06, cbor_bytes(pin_hash_enc.to_vec())),                    // pinHashEnc
     ]);
 
     let mut gpt_req = vec![0x06u8]; // authenticatorClientPIN
@@ -285,18 +275,12 @@ impl ClientPinSession {
         let shared_secret: [u8; 32] = Sha256::digest(shared_secret_point.raw_secret_bytes()).into();
 
         // Wrap ephemeral public key in COSE_Key format for CTAP2
-        let ephemeral_pub_key = Value::Map(vec![
-            (Value::Integer(1u64.into()), Value::Integer(2u64.into())), // kty: EC2
-            (Value::Integer(3u64.into()), Value::Integer((-7i64).into())), // alg: ES256
-            (Value::Integer((-1i64).into()), Value::Integer(1u64.into())), // crv: P-256
-            (
-                Value::Integer((-2i64).into()),
-                Value::Bytes(ephemeral_point.x().unwrap().to_vec()),
-            ),
-            (
-                Value::Integer((-3i64).into()),
-                Value::Bytes(ephemeral_point.y().unwrap().to_vec()),
-            ),
+        let ephemeral_pub_key = int_map([
+            (1,  cbor_int(2)),                                              // kty: EC2
+            (3,  cbor_int(-7)),                                             // alg: ES256
+            (-1, cbor_int(1)),                                              // crv: P-256
+            (-2, cbor_bytes(ephemeral_point.x().unwrap().to_vec())),        // x
+            (-3, cbor_bytes(ephemeral_point.y().unwrap().to_vec())),        // y
         ]);
 
         Self {

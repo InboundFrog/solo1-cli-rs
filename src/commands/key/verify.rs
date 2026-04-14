@@ -1,4 +1,5 @@
-use crate::ctap2::{find_cbor_response_by_key, parse_cbor_map_response, prompt_and_get_pin_token};
+use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, int_map};
+use crate::ctap2::{parse_cbor_map_response, prompt_and_get_pin_token};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
@@ -39,45 +40,36 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
     //   0x04: pubKeyCredParams [{"alg": -7, "type": "public-key"}]
     //   0x08: pinUvAuthParam (if PIN is set)
     //   0x09: pinUvAuthProtocol = 1 (if PIN is set)
-    let mut cbor_pairs = vec![
+    let mut cbor_entries: Vec<(i64, Value)> = vec![
+        (0x01, cbor_bytes(client_data_hash)),
         (
-            Value::Integer(0x01u64.into()),
-            Value::Bytes(client_data_hash),
-        ),
-        (
-            Value::Integer(0x02u64.into()),
+            0x02,
             Value::Map(vec![
-                (Value::Text("id".into()), Value::Text("solokeys.com".into())),
-                (
-                    Value::Text("name".into()),
-                    Value::Text("solokeys.com".into()),
-                ),
+                (cbor_text("id"), cbor_text("solokeys.com")),
+                (cbor_text("name"), cbor_text("solokeys.com")),
             ]),
         ),
         (
-            Value::Integer(0x03u64.into()),
+            0x03,
             Value::Map(vec![
-                (Value::Text("id".into()), Value::Bytes(b"verify".to_vec())),
-                (Value::Text("name".into()), Value::Text("verify".into())),
-                (
-                    Value::Text("displayName".into()),
-                    Value::Text("verify".into()),
-                ),
+                (cbor_text("id"), cbor_bytes(b"verify".to_vec())),
+                (cbor_text("name"), cbor_text("verify")),
+                (cbor_text("displayName"), cbor_text("verify")),
             ]),
         ),
         (
-            Value::Integer(0x04u64.into()),
+            0x04,
             Value::Array(vec![Value::Map(vec![
-                (Value::Text("alg".into()), Value::Integer((-7i64).into())),
-                (Value::Text("type".into()), Value::Text("public-key".into())),
+                (cbor_text("alg"), cbor_int(-7)),
+                (cbor_text("type"), cbor_text("public-key")),
             ])]),
         ),
     ];
     if let Some(auth_param) = pin_uv_auth {
-        cbor_pairs.push((Value::Integer(0x08u64.into()), Value::Bytes(auth_param)));
-        cbor_pairs.push((Value::Integer(0x09u64.into()), Value::Integer(1u64.into())));
+        cbor_entries.push((0x08, cbor_bytes(auth_param)));
+        cbor_entries.push((0x09, cbor_int(1)));
     }
-    let cbor_request = Value::Map(cbor_pairs);
+    let cbor_request = int_map(cbor_entries);
 
     // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
     let mut request_bytes = vec![0x01u8];
@@ -90,7 +82,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
     let pairs = parse_cbor_map_response(&response, "makeCredential")?;
 
     // 0x03: attStmt map — contains "x5c" array of DER-encoded certs
-    let att_stmt = match find_cbor_response_by_key(&pairs, 0x03) {
+    let att_stmt = match find_int_key(&pairs, 0x03) {
         Some(Value::Map(m)) => m,
         _ => {
             return Err(SoloError::DeviceError(

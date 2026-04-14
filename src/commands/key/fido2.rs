@@ -1,5 +1,6 @@
+use crate::cbor::{cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, int_map};
 use crate::ctap2::{
-    extract_cose_coord, find_cbor_response_by_key, find_key_agreement_response,
+    extract_cose_coord, find_key_agreement_response,
     parse_cbor_map_response, CTAP2_AES_IV,
 };
 use crate::device::{SoloHid, CTAPHID_CBOR};
@@ -38,43 +39,37 @@ pub fn cmd_make_credential(hid: &SoloHid, host: &str, user: &str, prompt: &str) 
     //   0x04: pubKeyCredParams [{"alg": -7, "type": "public-key"}]
     //   0x06: extensions {"hmac-secret": true}
     //   0x07: options {"rk": true}
-    let cbor_request = Value::Map(vec![
+    let cbor_request = int_map([
+        (0x01, cbor_bytes(client_data_hash)),
         (
-            Value::Integer(0x01u64.into()),
-            Value::Bytes(client_data_hash),
-        ),
-        (
-            Value::Integer(0x02u64.into()),
+            0x02,
             Value::Map(vec![
-                (Value::Text("id".into()), Value::Text(host.into())),
-                (Value::Text("name".into()), Value::Text(host.into())),
+                (cbor_text("id"), cbor_text(host)),
+                (cbor_text("name"), cbor_text(host)),
             ]),
         ),
         (
-            Value::Integer(0x03u64.into()),
+            0x03,
             Value::Map(vec![
-                (
-                    Value::Text("id".into()),
-                    Value::Bytes(user.as_bytes().to_vec()),
-                ),
-                (Value::Text("name".into()), Value::Text(user.into())),
-                (Value::Text("displayName".into()), Value::Text(user.into())),
+                (cbor_text("id"), cbor_bytes(user.as_bytes().to_vec())),
+                (cbor_text("name"), cbor_text(user)),
+                (cbor_text("displayName"), cbor_text(user)),
             ]),
         ),
         (
-            Value::Integer(0x04u64.into()),
+            0x04,
             Value::Array(vec![Value::Map(vec![
-                (Value::Text("alg".into()), Value::Integer((-7i64).into())),
-                (Value::Text("type".into()), Value::Text("public-key".into())),
+                (cbor_text("alg"), cbor_int(-7)),
+                (cbor_text("type"), cbor_text("public-key")),
             ])]),
         ),
         (
-            Value::Integer(0x06u64.into()),
-            Value::Map(vec![(Value::Text("hmac-secret".into()), Value::Bool(true))]),
+            0x06,
+            Value::Map(vec![(cbor_text("hmac-secret"), Value::Bool(true))]),
         ),
         (
-            Value::Integer(0x07u64.into()),
-            Value::Map(vec![(Value::Text("rk".into()), Value::Bool(true))]),
+            0x07,
+            Value::Map(vec![(cbor_text("rk"), Value::Bool(true))]),
         ),
     ]);
 
@@ -89,7 +84,7 @@ pub fn cmd_make_credential(hid: &SoloHid, host: &str, user: &str, prompt: &str) 
     let pairs = parse_cbor_map_response(&response, "makeCredential")?;
 
     // 0x02: authData bytes — contains rpIdHash, flags, signCount, AAGUID, credentialId
-    let auth_data = match find_cbor_response_by_key(&pairs, 0x02) {
+    let auth_data = match find_int_key(&pairs, 0x02) {
         Some(Value::Bytes(b)) => b,
         _ => {
             return Err(SoloError::DeviceError(
@@ -260,22 +255,19 @@ pub fn cmd_challenge_response(
         .ok_or_else(|| SoloError::DeviceError("Ephemeral key missing y coordinate".into()))?
         .to_vec();
 
-    let ephemeral_cose_key = Value::Map(vec![
-        (Value::Integer(1i64.into()), Value::Integer(2i64.into())), // kty = EC2
-        (Value::Integer(3i64.into()), Value::Integer((-7i64).into())), // alg = ES256
-        (Value::Integer((-1i64).into()), Value::Integer(1i64.into())), // crv = P-256
-        (Value::Integer((-2i64).into()), Value::Bytes(eph_x)),      // x
-        (Value::Integer((-3i64).into()), Value::Bytes(eph_y)),      // y
+    let ephemeral_cose_key = int_map([
+        (1,  cbor_int(2)),           // kty = EC2
+        (3,  cbor_int(-7)),          // alg = ES256
+        (-1, cbor_int(1)),           // crv = P-256
+        (-2, cbor_bytes(eph_x)),     // x
+        (-3, cbor_bytes(eph_y)),     // y
     ]);
 
     // hmac-secret extension input map: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
-    let hmac_secret_ext = Value::Map(vec![
-        (Value::Integer(1i64.into()), ephemeral_cose_key),
-        (Value::Integer(2i64.into()), Value::Bytes(salt_enc.to_vec())),
-        (
-            Value::Integer(3i64.into()),
-            Value::Bytes(salt_auth.to_vec()),
-        ),
+    let hmac_secret_ext = int_map([
+        (1, ephemeral_cose_key),
+        (2, cbor_bytes(salt_enc.to_vec())),
+        (3, cbor_bytes(salt_auth.to_vec())),
     ]);
 
     // clientDataHash: fixed bytes (device does not verify for hmac-secret use)
@@ -286,22 +278,19 @@ pub fn cmd_challenge_response(
     //   0x02: clientDataHash
     //   0x03: allowList  [{type: "public-key", id: cred_id_bytes}]
     //   0x04: extensions {"hmac-secret": hmac_secret_ext}
-    let get_assertion_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Text(host.into())),
+    let get_assertion_cbor = int_map([
+        (0x01, cbor_text(host)),
+        (0x02, cbor_bytes(client_data_hash)),
         (
-            Value::Integer(0x02u64.into()),
-            Value::Bytes(client_data_hash),
-        ),
-        (
-            Value::Integer(0x03u64.into()),
+            0x03,
             Value::Array(vec![Value::Map(vec![
-                (Value::Text("type".into()), Value::Text("public-key".into())),
-                (Value::Text("id".into()), Value::Bytes(cred_id_bytes)),
+                (cbor_text("type"), cbor_text("public-key")),
+                (cbor_text("id"), cbor_bytes(cred_id_bytes)),
             ])]),
         ),
         (
-            Value::Integer(0x04u64.into()),
-            Value::Map(vec![(Value::Text("hmac-secret".into()), hmac_secret_ext)]),
+            0x04,
+            Value::Map(vec![(cbor_text("hmac-secret"), hmac_secret_ext)]),
         ),
     ]);
 
@@ -317,7 +306,7 @@ pub fn cmd_challenge_response(
     let ga_pairs = parse_cbor_map_response(&ga_response, "getAssertion")?;
 
     // authData is at key 0x02 in the getAssertion response
-    let auth_data = match find_cbor_response_by_key(&ga_pairs, 0x02) {
+    let auth_data = match find_int_key(&ga_pairs, 0x02) {
         Some(Value::Bytes(b)) => b,
         _ => {
             return Err(SoloError::DeviceError(
@@ -349,14 +338,7 @@ pub fn cmd_challenge_response(
     let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)
         .map_err(|e| SoloError::DeviceError(format!("Extensions CBOR parse error: {}", e)))?;
 
-    let ext_pairs = match ext_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "Extensions is not a CBOR map".into(),
-            ))
-        }
-    };
+    let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
 
     // Find "hmac-secret" key in extensions
     let hmac_secret_enc = ext_pairs
