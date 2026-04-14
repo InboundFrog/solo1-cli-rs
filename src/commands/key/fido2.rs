@@ -1,6 +1,6 @@
 use crate::ctap2::{
     extract_cose_coord, find_cbor_response_by_key, find_key_agreement_response,
-    parse_cbor_map_response,
+    parse_cbor_map_response, CTAP2_AES_IV,
 };
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -235,12 +235,11 @@ pub fn cmd_challenge_response(
     {
         use hybrid_array::Array as HybridArray;
         type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
-        let iv = [0u8; 16];
         let src_blocks: &[Block16] =
             unsafe { std::slice::from_raw_parts(salt.as_ptr() as *const Block16, 2) };
         let dst_blocks: &mut [Block16] =
             unsafe { std::slice::from_raw_parts_mut(salt_enc.as_mut_ptr() as *mut Block16, 2) };
-        let _ = Aes256CbcEnc::new(&shared_secret.into(), &iv.into())
+        let _ = Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into())
             .encrypt_blocks_b2b(src_blocks, dst_blocks);
     }
 
@@ -396,14 +395,13 @@ pub fn cmd_challenge_response(
     {
         use hybrid_array::Array as HybridArray;
         type Block16 = HybridArray<u8, aes::cipher::typenum::U16>;
-        let iv = [0u8; 16];
         let src_blocks: &[Block16] = unsafe {
             std::slice::from_raw_parts(hmac_secret_enc.as_ptr() as *const Block16, n_blocks)
         };
         let dst_blocks: &mut [Block16] = unsafe {
             std::slice::from_raw_parts_mut(hmac_output.as_mut_ptr() as *mut Block16, n_blocks)
         };
-        let _ = Aes256CbcDec::new(&shared_secret.into(), &iv.into())
+        let _ = Aes256CbcDec::new(&shared_secret.into(), &CTAP2_AES_IV.into())
             .decrypt_blocks_b2b(src_blocks, dst_blocks);
     }
 
