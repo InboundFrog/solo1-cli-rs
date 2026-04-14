@@ -111,11 +111,11 @@ pub enum KeyCommands {
 
     /// Create FIDO2 credential with hmac-secret
     MakeCredential {
-        /// Relying party host (e.g., solokeys.dev)
-        #[arg(long, default_value = "solokeys.dev")]
+        /// Relying party host (e.g., example.com)
+        #[arg(long)]
         host: String,
-        /// User ID
-        #[arg(long, default_value = "they")]
+        /// User ID / username
+        #[arg(long)]
         user: String,
         /// PIN (prompted if not provided and key has PIN set)
         #[arg(long)]
