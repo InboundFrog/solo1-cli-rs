@@ -315,11 +315,7 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
 /// `0x41 0x41` ('A' 'A'), then writes the 8-byte AUTH_WORD at `auth_word_addr`:
 /// bytes 0–3 are `0x00` (authorise boot) and bytes 4–7 are `0xFF` (enable
 /// bootloader).
-fn patch_auth_word(
-    byte_map: &mut HashMap<u32, u8>,
-    app_end_page_start: u32,
-    auth_word_addr: u32,
-) {
+fn patch_auth_word(byte_map: &mut HashMap<u32, u8>, app_end_page_start: u32, auth_word_addr: u32) {
     // Boot marker: flash_addr(APPLICATION_END_PAGE - 1) = 'A' 'A'
     byte_map.insert(app_end_page_start, 0x41);
     byte_map.insert(app_end_page_start + 1, 0x41);
@@ -341,12 +337,7 @@ fn patch_auth_word(
 ///   [+32]:  8 bytes device settings (little-endian u64: `0xAA551E7900000000`)
 ///   [+40]:  8 bytes cert size (little-endian u64)
 ///   [+48]:  N bytes certificate
-fn patch_attestation(
-    byte_map: &mut HashMap<u32, u8>,
-    attest_addr: u32,
-    key: &[u8],
-    cert: &[u8],
-) {
+fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u8], cert: &[u8]) {
     // Attestation key at ATTEST_ADDR+0 (32 bytes)
     for (i, &b) in key.iter().take(32).enumerate() {
         byte_map.insert(attest_addr + i as u32, b);
@@ -426,7 +417,7 @@ pub fn merge_hex_files(
             raw
         }
     } else {
-        hex::decode(HACKER_ATTESTATION_KEY_HEX).unwrap()
+        hex::decode(HACKER_ATTESTATION_KEY_HEX)?
     };
 
     let cert_bytes: Vec<u8> = if let Some(cert_path) = attestation_cert {
