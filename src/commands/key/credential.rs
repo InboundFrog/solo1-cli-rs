@@ -478,25 +478,22 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Remove a credential by ID.
+/// Remove a credential.
+///
+/// Accepts either a base64 `credential_id` or a `host`+`user` pair.  When
+/// `host` and `user` are supplied the credential list is enumerated to locate
+/// the matching credential ID; exactly one match is required.
+///
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
-pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()> {
+pub fn cmd_credential_rm(
+    hid: &impl HidDevice,
+    credential_id: Option<&str>,
+    host: Option<&str>,
+    user: Option<&str>,
+) -> Result<()> {
     use base64::Engine as _;
     use hmac::{Hmac, KeyInit as _, Mac as _};
     use sha2::Sha256;
-
-    let cred_id_bytes = base64::engine::general_purpose::STANDARD
-        .decode(credential_id)
-        .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {}", e)))?;
-
-    // Confirmation prompt
-    if !common::confirm(&format!(
-        "Delete credential {}? Type 'yes' to confirm:",
-        credential_id
-    ))? {
-        println!("Aborted.");
-        return Ok(());
-    }
 
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
@@ -506,9 +503,64 @@ pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()
     }
 
     // ── Step 0: get PIN token ────────────────────────────────────────────
-
     let pin_token = prompt_and_get_pin_token(hid)?;
     let pin_token = pin_token.as_slice();
+
+    // ── Resolve credential ID bytes ──────────────────────────────────────
+    let cred_id_bytes: Vec<u8>;
+    let display_label: String;
+
+    if let Some(id) = credential_id {
+        cred_id_bytes = base64::engine::general_purpose::STANDARD
+            .decode(id)
+            .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {}", e)))?;
+        display_label = id.to_string();
+    } else {
+        let host = host.expect("host required when credential_id is absent");
+        let user = user.expect("user required when credential_id is absent");
+
+        let rps = enumerate_rps(hid, pin_token)?;
+        let matching_rp = rps.iter().find(|(rp_id, _)| rp_id == host);
+        let (_, rp_id_hash) = matching_rp.ok_or_else(|| {
+            SoloError::ProtocolError(format!("No credentials found for host '{}'", host))
+        })?;
+
+        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
+        let mut matches: Vec<Vec<u8>> = credentials
+            .into_iter()
+            .filter_map(|(username, cred_id_b64_bytes)| {
+                if username == user {
+                    let b64 = String::from_utf8(cred_id_b64_bytes).ok()?;
+                    base64::engine::general_purpose::STANDARD.decode(b64).ok()
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if matches.is_empty() {
+            return Err(SoloError::ProtocolError(format!(
+                "No credential found for host '{}' and user '{}'", host, user
+            )));
+        }
+        if matches.len() > 1 {
+            return Err(SoloError::ProtocolError(format!(
+                "Multiple credentials found for host '{}' and user '{}'; delete by credential ID instead",
+                host, user
+            )));
+        }
+        cred_id_bytes = matches.remove(0);
+        display_label = format!("{} / {}", host, user);
+    }
+
+    // Confirmation prompt
+    if !common::confirm(&format!(
+        "Delete credential {}? Type 'yes' to confirm:",
+        display_label
+    ))? {
+        println!("Aborted.");
+        return Ok(());
+    }
 
     // ── Step 1: deleteCredential (subcommand 0x06) ───────────────────────
     // subCommandParams = CBOR({0x02: PublicKeyCredentialDescriptor})

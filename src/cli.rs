@@ -217,10 +217,16 @@ pub enum CredentialCommands {
     /// List resident credentials
     Ls,
 
-    /// Remove credential by ID
+    /// Remove a resident credential
     Rm {
-        /// Credential ID (hex)
-        credential_id: String,
+        /// Credential ID (base64); alternative to --host/--user
+        credential_id: Option<String>,
+        /// Relying party host (requires --user)
+        #[arg(long, requires = "user")]
+        host: Option<String>,
+        /// Username (requires --host)
+        #[arg(long, requires = "host")]
+        user: Option<String>,
     },
 
     /// Create FIDO2 credential with hmac-secret

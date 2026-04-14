@@ -184,8 +184,17 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: 
                 CredentialCommands::Ls => {
                     key::credential::cmd_credential_ls(&hid, json)?;
                 }
-                CredentialCommands::Rm { credential_id } => {
-                    key::credential::cmd_credential_rm(&hid, &credential_id)?;
+                CredentialCommands::Rm { credential_id, host, user } => {
+                    if credential_id.is_none() && host.is_none() {
+                        eprintln!("Error: provide either a credential ID or --host and --user");
+                        std::process::exit(1);
+                    }
+                    key::credential::cmd_credential_rm(
+                        &hid,
+                        credential_id.as_deref(),
+                        host.as_deref(),
+                        user.as_deref(),
+                    )?;
                 }
                 CredentialCommands::Create {
                     host,
