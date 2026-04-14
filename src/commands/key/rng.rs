@@ -74,3 +74,71 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
 pub fn cmd_rng_feedkernel(_hid: &impl HidDevice) -> Result<()> {
     Err(SoloError::UnsupportedPlatform)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device::mock::MockDevice;
+    use crate::error::SoloError;
+
+    // ── cmd_rng_hexbytes ─────────────────────────────────────────────────────
+
+    /// Device returns N bytes; the result must be a lowercase hex string of length 2*N.
+    #[test]
+    fn test_cmd_rng_hexbytes_valid_response() {
+        let rng_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
+        let device = MockDevice::new(vec![Ok(rng_bytes.clone())]);
+        let hex = cmd_rng_hexbytes(&device, 4).unwrap();
+        assert_eq!(hex, "deadbeef");
+        assert_eq!(hex.len(), 8); // 4 bytes × 2 hex chars each
+    }
+
+    /// Device returns more bytes than requested: only the first n are hex-encoded.
+    #[test]
+    fn test_cmd_rng_hexbytes_truncates_to_n() {
+        // Device returns 8 bytes, but we only asked for 4
+        let rng_bytes = vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
+        let device = MockDevice::new(vec![Ok(rng_bytes)]);
+        let hex = cmd_rng_hexbytes(&device, 4).unwrap();
+        assert_eq!(hex, "01020304");
+    }
+
+    /// count=0 edge case: device returns empty bytes, result is an empty hex string.
+    #[test]
+    fn test_cmd_rng_hexbytes_count_zero() {
+        // When n=0, the device is called with request=[0x00]; it returns empty bytes.
+        let device = MockDevice::new(vec![Ok(vec![])]);
+        let hex = cmd_rng_hexbytes(&device, 0).unwrap();
+        assert_eq!(hex, "");
+    }
+
+    /// n > 255 must be rejected before any device communication.
+    #[test]
+    fn test_cmd_rng_hexbytes_n_too_large() {
+        // Queue is empty — if the device were called, we'd get Timeout.
+        // The validation must fire before any send_recv is attempted.
+        let device = MockDevice::new(vec![]);
+        let err = cmd_rng_hexbytes(&device, 256).unwrap_err();
+        assert!(matches!(err, SoloError::DeviceError(_)));
+        let msg = err.to_string();
+        assert!(msg.contains("256"), "error should mention the bad value: {}", msg);
+    }
+
+    /// Device timeout propagates as SoloError::Timeout.
+    #[test]
+    fn test_cmd_rng_hexbytes_timeout() {
+        let device = MockDevice::new(vec![]);
+        let err = cmd_rng_hexbytes(&device, 8).unwrap_err();
+        assert!(matches!(err, SoloError::Timeout));
+    }
+
+    /// Hex output uses lowercase letters.
+    #[test]
+    fn test_cmd_rng_hexbytes_hex_is_lowercase() {
+        let rng_bytes = vec![0xAB, 0xCD, 0xEF];
+        let device = MockDevice::new(vec![Ok(rng_bytes)]);
+        let hex = cmd_rng_hexbytes(&device, 3).unwrap();
+        assert_eq!(hex, "abcdef");
+        assert!(hex.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+    }
+}

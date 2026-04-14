@@ -96,3 +96,110 @@ pub fn cmd_disable_updates(hid: &impl HidDevice) -> Result<()> {
     println!("Firmware updates have been permanently disabled.");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::device::mock::MockDevice;
+    use crate::error::SoloError;
+
+    // ── cmd_ping ────────────────────────────────────────────────────────────
+
+    /// The device echoes back the same payload: cmd_ping must succeed.
+    #[test]
+    fn test_cmd_ping_success_echo() {
+        let data = vec![0x01u8, 0x02, 0x03, 0x04];
+        let device = MockDevice::new(vec![Ok(data.clone())]);
+        let result = cmd_ping(&device, 1, &data);
+        assert!(result.is_ok());
+    }
+
+    /// The device echoes back different bytes: cmd_ping must return an error.
+    #[test]
+    fn test_cmd_ping_data_mismatch() {
+        let sent = vec![0x01u8, 0x02, 0x03];
+        let received = vec![0xFF, 0xFE, 0xFD];
+        let device = MockDevice::new(vec![Ok(received)]);
+        let result = cmd_ping(&device, 1, &sent);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("mismatch") || msg.contains("Device error"), "unexpected error: {}", msg);
+    }
+
+    /// When the mock queue is empty, send_recv returns Timeout: cmd_ping must propagate it.
+    #[test]
+    fn test_cmd_ping_timeout() {
+        let device = MockDevice::new(vec![]);
+        let result = cmd_ping(&device, 1, &[0xAA]);
+        assert!(matches!(result.unwrap_err(), SoloError::Timeout));
+    }
+
+    /// cmd_ping with count=0 performs no sends and must succeed immediately.
+    #[test]
+    fn test_cmd_ping_count_zero() {
+        // No responses queued — if any send_recv is called, it would return Timeout.
+        let device = MockDevice::new(vec![]);
+        let result = cmd_ping(&device, 0, &[0x01, 0x02]);
+        assert!(result.is_ok());
+    }
+
+    // ── cmd_wink ────────────────────────────────────────────────────────────
+
+    /// A successful wink: device returns any non-error response.
+    #[test]
+    fn test_cmd_wink_success() {
+        let device = MockDevice::new(vec![Ok(vec![])]);
+        let result = cmd_wink(&device);
+        assert!(result.is_ok());
+    }
+
+    /// If the device times out during wink, the error is propagated.
+    #[test]
+    fn test_cmd_wink_timeout() {
+        let device = MockDevice::new(vec![]);
+        let result = cmd_wink(&device);
+        assert!(matches!(result.unwrap_err(), SoloError::Timeout));
+    }
+
+    // ── cmd_key_version ────────────────────────────────────────────────────
+
+    /// Device returns three version bytes [major, minor, patch].
+    #[test]
+    fn test_cmd_key_version_parses_bytes() {
+        let device = MockDevice::new(vec![Ok(vec![4, 1, 2])]);
+        let version = cmd_key_version(&device).unwrap();
+        assert_eq!(version, crate::firmware::FirmwareVersion::new(4, 1, 2));
+    }
+
+    /// Version 0.0.0 is a valid response.
+    #[test]
+    fn test_cmd_key_version_zero() {
+        let device = MockDevice::new(vec![Ok(vec![0, 0, 0])]);
+        let version = cmd_key_version(&device).unwrap();
+        assert_eq!(version, crate::firmware::FirmwareVersion::new(0, 0, 0));
+    }
+
+    /// Extra bytes beyond the first three must be ignored.
+    #[test]
+    fn test_cmd_key_version_extra_bytes_ignored() {
+        let device = MockDevice::new(vec![Ok(vec![2, 5, 3, 99, 42])]);
+        let version = cmd_key_version(&device).unwrap();
+        assert_eq!(version, crate::firmware::FirmwareVersion::new(2, 5, 3));
+    }
+
+    /// Fewer than 3 bytes must produce a ProtocolError.
+    #[test]
+    fn test_cmd_key_version_too_short() {
+        let device = MockDevice::new(vec![Ok(vec![1, 0])]);
+        let err = cmd_key_version(&device).unwrap_err();
+        assert!(matches!(err, SoloError::ProtocolError(_)));
+    }
+
+    /// Timeout propagates as an error.
+    #[test]
+    fn test_cmd_key_version_timeout() {
+        let device = MockDevice::new(vec![]);
+        let err = cmd_key_version(&device).unwrap_err();
+        assert!(matches!(err, SoloError::Timeout));
+    }
+}
