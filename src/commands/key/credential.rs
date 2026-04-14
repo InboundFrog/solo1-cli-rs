@@ -1,7 +1,7 @@
 use crate::commands::key::common;
 use crate::ctap2::{
-    extract_cbor_text_responses, find_cbor_response_by_key, get_pin_token,
-    parse_cbor_map_response,
+    extract_cbor_text_responses, find_cbor_response_by_key, parse_cbor_map_response,
+    prompt_and_get_pin_token,
 };
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -135,14 +135,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
     // ── Step 0: get PIN token ────────────────────────────────────────────
 
-    let pin = rpassword::prompt_password("PIN: ").map_err(|e| SoloError::IoError(e))?;
-    if pin.len() < 4 {
-        return Err(SoloError::DeviceError(
-            "PIN must be at least 4 characters".into(),
-        ));
-    }
-
-    let pin_token = get_pin_token(hid, &pin)?;
+    let pin_token = prompt_and_get_pin_token(hid)?;
     let pin_token = pin_token.as_slice();
 
     // Helper: compute pinUvAuthParam = HMAC-SHA-256(pinToken, msg)[0..16]
@@ -450,14 +443,7 @@ pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
 
     // ── Step 0: get PIN token ────────────────────────────────────────────
 
-    let pin = rpassword::prompt_password("PIN: ").map_err(|e| SoloError::IoError(e))?;
-    if pin.len() < 4 {
-        return Err(SoloError::DeviceError(
-            "PIN must be at least 4 characters".into(),
-        ));
-    }
-
-    let pin_token = get_pin_token(hid, &pin)?;
+    let pin_token = prompt_and_get_pin_token(hid)?;
     let pin_token = pin_token.as_slice();
 
     // ── Step 1: deleteCredential (subcommand 0x06) ───────────────────────
