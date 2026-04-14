@@ -122,6 +122,8 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     let cert_der = extract_attestation_cert(&response)?;
 
     let fingerprint = sha256_hex(&cert_der);
+    let spki_fingerprint = crate::crypto::extract_spki_fingerprint(&cert_der)
+        .unwrap_or_else(|_| "(could not extract)".into());
 
     use crate::crypto::AttestationResult;
     let result = check_attestation_fingerprint(&cert_der);
@@ -142,11 +144,13 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
             device_type: device_type.to_string(),
             device_name,
             fingerprint: fingerprint.clone(),
+            spki_fingerprint: spki_fingerprint.clone(),
             cert_expired,
         });
     }
 
     println!("Attestation certificate SHA-256: {}", fingerprint);
+    println!("Attestation certificate SPKI:    {}", spki_fingerprint);
     if cert_expired {
         println!(
             "WARNING: Attestation certificate has expired. \

@@ -172,7 +172,7 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
 pub const SOLO_V3_SPKI_FINGERPRINT: &str = "";       // TODO(0003): populate from hardware
 pub const SOMU_SPKI_FINGERPRINT: &str = "";           // TODO(0003): populate from hardware
 pub const SOLO_SPKI_FINGERPRINT: &str = "";           // TODO(0003): populate from hardware
-pub const SOLO_TAP_SPKI_FINGERPRINT: &str = "";       // TODO(0003): populate from hardware
+pub const SOLO_TAP_SPKI_FINGERPRINT: &str = "6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049";
 pub const SOLO_HACKER_SPKI_FINGERPRINT: &str = "";    // TODO(0003): populate from hardware
 pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
 

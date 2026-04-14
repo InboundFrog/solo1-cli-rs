@@ -41,7 +41,10 @@ pub struct VerifyOutput {
     /// "genuine", "developer", or "unknown"
     pub device_type: String,
     pub device_name: Option<String>,
+    /// SHA-256 of the full certificate DER bytes.
     pub fingerprint: String,
+    /// SHA-256 of the SubjectPublicKeyInfo (SPKI) only — stable across certificate re-issuance.
+    pub spki_fingerprint: String,
     /// Whether the attestation certificate's validity period has expired.
     /// A genuine device may still have an expired cert; expiry is reported as
     /// a warning rather than an authentication failure.
@@ -92,6 +95,7 @@ mod tests {
             device_type: "genuine".into(),
             device_name: Some("Solo v3".into()),
             fingerprint: "aabbcc".into(),
+            spki_fingerprint: "ddeeff".into(),
             cert_expired: false,
         };
         let json = serde_json::to_string(&out).unwrap();
@@ -107,6 +111,7 @@ mod tests {
             device_type: "genuine".into(),
             device_name: Some("Solo v3".into()),
             fingerprint: "aabbcc".into(),
+            spki_fingerprint: "ddeeff".into(),
             cert_expired: true,
         };
         let json = serde_json::to_string(&out).unwrap();
