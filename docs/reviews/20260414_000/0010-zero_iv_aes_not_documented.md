@@ -33,20 +33,17 @@ The key is also never reused across sessions (it is derived from an ephemeral EC
 ## Proposed Change
 
 1. Define a single named constant with a documentation comment:
-
-```rust
-/// All-zero IV as mandated by the CTAP2 spec for clientPIN AES-256-CBC operations.
-///
-/// This is safe because the AES key is derived from a fresh ephemeral ECDH exchange
-/// for each session and is never reused. See CTAP2 §6.5.4.
-///
-/// Reference: https://fidoalliance.org/specs/fido-v2.1-ps-20210615/
-///   fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1
-const CTAP2_AES_IV: [u8; 16] = [0u8; 16];
-```
-
+    ```rust
+    /// All-zero IV as mandated by the CTAP2 spec for clientPIN AES-256-CBC operations.
+    ///
+    /// This is safe because the AES key is derived from a fresh ephemeral ECDH exchange
+    /// for each session and is never reused. See CTAP2 §6.5.4.
+    ///
+    /// Reference: https://fidoalliance.org/specs/fido-v2.1-ps-20210615/
+    ///   fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1
+    const CTAP2_AES_IV: [u8; 16] = [0u8; 16];
+    ```
 2. Replace all occurrences of `[0u8; 16]` used as AES IV with `CTAP2_AES_IV`.
-
 3. Place this constant in `src/ctap2.rs` and re-export or `use` it in `fido2.rs`.
 
 ### Steps

@@ -56,26 +56,22 @@ This issue does not require a full X.509 validation implementation immediately â
    - What the check does and does not prove
    - That hacker/emulation fingerprints represent developer devices, not genuine consumer keys
    - That fingerprints are valid only for specific certificate versions (link to SoloKeys docs if available)
-
 2. **Differentiate genuine vs. developer fingerprints** in the return value:
-
-```rust
-pub enum AttestationResult {
-    GenuineConsumer(&'static str),    // e.g., "Solo v3"
-    DeveloperDevice(&'static str),    // e.g., "Solo Hacker"
-    Unknown,
-}
-
-pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult
-```
-
+   ```rust
+   pub enum AttestationResult {
+       GenuineConsumer(&'static str),    // e.g., "Solo v3"
+       DeveloperDevice(&'static str),    // e.g., "Solo Hacker"
+       Unknown,
+   }
+   
+   pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult
+   ```
 3. **Update `cmd_verify` output** to distinguish between consumer and developer attestation results.
 
 ### Medium term (if/when practical)
 
-4. Validate certificate `notBefore`/`notAfter` dates using the `x509-cert` or `rustls-pki-types` crate.
-
-5. Consider pinning the attestation public key (SPKI) rather than the full certificate DER, to be resilient to certificate re-issuance with the same key.
+1. Validate certificate `notBefore`/`notAfter` dates using the `x509-cert` or `rustls-pki-types` crate.
+2. Consider pinning the attestation public key (SPKI) rather than the full certificate DER, to be resilient to certificate re-issuance with the same key.
 
 ### Steps (short term)
 
