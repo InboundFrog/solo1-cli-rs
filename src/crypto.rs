@@ -158,7 +158,7 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
 //
 //   `sha256_hex(&cert.tbs_certificate.subject_public_key_info.to_der()?)`
 //
-// See docs/reviews/20260414_0001/0003-attestation_chain_validation.md for
+// See docs/reviews/20260414_001/0003-attestation_chain_validation.md for
 // the full migration plan.  Until these constants are populated, SPKI-based
 // matching is NOT used for verification; the existing DER-fingerprint path
 // in `check_attestation_fingerprint` remains the authoritative check.
