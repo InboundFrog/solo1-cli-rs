@@ -9,6 +9,16 @@ use sha2::{Digest as _, Sha256};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
+/// All-zero IV as mandated by the CTAP2 specification for clientPIN AES-256-CBC operations
+/// (PIN/UV Auth Protocol One, §6.5.4).
+///
+/// This is safe because the AES key is derived from a fresh ephemeral ECDH exchange for each
+/// session and is never reused across sessions, so the zero IV does not leak information about
+/// the plaintext.
+///
+/// Reference: <https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1>
+pub const CTAP2_AES_IV: [u8; 16] = [0u8; 16];
+
 /// Query CTAP2 getInfo (0x04) and return whether a PIN has been set on the device.
 pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
     let get_info_req = vec![0x04u8];
@@ -293,13 +303,12 @@ impl ClientPinSession {
         padded_pin[..copy_len].copy_from_slice(&pin_bytes[..copy_len]);
 
         let mut encrypted = [0u8; 64];
-        let iv = [0u8; 16];
         let mut blocks = [aes::Block::default(); 4];
         for (i, chunk) in padded_pin.chunks_exact(16).enumerate() {
             blocks[i] = (*chunk).try_into().unwrap();
         }
         
-        Aes256CbcEnc::new(&self.shared_secret.into(), &iv.into()).encrypt_blocks(&mut blocks);
+        Aes256CbcEnc::new(&self.shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
         
         for (i, block) in blocks.iter().enumerate() {
             encrypted[i*16..(i+1)*16].copy_from_slice(block.as_slice());
@@ -328,9 +337,8 @@ impl ClientPinSession {
         let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().unwrap();
 
         let mut pin_hash_enc = pin_hash;
-        let iv = [0u8; 16];
         let mut block = aes::Block::from(pin_hash_enc);
-        Aes256CbcEnc::new(&self.shared_secret.into(), &iv.into()).encrypt_blocks(std::slice::from_mut(&mut block));
+        Aes256CbcEnc::new(&self.shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(std::slice::from_mut(&mut block));
         pin_hash_enc.copy_from_slice(block.as_slice());
 
         Ok(pin_hash_enc)
@@ -348,14 +356,13 @@ impl ClientPinSession {
         }
 
         let mut pin_token = pin_token_enc.to_vec();
-        let iv = [0u8; 16];
         let n_blocks = pin_token.len() / 16;
         let mut blocks = vec![aes::Block::default(); n_blocks];
         for (i, chunk) in pin_token.chunks_exact(16).enumerate() {
             blocks[i] = (*chunk).try_into().unwrap();
         }
 
-        Aes256CbcDec::new(&self.shared_secret.into(), &iv.into()).decrypt_blocks(&mut blocks);
+        Aes256CbcDec::new(&self.shared_secret.into(), &CTAP2_AES_IV.into()).decrypt_blocks(&mut blocks);
 
         for (i, block) in blocks.iter().enumerate() {
             pin_token[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
