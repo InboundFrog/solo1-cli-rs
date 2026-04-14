@@ -562,3 +562,56 @@ pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()
     println!("Credential deleted.");
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use base64::Engine as _;
+
+    /// Credential IDs are displayed and accepted as standard base64, not hex.
+    #[test]
+    fn credential_id_decodes_from_base64() {
+        let b64 = "6T35dsdagAWH0ly+ogGh/TUM8cq3GbuYX9JAuUsDrRVTsRrEkdnTcSxj97jWz634bQV9CZ04Ikbb6ch/Ez7RZ4gbaA8AAA==";
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        assert_eq!(bytes.len(), 70); // Solo1 CredentialId is 70 bytes
+        assert!(hex::decode(b64).is_err(), "credential ID is not valid hex");
+    }
+
+    /// deleteCredential subCommandParams must use key 0x02 (CM_subCommandCred)
+    /// for the credential descriptor, not key 0x01 (CM_subCommandRpId).
+    /// Key 0x01 with a map value causes the Solo1 firmware CBOR iterator to hang.
+    #[test]
+    fn delete_sub_command_params_uses_key_0x02() {
+        use crate::cbor::{cbor_bytes, int_map};
+        use ciborium::value::Value;
+
+        let cred_id_bytes = vec![0u8; 70];
+        let cred_descriptor = Value::Map(vec![
+            (Value::Text("type".into()), Value::Text("public-key".into())),
+            (Value::Text("id".into()), cbor_bytes(cred_id_bytes.clone())),
+        ]);
+        let del_params = int_map([(0x02i64, cred_descriptor)]);
+
+        // Serialise and deserialise to confirm key 0x02 is present, not 0x01.
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&del_params, &mut buf).unwrap();
+        let roundtrip: Value = ciborium::de::from_reader(buf.as_slice()).unwrap();
+
+        let pairs = match roundtrip {
+            Value::Map(p) => p,
+            _ => panic!("expected map"),
+        };
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].0, Value::Integer(2i64.into()), "key must be 0x02 (CM_subCommandCred)");
+
+        // The value must be a descriptor map, not raw bytes.
+        let descriptor = match &pairs[0].1 {
+            Value::Map(m) => m,
+            _ => panic!("value must be a map (PublicKeyCredentialDescriptor), not raw bytes"),
+        };
+        let keys: Vec<&str> = descriptor.iter().filter_map(|(k, _)| {
+            if let Value::Text(s) = k { Some(s.as_str()) } else { None }
+        }).collect();
+        assert!(keys.contains(&"type"), "descriptor must have 'type' field");
+        assert!(keys.contains(&"id"), "descriptor must have 'id' field");
+    }
+}
