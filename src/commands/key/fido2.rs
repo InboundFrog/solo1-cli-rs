@@ -3,7 +3,7 @@ use crate::ctap2::{
     extract_cose_coord, find_key_agreement_response,
     parse_cbor_map_response, CTAP2_AES_IV,
 };
-use crate::device::{SoloHid, CTAPHID_CBOR};
+use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
 
@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 ///
 /// Parses the authData from the response to extract the credential ID,
 /// then prints it as hex for use with `challenge-response` and `sign-file`.
-pub fn cmd_make_credential(hid: &SoloHid, host: &str, user: &str, prompt: &str) -> Result<()> {
+pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt: &str) -> Result<()> {
     use ciborium::value::Value;
     use rand::RngCore;
 
@@ -247,7 +247,7 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
 ///        output = AES-256-CBC-decrypt(shared_secret, IV=0x00*16, encrypted_output)
 ///   9. Print output as hex
 pub fn cmd_challenge_response(
-    hid: &SoloHid,
+    hid: &impl HidDevice,
     credential_id: &str,
     challenge: &str,
     host: &str,

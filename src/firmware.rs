@@ -7,7 +7,7 @@ use ihex::Record;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::{websafe_b64_decode, websafe_b64_encode};
-use crate::device::{SoloHid, CMD_VERSION};
+use crate::device::{HidDevice, CMD_VERSION};
 use crate::error::{Result, SoloError};
 
 /// The firmware JSON format used by the Solo 1 bootloader.
@@ -88,7 +88,7 @@ impl FirmwareJson {
 /// Bootloaders <= 2.5.3 use the v1 signing region; later ones use v2.
 /// If the version query fails or returns no data, falls back to the default
 /// (latest) signature rather than incorrectly matching "<=2.5.3".
-pub fn select_signature(hid: &SoloHid, fw: &FirmwareJson) -> Result<Vec<u8>> {
+pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
     match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
             let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);

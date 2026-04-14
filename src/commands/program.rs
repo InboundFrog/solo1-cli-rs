@@ -4,7 +4,7 @@ use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::device::{SoloHid, CMD_DONE, CMD_WRITE};
+use crate::device::{HidDevice, CMD_DONE, CMD_WRITE};
 use crate::dfu::DfuDevice;
 use crate::error::Result;
 use crate::firmware::{self, FirmwareJson};
@@ -12,7 +12,7 @@ use crate::vlog;
 
 /// Program via the Solo bootloader (firmware.json format).
 /// The device must already be in bootloader mode when this is called.
-pub fn cmd_program_bootloader(hid: &SoloHid, firmware_json: &Path) -> Result<()> {
+pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Result<()> {
     vlog!("Loading firmware JSON: {:?}", firmware_json);
     let fw = FirmwareJson::from_file(firmware_json)?;
     let (flash_start, firmware_bytes) = fw.firmware_binary()?;

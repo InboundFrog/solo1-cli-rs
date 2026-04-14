@@ -4,19 +4,19 @@ use crate::ctap2::{
     extract_cbor_text_responses, find_cbor_response_by_key, parse_cbor_map_response,
     prompt_and_get_pin_token,
 };
-use crate::device::{SoloHid, CTAPHID_CBOR};
+use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// Query CTAP2 getInfo (0x04) and return whether a PIN has been set on the device.
 ///
 /// Returns `Ok(true)` when `options.clientPin == true`, `Ok(false)` when it is
 /// `false` or absent, and `Err(...)` on communication / parse failures.
-pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
+pub fn get_info_client_pin_set(hid: &impl HidDevice) -> Result<bool> {
     crate::ctap2::get_info_client_pin_set(hid)
 }
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
-pub fn cmd_credential_info(hid: &SoloHid) -> Result<()> {
+pub fn cmd_credential_info(hid: &impl HidDevice) -> Result<()> {
     use ciborium::value::Value;
 
     // CTAP2 getInfo
@@ -122,7 +122,7 @@ fn pin_uv_auth(pin_token: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
 /// optional subCommandParams (0x02), pinUvAuthProtocol (0x03), and
 /// pinUvAuthParam (0x04), then forwards it over HID.
 fn send_cred_mgmt(
-    hid: &SoloHid,
+    hid: &impl HidDevice,
     subcommand: u8,
     params: Option<ciborium::value::Value>,
     pin_uv: Vec<u8>,
@@ -147,7 +147,7 @@ fn send_cred_mgmt(
 ///
 /// Used for the *GetNext* subcommands (0x03 enumerateRPsGetNextRP,
 /// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
-fn send_cred_mgmt_next(hid: &SoloHid, subcommand: u8) -> Result<Vec<u8>> {
+fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
     let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
     let mut req = vec![0x0Au8];
     ciborium::ser::into_writer(&cm_cbor, &mut req)
@@ -197,7 +197,7 @@ fn parse_cm_response(resp: Vec<u8>, ctx: &str) -> Result<Vec<(ciborium::value::V
 /// Send enumerateRPsBegin (subcommand 0x02) then enumerateRPsGetNextRP
 /// (subcommand 0x03) for all remaining RPs, returning `(rp_id, rp_id_hash)`
 /// pairs for every relying party that has at least one resident credential.
-fn enumerate_rps(hid: &SoloHid, pin_token: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
     use ciborium::value::Value;
 
     // enumerateRPsBegin — pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
@@ -287,7 +287,7 @@ fn enumerate_rps(hid: &SoloHid, pin_token: &[u8]) -> Result<Vec<(String, Vec<u8>
 ///
 /// `pin_auth_protocol` is always 1 for the current implementation (CTAP 2.0).
 fn enumerate_credentials_for_rp(
-    hid: &SoloHid,
+    hid: &impl HidDevice,
     pin_token: &[u8],
     rp_id_hash: &[u8],
     _pin_auth_protocol: u8,
@@ -425,7 +425,7 @@ fn enumerate_credentials_for_rp(
 ///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || CBOR({0x01: rpIdHash}))[0..16]
 ///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
 ///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
-pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
+pub fn cmd_credential_ls(hid: &impl HidDevice) -> Result<()> {
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
         return Err(SoloError::DeviceError(
@@ -465,7 +465,7 @@ pub fn cmd_credential_ls(hid: &SoloHid) -> Result<()> {
 
 /// Remove a credential by ID.
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
-pub fn cmd_credential_rm(hid: &SoloHid, credential_id: &str) -> Result<()> {
+pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()> {
     use hmac::{Hmac, KeyInit as _, Mac as _};
     use sha2::Sha256;
 

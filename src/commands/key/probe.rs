@@ -2,7 +2,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::device::{SoloHid, CMD_PROBE, CTAPHID_CBOR};
+use crate::device::{HidDevice, CMD_PROBE, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// Run a hash probe on the device.
@@ -14,7 +14,7 @@ use crate::error::{Result, SoloError};
 ///   SHA256, SHA512, RSA2048, Ed25519
 ///
 /// File must be <= 6144 bytes.
-pub fn cmd_probe(hid: &SoloHid, hash_type: &str, filename: &Path) -> Result<()> {
+pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Result<()> {
     // Normalize hash type to the canonical form expected by the device
     let hash_type_str = match hash_type.to_lowercase().as_str() {
         "sha256" => "SHA256",
@@ -74,7 +74,7 @@ pub fn cmd_probe(hid: &SoloHid, hash_type: &str, filename: &Path) -> Result<()> 
 ///   3. Extract signature (key 0x03) from the CBOR response
 ///   4. Save raw signature bytes to `{filename}.sig`
 ///   5. Print signature hex to stdout
-pub fn cmd_sign_file(hid: &SoloHid, credential_id: &str, filename: &Path) -> Result<()> {
+pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path) -> Result<()> {
     use ciborium::value::Value;
 
     // Decode hex credential ID (same convention as cmd_challenge_response)

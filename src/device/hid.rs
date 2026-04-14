@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use hidapi::{HidApi, HidDevice};
+use hidapi::{HidApi, HidDevice as HidApiDevice};
 
 use crate::error::{Result, SoloError};
 use crate::vlog;
@@ -39,7 +39,7 @@ pub fn list_solo_devices() -> Result<Vec<SoloDevice>> {
 /// Open a Solo HID device, optionally filtered by serial number.
 /// Returns the opened device and its assigned channel ID.
 pub struct SoloHid {
-    pub device: HidDevice,
+    pub device: HidApiDevice,
     pub channel_id: [u8; 4],
 }
 
@@ -290,5 +290,19 @@ impl SoloHid {
             )));
         }
         Ok(resp[1..].to_vec())
+    }
+}
+
+impl crate::device::HidDevice for SoloHid {
+    fn send_recv(&self, cmd: u8, data: &[u8]) -> Result<Vec<u8>> {
+        SoloHid::send_recv(self, cmd, data)
+    }
+
+    fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
+        SoloHid::send_bootloader_cmd(self, cmd, addr, data)
+    }
+
+    fn send(&self, cmd: u8, data: &[u8]) -> Result<()> {
+        SoloHid::send(self, cmd, data)
     }
 }
