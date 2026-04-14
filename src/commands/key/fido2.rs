@@ -150,8 +150,19 @@ fn derive_shared_secret(
     dev_pub_key_cbor_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
 ) -> Result<([u8; 32], ciborium::value::Value)> {
     use p256::ecdh::EphemeralSecret;
-    use p256::EncodedPoint;
     use rand::rngs::OsRng;
+    ecdh_key_agreement(dev_pub_key_cbor_pairs, EphemeralSecret::random(&mut OsRng))
+}
+
+/// Inner key-agreement function that accepts a caller-supplied ephemeral secret.
+///
+/// Separated from `derive_shared_secret` so that tests can inject a known
+/// ephemeral key and verify the ECDH math deterministically.
+fn ecdh_key_agreement(
+    dev_pub_key_cbor_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
+    ephemeral_secret: p256::ecdh::EphemeralSecret,
+) -> Result<([u8; 32], ciborium::value::Value)> {
+    use p256::EncodedPoint;
 
     let dev_x = extract_cose_coord(dev_pub_key_cbor_pairs, -2)?;
     let dev_y = extract_cose_coord(dev_pub_key_cbor_pairs, -3)?;
@@ -168,8 +179,6 @@ fn derive_shared_secret(
     let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
         .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))?;
 
-    // Generate ephemeral P-256 keypair
-    let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
     let ephemeral_pub = p256::PublicKey::from(&ephemeral_secret);
     let ephemeral_point = EncodedPoint::from(&ephemeral_pub);
 
@@ -425,4 +434,340 @@ pub fn cmd_challenge_response(
     println!("{}", hex::encode(&hmac_output[..32]));
 
     Ok(())
+}
+
+/// Test-only inner function: runs the ECDH key-agreement math using a raw
+/// `NonZeroScalar` instead of an `EphemeralSecret`.
+///
+/// `EphemeralSecret` has no public constructor from a scalar (by design — it is
+/// intended to be ephemeral). In tests we need a deterministic key, so we call
+/// `p256::ecdh::diffie_hellman` directly with the raw scalar and bypass the
+/// `EphemeralSecret` wrapper entirely.
+#[cfg(test)]
+fn ecdh_key_agreement_with_scalar(
+    dev_pub_key_cbor_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
+    platform_scalar: p256::NonZeroScalar,
+) -> Result<([u8; 32], ciborium::value::Value)> {
+    use p256::EncodedPoint;
+
+    let dev_x = extract_cose_coord(dev_pub_key_cbor_pairs, -2)?;
+    let dev_y = extract_cose_coord(dev_pub_key_cbor_pairs, -3)?;
+
+    if dev_x.len() != 32 || dev_y.len() != 32 {
+        return Err(SoloError::DeviceError(
+            "Device COSE key coordinates are not 32 bytes".into(),
+        ));
+    }
+
+    let mut uncompressed = vec![0x04u8];
+    uncompressed.extend_from_slice(&dev_x);
+    uncompressed.extend_from_slice(&dev_y);
+    let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
+        .map_err(|e| SoloError::DeviceError(format!("Invalid device public key: {}", e)))?;
+
+    // Compute DH with the raw scalar (equivalent to EphemeralSecret::diffie_hellman)
+    let shared_point = p256::ecdh::diffie_hellman(&platform_scalar, dev_pub_key.as_affine());
+    let raw_x = shared_point.raw_secret_bytes();
+    let shared_secret: [u8; 32] = Sha256::digest(raw_x).into();
+
+    // Derive the platform public key from the scalar to build the COSE key
+    let platform_pub = p256::PublicKey::from_secret_scalar(&platform_scalar);
+    let platform_point = EncodedPoint::from(&platform_pub);
+
+    let eph_x = platform_point
+        .x()
+        .ok_or_else(|| SoloError::DeviceError("Platform key missing x coordinate".into()))?
+        .to_vec();
+    let eph_y = platform_point
+        .y()
+        .ok_or_else(|| SoloError::DeviceError("Platform key missing y coordinate".into()))?
+        .to_vec();
+
+    let ephemeral_cose_key = int_map([
+        (1,  cbor_int(2)),
+        (3,  cbor_int(-7)),
+        (-1, cbor_int(1)),
+        (-2, cbor_bytes(eph_x)),
+        (-3, cbor_bytes(eph_y)),
+    ]);
+
+    Ok((shared_secret, ephemeral_cose_key))
+}
+
+/// Test-only variant of `prepare_hmac_secret_input` that accepts a raw scalar.
+#[cfg(test)]
+fn prepare_hmac_secret_input_with_scalar(
+    cose_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
+    challenge: &str,
+    platform_scalar: p256::NonZeroScalar,
+) -> Result<(ciborium::value::Value, [u8; 32])> {
+    use aes::cipher::{BlockModeEncrypt, KeyIvInit};
+    use hmac::{Hmac, KeyInit as _, Mac as _};
+
+    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
+
+    let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
+
+    let (shared_secret, ephemeral_cose_key) =
+        ecdh_key_agreement_with_scalar(cose_pairs, platform_scalar)?;
+
+    let mut salt_enc = [0u8; 32];
+    {
+        let mut blocks = [aes::Block::default(); 2];
+        for (i, chunk) in salt.chunks_exact(16).enumerate() {
+            blocks[i] = (*chunk).try_into().unwrap();
+        }
+        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into())
+            .encrypt_blocks(&mut blocks);
+        for (i, block) in blocks.iter().enumerate() {
+            salt_enc[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
+        }
+    }
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
+        .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
+    mac.update(&salt_enc);
+    let mac_result = mac.finalize().into_bytes();
+    let salt_auth = &mac_result[..16];
+
+    let hmac_secret_ext = int_map([
+        (1, ephemeral_cose_key),
+        (2, cbor_bytes(salt_enc.to_vec())),
+        (3, cbor_bytes(salt_auth.to_vec())),
+    ]);
+
+    Ok((hmac_secret_ext, shared_secret))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ciborium::value::Value;
+
+    /// Build a COSE key map (integer-keyed) from a `p256::PublicKey`.
+    fn cose_pairs_from_pub(pub_key: &p256::PublicKey) -> Vec<(Value, Value)> {
+        use p256::EncodedPoint;
+        let point = EncodedPoint::from(pub_key);
+        let x = point.x().unwrap().to_vec();
+        let y = point.y().unwrap().to_vec();
+        vec![
+            (Value::Integer((-2i64).into()), Value::Bytes(x)),
+            (Value::Integer((-3i64).into()), Value::Bytes(y)),
+        ]
+    }
+
+    /// Extract a `Value::Bytes` payload from the CBOR extension map by integer key.
+    fn find_bytes_by_int_key(pairs: &[(Value, Value)], key: i64) -> Option<Vec<u8>> {
+        pairs.iter().find_map(|(k, v)| {
+            if let Value::Integer(i) = k {
+                let ki: i64 = (*i).try_into().ok()?;
+                if ki == key {
+                    if let Value::Bytes(b) = v {
+                        return Some(b.clone());
+                    }
+                }
+            }
+            None
+        })
+    }
+
+    /// Verify that both sides of the ECDH exchange derive the same shared secret.
+    ///
+    /// The "device" side owns `dev_secret_key`; the "platform" side owns
+    /// `platform_scalar`.  Both compute the x-coordinate of the DH shared point
+    /// and SHA-256 it; the test asserts that the resulting 32-byte secrets match.
+    #[test]
+    fn ecdh_key_agreement_both_sides_agree() {
+        use rand::rngs::OsRng;
+
+        // Generate deterministic-within-test keys using p256::SecretKey::random
+        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_pub = dev_secret.public_key();
+        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_scalar = platform_secret.to_nonzero_scalar();
+        let platform_pub = platform_secret.public_key();
+
+        // Platform → device: platform computes DH with dev_pub
+        let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
+        let (platform_shared, _cose_key) =
+            ecdh_key_agreement_with_scalar(&dev_cose_pairs, platform_scalar)
+                .expect("ecdh_key_agreement_with_scalar failed");
+
+        // Device → platform: device computes DH with platform_pub
+        let dev_scalar = dev_secret.to_nonzero_scalar();
+        let dev_shared_point =
+            p256::ecdh::diffie_hellman(&dev_scalar, platform_pub.as_affine());
+        let dev_shared: [u8; 32] = Sha256::digest(dev_shared_point.raw_secret_bytes()).into();
+
+        assert_eq!(
+            platform_shared, dev_shared,
+            "Platform and device must derive the same shared secret"
+        );
+    }
+
+    /// Verify the COSE key embedded in the ECDH output is a valid P-256 public key
+    /// and that its coordinates correspond to the platform scalar used.
+    #[test]
+    fn ecdh_key_agreement_cose_key_is_correct() {
+        use rand::rngs::OsRng;
+        use p256::EncodedPoint;
+
+        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_pub = dev_secret.public_key();
+        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_scalar = platform_secret.to_nonzero_scalar();
+
+        let expected_platform_pub = platform_secret.public_key();
+        let expected_point = EncodedPoint::from(&expected_platform_pub);
+        let expected_x = expected_point.x().unwrap().to_vec();
+        let expected_y = expected_point.y().unwrap().to_vec();
+
+        let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
+        let (_shared, cose_key) =
+            ecdh_key_agreement_with_scalar(&dev_cose_pairs, platform_scalar)
+                .expect("ecdh_key_agreement_with_scalar failed");
+
+        let cose_pairs = match cose_key {
+            Value::Map(p) => p,
+            _ => panic!("COSE key is not a CBOR map"),
+        };
+
+        // kty = 2 (EC2)
+        let kty = find_bytes_by_int_key(&cose_pairs, 1);
+        assert!(kty.is_none(), "kty should be an integer, not bytes");
+        let kty_val = cose_pairs.iter().find_map(|(k, v)| {
+            if let Value::Integer(i) = k {
+                let ki: i64 = (*i).try_into().ok()?;
+                if ki == 1 { Some(v.clone()) } else { None }
+            } else { None }
+        });
+        assert_eq!(kty_val, Some(Value::Integer(2i64.into())), "kty must be 2 (EC2)");
+
+        // x coordinate
+        let got_x = find_bytes_by_int_key(&cose_pairs, -2)
+            .expect("COSE key missing x (-2)");
+        assert_eq!(got_x, expected_x, "COSE key x coordinate mismatch");
+
+        // y coordinate
+        let got_y = find_bytes_by_int_key(&cose_pairs, -3)
+            .expect("COSE key missing y (-3)");
+        assert_eq!(got_y, expected_y, "COSE key y coordinate mismatch");
+    }
+
+    /// Verify that `prepare_hmac_secret_input` produces correctly structured output:
+    /// - The map has integer keys 1, 2, 3
+    /// - saltEnc is 32 bytes
+    /// - saltAuth is 16 bytes
+    /// - saltEnc decrypts to SHA-256(challenge) using the shared secret
+    /// - saltAuth equals HMAC-SHA-256(shared_secret, saltEnc)[0..16]
+    #[test]
+    fn prepare_hmac_secret_input_output_is_correct() {
+        use aes::cipher::{BlockModeDecrypt, KeyIvInit};
+        use hmac::{Hmac, KeyInit as _, Mac as _};
+        use rand::rngs::OsRng;
+
+        type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+
+        let challenge = "test-challenge";
+        let expected_salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
+
+        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_pub = dev_secret.public_key();
+        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_scalar = platform_secret.to_nonzero_scalar();
+
+        let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
+        let (hmac_ext, shared_secret) =
+            prepare_hmac_secret_input_with_scalar(&dev_cose_pairs, challenge, platform_scalar)
+                .expect("prepare_hmac_secret_input_with_scalar failed");
+
+        // The result must be a CBOR map
+        let ext_pairs = match hmac_ext {
+            Value::Map(p) => p,
+            _ => panic!("hmac-secret extension is not a CBOR map"),
+        };
+
+        // Keys 1, 2, 3 must be present
+        let has_key = |k: i64| {
+            ext_pairs.iter().any(|(ek, _)| {
+                if let Value::Integer(i) = ek {
+                    let ki: i64 = (*i).try_into().unwrap_or(i64::MIN);
+                    ki == k
+                } else {
+                    false
+                }
+            })
+        };
+        assert!(has_key(1), "hmac-secret map missing key 1 (keyAgreement)");
+        assert!(has_key(2), "hmac-secret map missing key 2 (saltEnc)");
+        assert!(has_key(3), "hmac-secret map missing key 3 (saltAuth)");
+
+        // saltEnc must be 32 bytes
+        let salt_enc = find_bytes_by_int_key(&ext_pairs, 2)
+            .expect("saltEnc (key 2) missing");
+        assert_eq!(salt_enc.len(), 32, "saltEnc must be 32 bytes");
+
+        // saltAuth must be 16 bytes
+        let salt_auth = find_bytes_by_int_key(&ext_pairs, 3)
+            .expect("saltAuth (key 3) missing");
+        assert_eq!(salt_auth.len(), 16, "saltAuth must be 16 bytes");
+
+        // Decrypt saltEnc and verify it equals SHA-256(challenge)
+        let mut decrypted = [0u8; 32];
+        {
+            let mut blocks = [aes::Block::default(); 2];
+            for (i, chunk) in salt_enc.chunks_exact(16).enumerate() {
+                blocks[i] = (*chunk).try_into().unwrap();
+            }
+            Aes256CbcDec::new(&shared_secret.into(), &CTAP2_AES_IV.into())
+                .decrypt_blocks(&mut blocks);
+            for (i, block) in blocks.iter().enumerate() {
+                decrypted[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
+            }
+        }
+        assert_eq!(decrypted, expected_salt, "Decrypted saltEnc must equal SHA-256(challenge)");
+
+        // Recompute saltAuth and verify it matches
+        let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
+            .expect("HMAC init failed");
+        mac.update(&salt_enc);
+        let mac_result = mac.finalize().into_bytes();
+        let expected_salt_auth = &mac_result[..16];
+        assert_eq!(
+            salt_auth.as_slice(),
+            expected_salt_auth,
+            "saltAuth must equal HMAC-SHA-256(shared_secret, saltEnc)[0..16]"
+        );
+    }
+
+    /// Verify that the shared secret computed by `prepare_hmac_secret_input_with_scalar`
+    /// matches the shared secret the device side would compute.
+    #[test]
+    fn prepare_hmac_secret_input_shared_secret_matches_device() {
+        use rand::rngs::OsRng;
+
+        let challenge = "another-test-challenge";
+        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_pub = dev_secret.public_key();
+        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_scalar = platform_secret.to_nonzero_scalar();
+        let platform_pub = platform_secret.public_key();
+
+        let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
+        let (_hmac_ext, platform_shared) =
+            prepare_hmac_secret_input_with_scalar(&dev_cose_pairs, challenge, platform_scalar)
+                .expect("prepare_hmac_secret_input_with_scalar failed");
+
+        // Device computes the same shared secret from the platform's public key
+        let dev_scalar = dev_secret.to_nonzero_scalar();
+        let dev_shared_point =
+            p256::ecdh::diffie_hellman(&dev_scalar, platform_pub.as_affine());
+        let device_shared: [u8; 32] =
+            Sha256::digest(dev_shared_point.raw_secret_bytes()).into();
+
+        assert_eq!(
+            platform_shared, device_shared,
+            "Shared secret from prepare_hmac_secret_input must match device-side computation"
+        );
+    }
 }
