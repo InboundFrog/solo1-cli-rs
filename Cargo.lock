@@ -2059,7 +2059,6 @@ dependencies = [
  "hex",
  "hidapi",
  "hmac 0.13.0",
- "hybrid-array",
  "ihex",
  "indicatif",
  "libc",
