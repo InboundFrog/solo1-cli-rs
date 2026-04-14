@@ -10,12 +10,12 @@ type: project
 
 Several functions are far too large to read, test, or reason about in isolation:
 
-| Function | File | Approximate Lines | Issues |
-|---|---|---|---|
-| `cmd_credential_ls` | `credential.rs` | ~280 lines | 3 nested loops, inline CBOR, protocol + display mixed |
-| `cmd_challenge_response` | `fido2.rs` | ~230 lines | Crypto setup, CBOR build, send/recv, response parse all inline |
-| `merge_hex_files` | `firmware.rs` | ~150 lines | Multiple concerns: parse, patch auth word, patch attestation, write |
-| `cmd_verify` | `verify.rs` | ~160 lines | PIN acquisition, credential creation, cert extraction, fingerprint check |
+| Function                 | File            | Approximate Lines | Issues                                                                   |
+|--------------------------|-----------------|-------------------|--------------------------------------------------------------------------|
+| `cmd_credential_ls`      | `credential.rs` | ~280 lines        | 3 nested loops, inline CBOR, protocol + display mixed                    |
+| `cmd_challenge_response` | `fido2.rs`      | ~230 lines        | Crypto setup, CBOR build, send/recv, response parse all inline           |
+| `merge_hex_files`        | `firmware.rs`   | ~150 lines        | Multiple concerns: parse, patch auth word, patch attestation, write      |
+| `cmd_verify`             | `verify.rs`     | ~160 lines        | PIN acquisition, credential creation, cert extraction, fingerprint check |
 
 The CTAP2 spec is already complex; embedding all protocol handling inline in these functions makes it very difficult to understand where one protocol step ends and another begins.
 

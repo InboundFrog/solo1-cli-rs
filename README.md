@@ -158,14 +158,14 @@ attestation certificate against known fingerprints.  Two fingerprint types are c
 
 ### Known SPKI fingerprints
 
-| Device type          | SPKI fingerprint (SHA-256)                                       |
-|----------------------|------------------------------------------------------------------|
-| Solo Tap             | `6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049` |
+| Device type          | SPKI fingerprint (SHA-256)                                                      |
+|----------------------|---------------------------------------------------------------------------------|
+| Solo Tap             | `6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049`              |
 | Solo 1               | not yet collected (see [#3](https://github.com/solokeys/solo1-cli-rs/issues/3)) |
-| Solo Mu              | not yet collected                                                |
-| Solo ≤v3.0.0         | not yet collected                                                |
-| Solo Hacker          | not yet collected                                                |
-| Emulation/simulation | not yet collected                                                |
+| Solo Mu              | not yet collected                                                               |
+| Solo ≤v3.0.0         | not yet collected                                                               |
+| Solo Hacker          | not yet collected                                                               |
+| Emulation/simulation | not yet collected                                                               |
 
 The missing values must be obtained by running `solo1 key verify --json` against real
 hardware and reading the `spki_fingerprint` field from the output.  If you have one of

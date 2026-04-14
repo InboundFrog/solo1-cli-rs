@@ -104,13 +104,13 @@ fn ctap2_status_message(code: u8) -> &'static str {
 
 For errors that have obvious remediation, append a hint:
 
-| Error | Hint |
-|-------|------|
-| `NoSoloFound` | Already has udev link (keep it) |
-| `NonUniqueDevice` | "Run `solo1 ls` to see serial numbers, then use `--serial`" |
-| `InvalidHex` | "Credential IDs are printed by `make-credential` as hex strings" |
-| CTAP2 0x30 (touch required) | "Touch the gold ring on your Solo key" |
-| CTAP2 0x07 (PIN blocked) | "PIN is blocked. Factory reset required." |
+| Error                       | Hint                                                             |
+|-----------------------------|------------------------------------------------------------------|
+| `NoSoloFound`               | Already has udev link (keep it)                                  |
+| `NonUniqueDevice`           | "Run `solo1 ls` to see serial numbers, then use `--serial`"      |
+| `InvalidHex`                | "Credential IDs are printed by `make-credential` as hex strings" |
+| CTAP2 0x30 (touch required) | "Touch the gold ring on your Solo key"                           |
+| CTAP2 0x07 (PIN blocked)    | "PIN is blocked. Factory reset required."                        |
 
 ### Steps
 

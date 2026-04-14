@@ -11,14 +11,14 @@ type: project
 Several commands produce output that is useful in scripts but only available as human-readable
 plain text:
 
-| Command | Current output | Scripted use difficulty |
-|---------|---------------|------------------------|
-| `key make-credential` | raw hex credential ID | easy (single token) |
-| `key challenge-response` | raw hex HMAC output | easy (single token) |
-| `key credential ls` | multi-line human text | hard (must parse table) |
-| `key version` | "Firmware version: X.Y.Z" | medium (must strip prefix) |
-| `ls` | human-readable device list | hard (multi-field, variable width) |
-| `key verify` | "Key is authentic (Solo v3)" | medium (must grep for keyword) |
+| Command                  | Current output               | Scripted use difficulty            |
+|--------------------------|------------------------------|------------------------------------|
+| `key make-credential`    | raw hex credential ID        | easy (single token)                |
+| `key challenge-response` | raw hex HMAC output          | easy (single token)                |
+| `key credential ls`      | multi-line human text        | hard (must parse table)            |
+| `key version`            | "Firmware version: X.Y.Z"    | medium (must strip prefix)         |
+| `ls`                     | human-readable device list   | hard (multi-field, variable width) |
+| `key verify`             | "Key is authentic (Solo v3)" | medium (must grep for keyword)     |
 
 Scripts that consume these outputs today are fragile: they use `awk`, `grep`, or fixed column
 offsets that break if the message wording changes.
