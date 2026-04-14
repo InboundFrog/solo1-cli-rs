@@ -1,3 +1,4 @@
+pub mod common;
 pub mod credential;
 mod fido2;
 mod ops;
