@@ -1,4 +1,4 @@
-use crate::commands::key::ctap2::{find_cbor_response_by_key, get_pin_token, parse_cbor_map_response};
+use crate::ctap2::{find_cbor_response_by_key, get_pin_token, parse_cbor_map_response};
 use crate::device::{SoloHid, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
@@ -17,7 +17,7 @@ pub fn cmd_verify(hid: &SoloHid) -> Result<()> {
     let client_data_hash: Vec<u8> = Sha256::digest(b"solokeys_verify_test").to_vec();
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
-    let pin_uv_auth: Option<Vec<u8>> = if super::ctap2::get_info_client_pin_set(hid)? {
+    let pin_uv_auth: Option<Vec<u8>> = if crate::ctap2::get_info_client_pin_set(hid)? {
         let pin = rpassword::prompt_password("PIN: ").map_err(|e| SoloError::IoError(e))?;
         if pin.len() < 4 {
             return Err(SoloError::DeviceError(

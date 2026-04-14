@@ -29,8 +29,8 @@ pub fn cmd_change_pin(hid: &SoloHid) -> Result<()> {
         ));
     }
 
-    let dev_pub_key = super::ctap2::get_key_agreement(hid)?;
-    let session = super::ctap2::ClientPinSession::new(&dev_pub_key);
+    let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
+    let session = crate::ctap2::ClientPinSession::new(&dev_pub_key);
 
     let pin_hash_enc = session.encrypt_pin_hash(&old_pin)?;
     let new_pin_enc = session.encrypt_pin(&new_pin)?;
@@ -106,8 +106,8 @@ pub fn cmd_set_pin(hid: &SoloHid) -> Result<()> {
         ));
     }
 
-    let dev_pub_key = super::ctap2::get_key_agreement(hid)?;
-    let session = super::ctap2::ClientPinSession::new(&dev_pub_key);
+    let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
+    let session = crate::ctap2::ClientPinSession::new(&dev_pub_key);
 
     let new_pin_enc = session.encrypt_pin(&new_pin)?;
     let pin_uv_auth_param = session.authenticate(&new_pin_enc);

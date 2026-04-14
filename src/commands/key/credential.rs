@@ -1,4 +1,4 @@
-use crate::commands::key::ctap2::{
+use crate::ctap2::{
     extract_cbor_text_responses, find_cbor_response_by_key, get_pin_token,
     parse_cbor_map_response,
 };
@@ -10,7 +10,7 @@ use crate::error::{Result, SoloError};
 /// Returns `Ok(true)` when `options.clientPin == true`, `Ok(false)` when it is
 /// `false` or absent, and `Err(...)` on communication / parse failures.
 pub fn get_info_client_pin_set(hid: &SoloHid) -> Result<bool> {
-    super::ctap2::get_info_client_pin_set(hid)
+    crate::ctap2::get_info_client_pin_set(hid)
 }
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).

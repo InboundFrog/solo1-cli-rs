@@ -1,5 +1,4 @@
-use crate::commands::key::ctap2;
-use crate::commands::key::ctap2::{
+use crate::ctap2::{
     extract_cose_coord, find_cbor_response_by_key, find_key_agreement_response,
     parse_cbor_map_response,
 };
@@ -182,7 +181,7 @@ pub fn cmd_challenge_response(
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
     // ── Step 2: getKeyAgreement (subcommand 0x02) ────────────────────────────
-    let get_ka_cbor = ctap2::create_key_agreement_cbor();
+    let get_ka_cbor = crate::ctap2::create_key_agreement_cbor();
     let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
     ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
         .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
