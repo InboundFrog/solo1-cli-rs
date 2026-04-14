@@ -7,7 +7,7 @@ use crate::firmware::FirmwareVersion;
 
 /// Get firmware version from the device.
 pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{VersionOutput, print_json};
+    use crate::output::{print_json, VersionOutput};
 
     let version = get_device_version(hid)?;
     if json {
@@ -48,7 +48,9 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8]) -> Result<()> {
         let elapsed = start.elapsed();
 
         if response != data {
-            return Err(SoloError::ProtocolError("Ping response data mismatch".into()));
+            return Err(SoloError::ProtocolError(
+                "Ping response data mismatch".into(),
+            ));
         }
         println!(
             "Ping {}: {} bytes, RTT = {:.3}ms",
@@ -77,9 +79,7 @@ pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
 
 /// Factory reset the device.
 pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
-    if !common::confirm(
-        "Warning: Your credentials will be lost!!! Type 'yes' to confirm:",
-    )? {
+    if !common::confirm("Warning: Your credentials will be lost!!! Type 'yes' to confirm:")? {
         println!("Aborted.");
         return Ok(());
     }
@@ -132,7 +132,11 @@ mod tests {
         let result = cmd_ping(&device, 1, &sent);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("mismatch") || msg.contains("Protocol error"), "unexpected error: {}", msg);
+        assert!(
+            msg.contains("mismatch") || msg.contains("Protocol error"),
+            "unexpected error: {}",
+            msg
+        );
     }
 
     /// When the mock queue is empty, send_recv returns Timeout: cmd_ping must propagate it.
@@ -177,7 +181,7 @@ mod tests {
     fn test_cmd_key_version_parses_bytes() {
         let device = MockDevice::new(vec![Ok(vec![4, 1, 2])]);
         let version = get_device_version(&device).unwrap();
-        assert_eq!(version, crate::firmware::FirmwareVersion::new(4, 1, 2));
+        assert_eq!(version, FirmwareVersion::new(4, 1, 2));
     }
 
     /// Version 0.0.0 is a valid response.
@@ -185,7 +189,7 @@ mod tests {
     fn test_cmd_key_version_zero() {
         let device = MockDevice::new(vec![Ok(vec![0, 0, 0])]);
         let version = get_device_version(&device).unwrap();
-        assert_eq!(version, crate::firmware::FirmwareVersion::new(0, 0, 0));
+        assert_eq!(version, FirmwareVersion::new(0, 0, 0));
     }
 
     /// Extra bytes beyond the first three must be ignored.
@@ -193,7 +197,7 @@ mod tests {
     fn test_cmd_key_version_extra_bytes_ignored() {
         let device = MockDevice::new(vec![Ok(vec![2, 5, 3, 99, 42])]);
         let version = get_device_version(&device).unwrap();
-        assert_eq!(version, crate::firmware::FirmwareVersion::new(2, 5, 3));
+        assert_eq!(version, FirmwareVersion::new(2, 5, 3));
     }
 
     /// Fewer than 3 bytes must produce a ProtocolError.

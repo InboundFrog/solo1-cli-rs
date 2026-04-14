@@ -146,10 +146,7 @@ pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
 
 /// Parse a raw CTAP2 response as a CBOR map: validates status, parses CBOR, checks it is a map.
 /// Returns the map pairs on success.
-pub fn parse_cbor_map_response(
-    response: &[u8],
-    context: &str,
-) -> Result<Vec<(Value, Value)>> {
+pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
     let val: Value = ciborium::de::from_reader(&response[1..])
         .map_err(|e| SoloError::CborError(e.to_string()))?;
@@ -166,8 +163,9 @@ pub fn parse_cbor_map_response(
 pub fn find_key_agreement_response(
     response_pairs: &[(Value, Value)],
 ) -> core::result::Result<&Value, SoloError> {
-    find_cbor_response_by_key(response_pairs, 0x01)
-        .ok_or_else(|| SoloError::MalformedResponse("keyAgreement (0x01) missing in response".into()))
+    find_cbor_response_by_key(response_pairs, 0x01).ok_or_else(|| {
+        SoloError::MalformedResponse("keyAgreement (0x01) missing in response".into())
+    })
 }
 
 /// Extract a byte-valued coordinate from a COSE key map by its integer key.
@@ -229,8 +227,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
 ///
 /// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
 pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
-    let pin = rpassword::prompt_password("Enter PIN: ")
-        .map_err(|e| SoloError::IoError(e))?;
+    let pin = rpassword::prompt_password("Enter PIN: ").map_err(|e| SoloError::IoError(e))?;
     if pin.is_empty() {
         return Err(SoloError::ProtocolError("PIN is required".into()));
     }
@@ -250,10 +247,10 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     let pin_hash_enc = session.encrypt_pin_hash(pin)?;
 
     let get_pin_token_cbor = int_map([
-        (0x01, cbor_int(1)),                                          // pinUvAuthProtocol = 1
-        (0x02, cbor_int(5)),                                          // subCommand = getPINToken
-        (0x03, session.ephemeral_pub_key.clone()),                    // keyAgreement
-        (0x06, cbor_bytes(pin_hash_enc.to_vec())),                    // pinHashEnc
+        (0x01, cbor_int(1)),                       // pinUvAuthProtocol = 1
+        (0x02, cbor_int(5)),                       // subCommand = getPINToken
+        (0x03, session.ephemeral_pub_key.clone()), // keyAgreement
+        (0x06, cbor_bytes(pin_hash_enc.to_vec())), // pinHashEnc
     ]);
 
     let mut gpt_req = vec![0x06u8]; // authenticatorClientPIN
@@ -313,11 +310,11 @@ impl ClientPinSession {
 
         // Wrap ephemeral public key in COSE_Key format for CTAP2
         let ephemeral_pub_key = int_map([
-            (1,  cbor_int(2)),                                              // kty: EC2
-            (3,  cbor_int(-7)),                                             // alg: ES256
-            (-1, cbor_int(1)),                                              // crv: P-256
-            (-2, cbor_bytes(ephemeral_point.x().unwrap().to_vec())),        // x
-            (-3, cbor_bytes(ephemeral_point.y().unwrap().to_vec())),        // y
+            (1, cbor_int(2)),                                        // kty: EC2
+            (3, cbor_int(-7)),                                       // alg: ES256
+            (-1, cbor_int(1)),                                       // crv: P-256
+            (-2, cbor_bytes(ephemeral_point.x().unwrap().to_vec())), // x
+            (-3, cbor_bytes(ephemeral_point.y().unwrap().to_vec())), // y
         ]);
 
         Self {
@@ -340,11 +337,12 @@ impl ClientPinSession {
         for (i, chunk) in padded_pin.chunks_exact(16).enumerate() {
             blocks[i] = (*chunk).try_into().unwrap();
         }
-        
-        Aes256CbcEnc::new(&self.shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
-        
+
+        Aes256CbcEnc::new(&self.shared_secret.into(), &CTAP2_AES_IV.into())
+            .encrypt_blocks(&mut blocks);
+
         for (i, block) in blocks.iter().enumerate() {
-            encrypted[i*16..(i+1)*16].copy_from_slice(block.as_slice());
+            encrypted[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
         }
 
         Ok(encrypted.to_vec())
@@ -371,7 +369,8 @@ impl ClientPinSession {
 
         let mut pin_hash_enc = pin_hash;
         let mut block = aes::Block::from(pin_hash_enc);
-        Aes256CbcEnc::new(&self.shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(std::slice::from_mut(&mut block));
+        Aes256CbcEnc::new(&self.shared_secret.into(), &CTAP2_AES_IV.into())
+            .encrypt_blocks(std::slice::from_mut(&mut block));
         pin_hash_enc.copy_from_slice(block.as_slice());
 
         Ok(pin_hash_enc)
@@ -395,7 +394,8 @@ impl ClientPinSession {
             blocks[i] = (*chunk).try_into().unwrap();
         }
 
-        Aes256CbcDec::new(&self.shared_secret.into(), &CTAP2_AES_IV.into()).decrypt_blocks(&mut blocks);
+        Aes256CbcDec::new(&self.shared_secret.into(), &CTAP2_AES_IV.into())
+            .decrypt_blocks(&mut blocks);
 
         for (i, block) in blocks.iter().enumerate() {
             pin_token[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
@@ -455,25 +455,25 @@ mod tests {
     fn test_client_pin_session_crypto_roundtrip() {
         // We need a dummy public key to initialize the session.
         // P-256 public key is 65 bytes (0x04 || X || Y)
-        let secret = p256::ecdh::EphemeralSecret::random(&mut OsRng);
+        let secret = EphemeralSecret::random(&mut OsRng);
         let pub_key = p256::PublicKey::from(&secret);
 
         let session = ClientPinSession::new(&pub_key);
 
         // Test encryption/decryption of a token (multi-block)
         let _encrypted = session.encrypt_pin_hash("123456").unwrap(); // 16 bytes
-        // encrypt_pin_hash is one-way in practice (we don't have a decrypt_pin_hash)
-        // but we can test decrypt_pin_token with any encrypted data.
-        
+                                                                      // encrypt_pin_hash is one-way in practice (we don't have a decrypt_pin_hash)
+                                                                      // but we can test decrypt_pin_token with any encrypted data.
+
         // Let's test encrypt_pin (64 bytes)
         let pin = "123456";
         let enc_pin = session.encrypt_pin(pin).unwrap();
         assert_eq!(enc_pin.len(), 64);
-        
+
         let dec_pin = session.decrypt_pin_token(&enc_pin).unwrap();
         assert_eq!(dec_pin.len(), 64);
         assert_eq!(&dec_pin[..pin.len()], pin.as_bytes());
-        assert_eq!(&dec_pin[pin.len()..], &[0u8; 64-6][..]);
+        assert_eq!(&dec_pin[pin.len()..], &[0u8; 64 - 6][..]);
 
         // Test authenticate (HMAC-SHA256 truncated to 16 bytes)
         let msg = b"hello world";
