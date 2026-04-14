@@ -231,66 +231,30 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
     Ok(output)
 }
 
-/// HMAC-secret challenge-response using CTAP2 getAssertion with hmac-secret extension.
+/// Build the hmac-secret extension input for a getAssertion request.
 ///
-/// Protocol (per CTAP2 spec and fido2 hmac-secret extension):
-///   1. salt = SHA-256(challenge)  — 32-byte salt for hmac-secret
-///   2. getKeyAgreement (clientPIN subcommand 0x02) → device COSE P-256 public key
-///   3. Generate ephemeral P-256 keypair
-///   4. ECDH + SHA-256(x-coord) → shared_secret (32 bytes)
-///   5. saltEnc = AES-256-CBC(key=shared_secret, IV=0x00*16, data=salt)  — 32 bytes
-///   6. saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]  — 16-byte MAC
-///   7. Send getAssertion (0x02) CBOR with:
-///        rpId, clientDataHash, allowList[credentialId],
-///        extensions: {"hmac-secret": {1: ephemeralPub, 2: saltEnc, 3: saltAuth}}
-///   8. Parse authData from response; if ED flag set, decrypt the hmac-secret output:
-///        output = AES-256-CBC-decrypt(shared_secret, IV=0x00*16, encrypted_output)
-///   9. Print output as hex
-pub fn cmd_challenge_response(
-    hid: &impl HidDevice,
-    credential_id: &str,
+/// Performs steps 1–6 of the hmac-secret protocol:
+///   1. Compute salt = SHA-256(challenge)
+///   2–4. ECDH with device key → shared_secret + ephemeral COSE public key
+///   5. saltEnc = AES-256-CBC(key=shared_secret, IV=0x00×16, data=salt)
+///   6. saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
+///
+/// Returns the hmac-secret extension map `{1: keyAgreement, 2: saltEnc, 3: saltAuth}`
+/// and the shared_secret needed to decrypt the authenticator's response.
+fn prepare_hmac_secret_input(
+    cose_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
     challenge: &str,
-    host: &str,
-) -> Result<()> {
+) -> Result<(ciborium::value::Value, [u8; 32])> {
     use aes::cipher::{BlockModeEncrypt, KeyIvInit};
-    use ciborium::value::Value;
     use hmac::{Hmac, KeyInit as _, Mac as _};
-    use sha2::Digest as _;
-
-    // Decode hex credential ID
-    let cred_id_bytes = hex::decode(credential_id)
-        .map_err(|e| SoloError::DeviceError(format!("Invalid credential_id hex: {}", e)))?;
-
-    // ── Step 1: salt = SHA-256(challenge) ───────────────────────────────────
-    let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
-
-    // ── Step 2: getKeyAgreement (subcommand 0x02) ────────────────────────────
-    let get_ka_cbor = crate::ctap2::create_key_agreement_cbor();
-    let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
-    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
-        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
-
-    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
-
-    let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
-
-    let key_agreement = find_key_agreement_response(&resp_pairs)?;
-    let cose_pairs = match key_agreement {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::DeviceError(
-                "keyAgreement is not a CBOR map".into(),
-            ))
-        }
-    };
-
-    // ── Steps 3–4: ECDH → shared_secret + ephemeral COSE key ────────────────
-    let (shared_secret, ephemeral_cose_key) = derive_shared_secret(&cose_pairs)?;
 
     type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 
-    // ── Step 5: saltEnc = AES-256-CBC(shared_secret, IV=0, salt) ────────────
-    // salt is 32 bytes = 2 × 16-byte AES blocks, no padding needed
+    let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
+
+    let (shared_secret, ephemeral_cose_key) = derive_shared_secret(cose_pairs)?;
+
+    // saltEnc = AES-256-CBC(shared_secret, IV=0, salt) — 32 bytes (2 AES blocks)
     let mut salt_enc = [0u8; 32];
     {
         let mut blocks = [aes::Block::default(); 2];
@@ -304,21 +268,64 @@ pub fn cmd_challenge_response(
         }
     }
 
-    // ── Step 6: saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16] ──────
+    // saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
     let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
         .map_err(|e| SoloError::DeviceError(format!("HMAC init error: {}", e)))?;
     mac.update(&salt_enc);
     let mac_result = mac.finalize().into_bytes();
     let salt_auth = &mac_result[..16];
 
-    // ── Step 7: Build hmac-secret extension and getAssertion request ─────────
-    // hmac-secret extension input map: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
+    // hmac-secret extension input: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
     let hmac_secret_ext = int_map([
         (1, ephemeral_cose_key),
         (2, cbor_bytes(salt_enc.to_vec())),
         (3, cbor_bytes(salt_auth.to_vec())),
     ]);
 
+    Ok((hmac_secret_ext, shared_secret))
+}
+
+/// HMAC-secret challenge-response using CTAP2 getAssertion with hmac-secret extension.
+///
+/// Protocol (per CTAP2 spec and fido2 hmac-secret extension):
+///   1–6. Handled by `prepare_hmac_secret_input`: salt derivation, ECDH, encrypt+auth
+///   7. Send getAssertion (0x02) CBOR with:
+///        rpId, clientDataHash, allowList[credentialId],
+///        extensions: {"hmac-secret": {1: ephemeralPub, 2: saltEnc, 3: saltAuth}}
+///   8. Parse authData from response; if ED flag set, decrypt the hmac-secret output:
+///        output = AES-256-CBC-decrypt(shared_secret, IV=0x00*16, encrypted_output)
+///   9. Print output as hex
+pub fn cmd_challenge_response(
+    hid: &impl HidDevice,
+    credential_id: &str,
+    challenge: &str,
+    host: &str,
+) -> Result<()> {
+    use ciborium::value::Value;
+    use sha2::Digest as _;
+
+    // Decode hex credential ID
+    let cred_id_bytes = hex::decode(credential_id)
+        .map_err(|e| SoloError::DeviceError(format!("Invalid credential_id hex: {}", e)))?;
+
+    // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
+    let get_ka_cbor = crate::ctap2::create_key_agreement_cbor();
+    let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
+    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
+        .map_err(|e| SoloError::DeviceError(format!("CBOR encode error: {}", e)))?;
+
+    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
+    let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
+
+    let key_agreement = find_key_agreement_response(&resp_pairs)?;
+    let cose_pairs = match key_agreement {
+        Value::Map(p) => p,
+        _ => return Err(SoloError::DeviceError("keyAgreement is not a CBOR map".into())),
+    };
+
+    let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&cose_pairs, challenge)?;
+
+    // ── Step 7: Build and send getAssertion request ───────────────────────────
     // clientDataHash: fixed bytes (device does not verify for hmac-secret use)
     let client_data_hash: Vec<u8> = Sha256::digest(b"solo1_challenge_response").to_vec();
 
