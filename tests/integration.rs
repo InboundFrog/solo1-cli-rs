@@ -23,7 +23,7 @@ fn test_list_devices_no_hardware() {
 #[test]
 #[ignore]
 fn test_ping_hardware() {
-    let hid = SoloHid::open(None).expect("Failed to open Solo device");
+    let hid = SoloHid::open(None, std::time::Duration::from_secs(30)).expect("Failed to open Solo device");
     let data = b"hello";
     let response = hid
         .send_recv(solo1::device::CTAPHID_PING, data)
@@ -35,7 +35,7 @@ fn test_ping_hardware() {
 #[test]
 #[ignore]
 fn test_version_hardware() {
-    let hid = SoloHid::open(None).expect("Failed to open Solo device");
+    let hid = SoloHid::open(None, std::time::Duration::from_secs(30)).expect("Failed to open Solo device");
     let response = hid
         .send_recv(solo1::device::CMD_GET_VERSION, &[])
         .expect("Version command failed");

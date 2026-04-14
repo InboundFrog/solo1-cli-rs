@@ -7,6 +7,11 @@ use solo1::device::SoloHid;
 use solo1::error;
 
 fn main() {
+    ctrlc::set_handler(|| {
+        eprintln!("\nInterrupted.");
+        std::process::exit(130);
+    }).expect("failed to set Ctrl-C handler");
+
     let cli = Cli::parse();
 
     solo1::verbose::set_verbose(cli.verbose);
@@ -20,6 +25,8 @@ fn main() {
 }
 
 fn run(cli: Cli, json: bool) -> error::Result<()> {
+    let timeout = std::time::Duration::from_secs(cli.timeout);
+
     match cli.command {
         Commands::Version => {
             top::cmd_version();
@@ -52,11 +59,11 @@ fn run(cli: Cli, json: bool) -> error::Result<()> {
         }
 
         Commands::Key(key_args) => {
-            run_key_command(key_args.serial.as_deref(), key_args.command, json)?;
+            run_key_command(key_args.serial.as_deref(), key_args.command, json, timeout)?;
         }
 
         Commands::Program(prog_args) => {
-            run_program_command(prog_args.serial.as_deref(), prog_args.command)?;
+            run_program_command(prog_args.serial.as_deref(), prog_args.command, timeout)?;
         }
 
         Commands::Monitor { port } => {
@@ -66,11 +73,11 @@ fn run(cli: Cli, json: bool) -> error::Result<()> {
     Ok(())
 }
 
-fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool) -> error::Result<()> {
+fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: std::time::Duration) -> error::Result<()> {
     match cmd {
         KeyCommands::Rng { command } => {
             // Open device for all RNG subcommands
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             match command {
                 RngCommands::Hexbytes { num } => {
                     let hex = key::cmd_rng_hexbytes(&hid, num)?;
@@ -91,7 +98,7 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool) -> error:
             pin: _,
             prompt,
         } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
         }
 
@@ -102,27 +109,27 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool) -> error:
             user: _,
             pin: _,
         } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_challenge_response(&hid, &credential_id, &challenge, &host, json)?;
         }
 
         KeyCommands::Verify => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_verify(&hid, json)?;
         }
 
         KeyCommands::Version => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_key_version(&hid, json)?;
         }
 
         KeyCommands::Wink => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_wink(&hid)?;
         }
 
         KeyCommands::Ping { count, data } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             // Parse data as hex if it looks like hex, otherwise use as UTF-8 bytes
             let ping_data = if data.chars().all(|c| c.is_ascii_hexdigit()) && data.len() % 2 == 0 {
                 hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec())
@@ -133,27 +140,27 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool) -> error:
         }
 
         KeyCommands::Keyboard { data } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_keyboard(&hid, data.as_bytes())?;
         }
 
         KeyCommands::Reset => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_reset(&hid)?;
         }
 
         KeyCommands::ChangePin => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_change_pin(&hid)?;
         }
 
         KeyCommands::SetPin => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_set_pin(&hid)?;
         }
 
         KeyCommands::DisableUpdates => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_disable_updates(&hid)?;
         }
 
@@ -161,7 +168,7 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool) -> error:
             hash_type,
             filename,
         } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_probe(&hid, &hash_type, &filename)?;
         }
 
@@ -169,17 +176,17 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool) -> error:
             credential_id,
             filename,
         } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_sign_file(&hid, &credential_id, &filename)?;
         }
 
         KeyCommands::Update { firmware } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_update(&hid, firmware.as_deref())?;
         }
 
         KeyCommands::Credential { command } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             match command {
                 CredentialCommands::Info => {
                     key::credential::cmd_credential_info(&hid)?;
@@ -196,10 +203,10 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool) -> error:
     Ok(())
 }
 
-fn run_program_command(serial: Option<&str>, cmd: ProgramCommands) -> error::Result<()> {
+fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std::time::Duration) -> error::Result<()> {
     match cmd {
         ProgramCommands::Bootloader { firmware } => {
-            let hid = SoloHid::open_bootloader(serial)?;
+            let hid = SoloHid::open_bootloader(serial, timeout)?;
             program::cmd_program_bootloader(&hid, &firmware)?;
         }
 
@@ -209,7 +216,7 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands) -> error::Res
         }
 
         ProgramCommands::Aux { command } => {
-            let hid = SoloHid::open(serial)?;
+            let hid = SoloHid::open(serial, timeout)?;
             match command {
                 AuxCommands::EnterBootloader => aux::cmd_enter_bootloader(&hid)?,
                 AuxCommands::LeaveBootloader => aux::cmd_leave_bootloader(&hid)?,
@@ -249,4 +256,16 @@ fn run_monitor(port: &str) -> error::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_timeout_default_is_30() {
+        use clap::Parser;
+        let cli = Cli::try_parse_from(["solo1", "ls"]).unwrap();
+        assert_eq!(cli.timeout, 30);
+    }
 }

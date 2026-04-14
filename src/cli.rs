@@ -18,6 +18,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    /// Timeout in seconds for device responses (default: 30)
+    #[arg(long, global = true, default_value = "30")]
+    pub timeout: u64,
+
     #[command(subcommand)]
     pub command: Commands,
 }

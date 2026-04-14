@@ -44,7 +44,7 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
 
     // Reconnect in bootloader mode
     println!("Reconnecting...");
-    let bl_hid = SoloHid::open_bootloader(None)?;
+    let bl_hid = SoloHid::open_bootloader(None, std::time::Duration::from_secs(30))?;
 
     // Query bootloader version to select the correct signature.
     let signature = firmware::select_signature(&bl_hid, &fw_json)?;
