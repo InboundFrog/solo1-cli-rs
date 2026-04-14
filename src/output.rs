@@ -42,6 +42,10 @@ pub struct VerifyOutput {
     pub device_type: String,
     pub device_name: Option<String>,
     pub fingerprint: String,
+    /// Whether the attestation certificate's validity period has expired.
+    /// A genuine device may still have an expired cert; expiry is reported as
+    /// a warning rather than an authentication failure.
+    pub cert_expired: bool,
 }
 
 #[derive(Serialize)]
@@ -88,11 +92,26 @@ mod tests {
             device_type: "genuine".into(),
             device_name: Some("Solo v3".into()),
             fingerprint: "aabbcc".into(),
+            cert_expired: false,
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["device_type"], "genuine");
         assert_eq!(v["device_name"], "Solo v3");
+        assert_eq!(v["cert_expired"], false);
+    }
+
+    #[test]
+    fn verify_output_expired_cert_serializes() {
+        let out = VerifyOutput {
+            device_type: "genuine".into(),
+            device_name: Some("Solo v3".into()),
+            fingerprint: "aabbcc".into(),
+            cert_expired: true,
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["cert_expired"], true);
     }
 
     #[test]

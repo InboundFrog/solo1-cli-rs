@@ -50,7 +50,7 @@ fn extract_attestation_cert(response: &[u8]) -> Result<Vec<u8>> {
 /// DER-encoded attestation certificate from attStmt.x5c[0], SHA-256 fingerprints
 /// it, and compares against known fingerprints in crypto.rs.
 pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::crypto::{check_attestation_fingerprint, sha256_hex};
+    use crate::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
     use ciborium::value::Value;
     use hmac::{Hmac, KeyInit as _, Mac as _};
 
@@ -126,6 +126,11 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::crypto::AttestationResult;
     let result = check_attestation_fingerprint(&cert_der);
 
+    // Check certificate validity dates independently.  An expired cert on a
+    // genuine device is still informative — we warn rather than fail, because
+    // the fingerprint match is the primary authentication signal.
+    let cert_expired = check_cert_validity(&cert_der).is_err();
+
     if json {
         use crate::output::{VerifyOutput, print_json};
         let (device_type, device_name) = match &result {
@@ -137,10 +142,17 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
             device_type: device_type.to_string(),
             device_name,
             fingerprint: fingerprint.clone(),
+            cert_expired,
         });
     }
 
     println!("Attestation certificate SHA-256: {}", fingerprint);
+    if cert_expired {
+        println!(
+            "WARNING: Attestation certificate has expired. \
+             The device may still be genuine but the certificate is no longer valid."
+        );
+    }
     match result {
         AttestationResult::GenuineConsumer(name) => {
             println!("OK: Genuine SoloKeys device: {}", name);

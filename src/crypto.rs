@@ -2,12 +2,14 @@
 /// attestation fingerprint checking.
 use std::path::Path;
 
+use x509_cert::der::{Decode, Encode};
 use p256::{
     ecdsa::{SigningKey, VerifyingKey},
     pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey},
     SecretKey,
 };
 use sha2::{Digest, Sha256};
+use x509_cert::Certificate;
 
 use crate::error::{Result, SoloError};
 
@@ -146,6 +148,94 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
     }
 }
 
+// ---------------------------------------------------------------------------
+// SPKI fingerprint constants
+// ---------------------------------------------------------------------------
+//
+// TODO(0003): The SPKI fingerprint constants below are placeholders.  They
+// cannot be populated without running the tool against real hardware and
+// extracting the attestation certificate DER bytes, then computing:
+//
+//   `sha256_hex(&cert.tbs_certificate.subject_public_key_info.to_der()?)`
+//
+// See docs/reviews/20260414_0001/0003-attestation_chain_validation.md for
+// the full migration plan.  Until these constants are populated, SPKI-based
+// matching is NOT used for verification; the existing DER-fingerprint path
+// in `check_attestation_fingerprint` remains the authoritative check.
+//
+// NOT implemented (scope boundary):
+// - CRL or OCSP checking (requires network access)
+// - Full certificate chain validation (no root CA cert is stored in this repo)
+//
+// These are also documented in the issue referenced above.
+
+pub const SOLO_V3_SPKI_FINGERPRINT: &str = "";       // TODO(0003): populate from hardware
+pub const SOMU_SPKI_FINGERPRINT: &str = "";           // TODO(0003): populate from hardware
+pub const SOLO_SPKI_FINGERPRINT: &str = "";           // TODO(0003): populate from hardware
+pub const SOLO_TAP_SPKI_FINGERPRINT: &str = "";       // TODO(0003): populate from hardware
+pub const SOLO_HACKER_SPKI_FINGERPRINT: &str = "";    // TODO(0003): populate from hardware
+pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
+
+// ---------------------------------------------------------------------------
+// New certificate utility functions
+// ---------------------------------------------------------------------------
+
+/// Extract the SHA-256 fingerprint of the Subject Public Key Info (SPKI)
+/// from a DER-encoded X.509 certificate.
+///
+/// Unlike `sha256_hex(cert_der)` (which fingerprints the entire certificate),
+/// this function fingerprints only the `SubjectPublicKeyInfo` structure inside
+/// the TBSCertificate.  Two certificates for the same attestation key but with
+/// different validity dates or extensions will produce the **same** SPKI
+/// fingerprint and **different** full-DER fingerprints.
+///
+/// This is the building block for future SPKI pinning (see TODO(0003) above).
+pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
+    let cert = Certificate::from_der(cert_der)
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+    let spki_der = cert
+        .tbs_certificate
+        .subject_public_key_info
+        .to_der()
+        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {}", e)))?;
+    Ok(sha256_hex(&spki_der))
+}
+
+/// Check whether the current system time falls within the certificate's
+/// `notBefore`..=`notAfter` validity window.
+///
+/// Returns `Ok(())` if the certificate is currently valid.
+/// Returns `Err(SoloError::CryptoError(...))` if:
+/// - The certificate has expired (now > notAfter).
+/// - The certificate is not yet valid (now < notBefore).
+/// - The certificate cannot be parsed.
+///
+/// This check uses the local system clock and does not contact any external
+/// time service.  Clock skew on the host may produce false positives.
+pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
+    let cert = Certificate::from_der(cert_der)
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+
+    let validity = cert.tbs_certificate.validity;
+    let now = std::time::SystemTime::now();
+    let not_before = validity.not_before.to_system_time();
+    let not_after = validity.not_after.to_system_time();
+
+    if now < not_before {
+        return Err(SoloError::CryptoError(format!(
+            "Certificate is not yet valid (notBefore: {})",
+            validity.not_before
+        )));
+    }
+    if now > not_after {
+        return Err(SoloError::CryptoError(format!(
+            "Certificate has expired (notAfter: {})",
+            validity.not_after
+        )));
+    }
+    Ok(())
+}
+
 /// Websafe base64 encoding (RFC 4648 URL-safe, no padding).
 pub fn websafe_b64_encode(data: &[u8]) -> String {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -259,5 +349,146 @@ mod tests {
         assert!(hex::decode(SOLO_EMULATION_FINGERPRINT).is_ok());
         assert!(hex::decode(SOLO_FINGERPRINT).is_ok());
         assert_eq!(KNOWN_FINGERPRINTS.len(), 6);
+    }
+
+    // -----------------------------------------------------------------------
+    // Helpers and tests for extract_spki_fingerprint / check_cert_validity
+    // -----------------------------------------------------------------------
+
+    /// Generate a self-signed DER certificate with the given validity window,
+    /// using a freshly generated key pair.
+    ///
+    /// Returns `(der_bytes, key_pem)` so callers can reuse the same key.
+    #[cfg(test)]
+    fn make_test_cert_with_key(
+        not_before: time::OffsetDateTime,
+        not_after: time::OffsetDateTime,
+    ) -> (Vec<u8>, String) {
+        use rcgen::{CertificateParams, KeyPair};
+
+        let key_pair = KeyPair::generate().expect("key gen failed");
+        let key_pem = key_pair.serialize_pem();
+        let mut params = CertificateParams::default();
+        params.not_before = not_before;
+        params.not_after = not_after;
+        let cert = params.self_signed(&key_pair).expect("self_signed failed");
+        (cert.der().to_vec(), key_pem)
+    }
+
+    /// Generate a self-signed DER certificate with a given validity window,
+    /// reusing a specific PEM-encoded key pair.
+    #[cfg(test)]
+    fn make_test_cert_from_key(
+        not_before: time::OffsetDateTime,
+        not_after: time::OffsetDateTime,
+        key_pem: &str,
+    ) -> Vec<u8> {
+        use rcgen::{CertificateParams, KeyPair};
+
+        let key_pair = KeyPair::from_pem(key_pem).expect("key load failed");
+        let mut params = CertificateParams::default();
+        params.not_before = not_before;
+        params.not_after = not_after;
+        let cert = params.self_signed(&key_pair).expect("self_signed failed");
+        cert.der().to_vec()
+    }
+
+    #[test]
+    fn extract_spki_fingerprint_is_stable() {
+        // Two certs with the SAME key but DIFFERENT validity windows should
+        // have the same SPKI fingerprint but different full-DER fingerprints.
+        let now = time::OffsetDateTime::now_utc();
+        let past = now - time::Duration::days(365);
+        let future = now + time::Duration::days(365);
+        let far_future = now + time::Duration::days(730);
+
+        let (der1, key_pem) = make_test_cert_with_key(past, future);
+        let der2 = make_test_cert_from_key(past - time::Duration::days(10), far_future, &key_pem);
+
+        let spki_fp1 = extract_spki_fingerprint(&der1).expect("spki extract failed");
+        let spki_fp2 = extract_spki_fingerprint(&der2).expect("spki extract failed");
+
+        // Same key → same SPKI fingerprint
+        assert_eq!(spki_fp1, spki_fp2, "SPKI fingerprint should be key-stable");
+
+        // Different validity window → different full-DER fingerprint
+        let der_fp1 = sha256_hex(&der1);
+        let der_fp2 = sha256_hex(&der2);
+        assert_ne!(
+            der_fp1, der_fp2,
+            "Full DER fingerprint should differ between re-issued certs"
+        );
+    }
+
+    #[test]
+    fn check_cert_validity_valid() {
+        let now = time::OffsetDateTime::now_utc();
+        let (der, _) = make_test_cert_with_key(
+            now - time::Duration::days(1),
+            now + time::Duration::days(365),
+        );
+        assert!(
+            check_cert_validity(&der).is_ok(),
+            "Currently-valid cert should pass"
+        );
+    }
+
+    #[test]
+    fn check_cert_validity_expired() {
+        let now = time::OffsetDateTime::now_utc();
+        let (der, _) = make_test_cert_with_key(
+            now - time::Duration::days(730),
+            now - time::Duration::days(365),
+        );
+        let err = check_cert_validity(&der).expect_err("Expired cert should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("expired") || msg.contains("Expired"),
+            "Error should mention expiry, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn check_cert_validity_not_yet_valid() {
+        let now = time::OffsetDateTime::now_utc();
+        let (der, _) = make_test_cert_with_key(
+            now + time::Duration::days(1),
+            now + time::Duration::days(366),
+        );
+        let err = check_cert_validity(&der).expect_err("Not-yet-valid cert should fail");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not yet valid") || msg.contains("Not yet valid"),
+            "Error should mention not-yet-valid, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn spki_fingerprint_differs_from_der_fingerprint() {
+        let now = time::OffsetDateTime::now_utc();
+        let (der, _) = make_test_cert_with_key(
+            now - time::Duration::days(1),
+            now + time::Duration::days(365),
+        );
+        let spki_fp = extract_spki_fingerprint(&der).expect("spki extract failed");
+        let der_fp = sha256_hex(&der);
+        assert_ne!(
+            spki_fp, der_fp,
+            "SPKI fingerprint must differ from full-DER fingerprint"
+        );
+    }
+
+    #[test]
+    fn extract_spki_fingerprint_rejects_garbage() {
+        let result = extract_spki_fingerprint(b"not a certificate at all");
+        assert!(result.is_err(), "Garbage input should return Err");
+    }
+
+    #[test]
+    fn check_cert_validity_rejects_garbage() {
+        let result = check_cert_validity(b"not a certificate at all");
+        assert!(result.is_err(), "Garbage input should return Err");
     }
 }
