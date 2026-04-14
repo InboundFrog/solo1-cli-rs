@@ -481,10 +481,13 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 /// Remove a credential by ID.
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
 pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()> {
+    use base64::Engine as _;
     use hmac::{Hmac, KeyInit as _, Mac as _};
     use sha2::Sha256;
 
-    let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
+    let cred_id_bytes = base64::engine::general_purpose::STANDARD
+        .decode(credential_id)
+        .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {}", e)))?;
 
     // Confirmation prompt
     if !common::confirm(&format!(
@@ -508,8 +511,15 @@ pub fn cmd_credential_rm(hid: &impl HidDevice, credential_id: &str) -> Result<()
     let pin_token = pin_token.as_slice();
 
     // ── Step 1: deleteCredential (subcommand 0x06) ───────────────────────
-    // subCommandParams = CBOR({0x01: credentialId bytes})
-    let del_params = int_map([(0x01i64, cbor_bytes(cred_id_bytes))]);
+    // subCommandParams = CBOR({0x02: PublicKeyCredentialDescriptor})
+    // Key 0x01 (CM_subCommandRpId) is for rpIdHash in enumerateCredentials.
+    // Key 0x02 (CM_subCommandCred) is for the credential descriptor in deleteCredential.
+    // PublicKeyCredentialDescriptor = {"type": "public-key", "id": <bytes>}
+    let cred_descriptor = ciborium::value::Value::Map(vec![
+        (ciborium::value::Value::Text("type".into()), ciborium::value::Value::Text("public-key".into())),
+        (ciborium::value::Value::Text("id".into()), cbor_bytes(cred_id_bytes)),
+    ]);
+    let del_params = int_map([(0x02i64, cred_descriptor)]);
     let mut del_params_cbor: Vec<u8> = Vec::new();
     ciborium::ser::into_writer(&del_params, &mut del_params_cbor)
         .map_err(|e| SoloError::CborError(e.to_string()))?;
