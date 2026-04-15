@@ -4,6 +4,7 @@ use crate::commands::key::common;
 use crate::device::{HidDevice, CMD_GET_VERSION, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK};
 use crate::error::{Result, SoloError};
 use crate::firmware::FirmwareVersion;
+use crate::output::{print_json, PingOutput};
 
 /// Get firmware version from the device.
 pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
@@ -41,7 +42,7 @@ pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Send ping(s) and measure round-trip time.
-pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8]) -> Result<()> {
+pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Result<()> {
     for i in 0..count {
         let start = Instant::now();
         let response = hid.send_recv(CTAPHID_PING, data)?;
@@ -52,12 +53,21 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8]) -> Result<()> {
                 "Ping response data mismatch".into(),
             ));
         }
-        println!(
-            "Ping {}: {} bytes, RTT = {:.3}ms",
-            i + 1,
-            data.len(),
-            elapsed.as_secs_f64() * 1000.0
-        );
+
+        if json {
+            print_json(&PingOutput {
+                index: i + 1,
+                data_len: data.len(),
+                duration_ms: elapsed.as_secs_f64() * 1000.0,
+            })?;
+        } else {
+            println!(
+                "Ping {}: {} bytes, RTT = {:.3}ms",
+                i + 1,
+                data.len(),
+                elapsed.as_secs_f64() * 1000.0
+            );
+        }
     }
     Ok(())
 }
@@ -119,7 +129,7 @@ mod tests {
     fn test_cmd_ping_success_echo() {
         let data = vec![0x01u8, 0x02, 0x03, 0x04];
         let device = MockDevice::new(vec![Ok(data.clone())]);
-        let result = cmd_ping(&device, 1, &data);
+        let result = cmd_ping(&device, 1, &data, false);
         assert!(result.is_ok());
     }
 
@@ -129,7 +139,7 @@ mod tests {
         let sent = vec![0x01u8, 0x02, 0x03];
         let received = vec![0xFF, 0xFE, 0xFD];
         let device = MockDevice::new(vec![Ok(received)]);
-        let result = cmd_ping(&device, 1, &sent);
+        let result = cmd_ping(&device, 1, &sent, false);
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
@@ -143,7 +153,7 @@ mod tests {
     #[test]
     fn test_cmd_ping_timeout() {
         let device = MockDevice::new(vec![]);
-        let result = cmd_ping(&device, 1, &[0xAA]);
+        let result = cmd_ping(&device, 1, &[0xAA], false);
         assert!(matches!(result.unwrap_err(), SoloError::Timeout));
     }
 
@@ -152,7 +162,7 @@ mod tests {
     fn test_cmd_ping_count_zero() {
         // No responses queued — if any send_recv is called, it would return Timeout.
         let device = MockDevice::new(vec![]);
-        let result = cmd_ping(&device, 0, &[0x01, 0x02]);
+        let result = cmd_ping(&device, 0, &[0x01, 0x02], false);
         assert!(result.is_ok());
     }
 
