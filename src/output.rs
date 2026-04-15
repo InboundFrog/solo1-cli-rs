@@ -68,6 +68,31 @@ pub struct GenKeyOutput {
     pub public_key: String,
 }
 
+#[derive(Serialize)]
+pub struct RngOutput {
+    pub bytes: String,
+}
+
+#[derive(Serialize)]
+pub struct CredentialInfoOutput {
+    pub versions: Vec<String>,
+    pub extensions: Vec<String>,
+    pub aaguid: String,
+    pub options: std::collections::HashMap<String, bool>,
+    pub max_msg_size: Option<u64>,
+    pub pin_uv_auth_protocols: Vec<u64>,
+    pub max_credential_count_in_list: Option<u64>,
+    pub max_credential_id_length: Option<u64>,
+    pub remaining_discoverable_credentials: Option<u64>,
+}
+
+#[derive(Serialize)]
+pub struct PingOutput {
+    pub index: u32,
+    pub data_len: usize,
+    pub duration_ms: f64,
+}
+
 /// Serialize `value` to pretty JSON and print to stdout.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)
