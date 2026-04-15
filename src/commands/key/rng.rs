@@ -87,7 +87,7 @@ mod tests {
     #[test]
     fn test_cmd_rng_hexbytes_valid_response() {
         let rng_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        let device = MockDevice::new(vec![Ok(rng_bytes.clone())]);
+        let device = MockDevice::new(vec![Ok(rng_bytes)]);
         let hex = cmd_rng_hexbytes(&device, 4).unwrap();
         assert_eq!(hex, "deadbeef");
         assert_eq!(hex.len(), 8); // 4 bytes × 2 hex chars each

@@ -5,6 +5,7 @@ use solo1::cli::{
 use solo1::commands::{aux, key, program, top};
 use solo1::device::SoloHid;
 use solo1::error;
+use solo1::output;
 
 fn main() {
     ctrlc::set_handler(|| {
@@ -80,7 +81,11 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: 
             match command {
                 RngCommands::Hexbytes { num } => {
                     let hex = key::cmd_rng_hexbytes(&hid, num)?;
-                    println!("{}", hex);
+                    if json {
+                        output::print_json(&output::RngOutput { bytes: hex })?;
+                    } else {
+                        println!("{}", hex);
+                    }
                 }
                 RngCommands::Raw => {
                     key::cmd_rng_raw(&hid)?;
@@ -125,7 +130,7 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: 
             } else {
                 data.as_bytes().to_vec()
             };
-            key::cmd_ping(&hid, count, &ping_data)?;
+            key::cmd_ping(&hid, count, &ping_data, json)?;
         }
 
         KeyCommands::Keyboard { data } => {
@@ -178,7 +183,7 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: 
             let hid = SoloHid::open(serial, timeout)?;
             match command {
                 CredentialCommands::Info => {
-                    key::credential::cmd_credential_info(&hid)?;
+                    key::credential::cmd_credential_info(&hid, json)?;
                 }
                 CredentialCommands::Ls => {
                     key::credential::cmd_credential_ls(&hid, json)?;
