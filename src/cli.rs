@@ -14,10 +14,6 @@ pub struct Cli {
     #[arg(long, short = 'v', global = true)]
     pub verbose: bool,
 
-    /// Output results as JSON (for scripting)
-    #[arg(long, global = true)]
-    pub json: bool,
-
     /// Timeout in seconds for device responses (default: 30)
     #[arg(long, global = true, default_value = "30")]
     pub timeout: u64,
@@ -29,7 +25,11 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Commands {
     /// Print library version
-    Version,
+    Version {
+        /// Output results as JSON (for scripting)
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Generate ECDSA P-256 keypair (PEM)
     Genkey {
@@ -40,6 +40,10 @@ pub enum Commands {
         /// File to read additional entropy from
         #[arg(long)]
         entropy: Option<PathBuf>,
+
+        /// Output results as JSON (for scripting)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Sign firmware hex file, output JSON {firmware, signature}
@@ -71,7 +75,11 @@ pub enum Commands {
     },
 
     /// List connected Solo devices
-    Ls,
+    Ls {
+        /// Output results as JSON (for scripting)
+        #[arg(long)]
+        json: bool,
+    },
 
     /// Key interaction commands
     Key(KeyArgs),
@@ -96,6 +104,10 @@ pub struct KeyArgs {
     /// Use UDP transport (for simulation)
     #[arg(long)]
     pub udp: bool,
+
+    /// Output results as JSON (for scripting)
+    #[arg(long, global = true)]
+    pub json: bool,
 
     #[command(subcommand)]
     pub command: KeyCommands,

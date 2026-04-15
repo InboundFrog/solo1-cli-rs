@@ -16,23 +16,22 @@ fn main() {
 
     solo1::verbose::set_verbose(cli.verbose);
 
-    let json = cli.json;
-    let result = run(cli, json);
+    let result = run(cli);
     if let Err(e) = result {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
 }
 
-fn run(cli: Cli, json: bool) -> error::Result<()> {
+fn run(cli: Cli) -> error::Result<()> {
     let timeout = std::time::Duration::from_secs(cli.timeout);
 
     match cli.command {
-        Commands::Version => {
+        Commands::Version { json } => {
             top::cmd_version(json)?;
         }
 
-        Commands::Genkey { output, entropy } => {
+        Commands::Genkey { output, entropy, json } => {
             top::cmd_genkey(output.as_deref(), entropy.as_deref(), json)?;
         }
 
@@ -54,12 +53,12 @@ fn run(cli: Cli, json: bool) -> error::Result<()> {
             )?;
         }
 
-        Commands::Ls => {
+        Commands::Ls { json } => {
             top::cmd_ls(json)?;
         }
 
         Commands::Key(key_args) => {
-            run_key_command(key_args.serial.as_deref(), key_args.command, json, timeout)?;
+            run_key_command(key_args.serial.as_deref(), key_args.command, key_args.json, timeout)?;
         }
 
         Commands::Program(prog_args) => {

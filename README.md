@@ -40,8 +40,9 @@ Global options:
 | Flag                  | Description                                                  |
 |-----------------------|--------------------------------------------------------------|
 | `-v`, `--verbose`     | Enable verbose output (HID frames, bootloader packets, etc.) |
-| `--json`              | Output results as JSON (for scripting)                       |
 | `--timeout <SECS>`    | Timeout in seconds for device responses (default: 30)        |
+
+`--json` is available on commands that produce structured output (`version`, `genkey`, `ls`, and all `key` subcommands). Commands that always output JSON (`sign`) or produce no structured output (`mergehex`, `monitor`, `program`) do not expose this flag.
 
 ---
 
@@ -50,13 +51,13 @@ Global options:
 ### Version
 
 ```sh
-solo1 version                            # Print library version
+solo1 version [--json]                   # Print library version
 ```
 
 ### Device discovery
 
 ```sh
-solo1 ls                                 # List connected Solo devices
+solo1 ls [--json]                        # List connected Solo devices
 ```
 
 ### Key commands (`solo1 key [--serial <SN>] [--udp]`)
@@ -124,7 +125,7 @@ solo1 program aux bootloader-version
 
 ```sh
 # Generate ECDSA P-256 keypair (PEM)
-solo1 genkey [-o OUTPUT] [--entropy FILE]
+solo1 genkey [-o OUTPUT] [--entropy FILE] [--json]
 
 # Sign firmware HEX file, output JSON {firmware, signature}
 solo1 sign <KEY.pem> <firmware.hex>
