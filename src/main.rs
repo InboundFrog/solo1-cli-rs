@@ -29,7 +29,7 @@ fn run(cli: Cli, json: bool) -> error::Result<()> {
 
     match cli.command {
         Commands::Version => {
-            top::cmd_version();
+            top::cmd_version(json)?;
         }
 
         Commands::Genkey { output, entropy } => {

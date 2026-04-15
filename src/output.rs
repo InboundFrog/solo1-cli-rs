@@ -56,6 +56,12 @@ pub struct VersionOutput {
     pub firmware_version: String,
 }
 
+#[derive(Serialize)]
+pub struct CliVersionOutput {
+    pub name: String,
+    pub version: String,
+}
+
 /// Serialize `value` to pretty JSON and print to stdout.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)
@@ -125,5 +131,53 @@ mod tests {
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["devices"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn challenge_response_output_serializes() {
+        let out = ChallengeResponseOutput {
+            hmac_output: "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20".into(),
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["hmac_output"], "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+    }
+
+    #[test]
+    fn version_output_serializes() {
+        let out = VersionOutput { firmware_version: "4.1.2".into() };
+        let json = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["firmware_version"], "4.1.2");
+    }
+
+    #[test]
+    fn list_output_non_empty_serializes() {
+        let out = ListOutput {
+            devices: vec![DeviceInfo {
+                path: "/dev/hid123".into(),
+                serial: Some("ABC-123".into()),
+                product: Some("SoloKeys Solo".into()),
+                manufacturer: Some("SoloKeys".into()),
+            }],
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["devices"][0]["path"], "/dev/hid123");
+        assert_eq!(v["devices"][0]["serial"], "ABC-123");
+        assert_eq!(v["devices"][0]["product"], "SoloKeys Solo");
+        assert_eq!(v["devices"][0]["manufacturer"], "SoloKeys");
+    }
+
+    #[test]
+    fn cli_version_output_serializes() {
+        let out = CliVersionOutput {
+            name: "solo1-cli-rs".into(),
+            version: "1.2.3".into(),
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["name"], "solo1-cli-rs");
+        assert_eq!(v["version"], "1.2.3");
     }
 }

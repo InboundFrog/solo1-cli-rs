@@ -9,8 +9,17 @@ use crate::firmware::{
 };
 
 /// Print the library version.
-pub fn cmd_version() {
+pub fn cmd_version(json: bool) -> Result<()> {
+    if json {
+        use crate::output::{CliVersionOutput, print_json};
+        let out = CliVersionOutput {
+            name: "solo1-cli-rs".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+        };
+        return print_json(&out);
+    }
     println!("solo1-cli-rs {}", env!("CARGO_PKG_VERSION"));
+    Ok(())
 }
 
 /// Generate an ECDSA P-256 keypair.
