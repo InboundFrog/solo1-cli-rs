@@ -33,7 +33,7 @@ fn run(cli: Cli, json: bool) -> error::Result<()> {
         }
 
         Commands::Genkey { output, entropy } => {
-            top::cmd_genkey(output.as_deref(), entropy.as_deref())?;
+            top::cmd_genkey(output.as_deref(), entropy.as_deref(), json)?;
         }
 
         Commands::Sign { key, firmware_hex } => {

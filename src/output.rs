@@ -62,6 +62,12 @@ pub struct CliVersionOutput {
     pub version: String,
 }
 
+#[derive(Serialize)]
+pub struct GenKeyOutput {
+    pub private_key: String,
+    pub public_key: String,
+}
+
 /// Serialize `value` to pretty JSON and print to stdout.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)
@@ -179,5 +185,17 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["name"], "solo1-cli-rs");
         assert_eq!(v["version"], "1.2.3");
+    }
+
+    #[test]
+    fn gen_key_output_serializes() {
+        let out = GenKeyOutput {
+            private_key: "-----BEGIN PRIVATE KEY-----...".into(),
+            public_key: "-----BEGIN PUBLIC KEY-----...".into(),
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["private_key"], "-----BEGIN PRIVATE KEY-----...");
+        assert_eq!(v["public_key"], "-----BEGIN PUBLIC KEY-----...");
     }
 }

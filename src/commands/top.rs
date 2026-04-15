@@ -24,7 +24,7 @@ pub fn cmd_version(json: bool) -> Result<()> {
 
 /// Generate an ECDSA P-256 keypair.
 /// Writes the private key to `output` (or stdout) and prints the public key.
-pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>) -> Result<()> {
+pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool) -> Result<()> {
     // Optionally seed additional entropy (informational; ring/p256 use OS RNG)
     if let Some(entropy_path) = entropy_file {
         eprintln!(
@@ -35,6 +35,15 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>) -> Result<
     }
 
     let (priv_pem, pub_pem) = generate_keypair()?;
+
+    if json {
+        use crate::output::{print_json, GenKeyOutput};
+        let out = GenKeyOutput {
+            private_key: priv_pem,
+            public_key: pub_pem,
+        };
+        return print_json(&out);
+    }
 
     if let Some(out_path) = output {
         std::fs::write(out_path, &priv_pem)?;
