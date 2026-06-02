@@ -32,7 +32,7 @@ fn test_ping_hardware() {
     assert_eq!(response, data, "Ping response should match sent data");
 }
 
-/// Get firmware version (requires hardware).
+/// Get the firmware version (requires hardware).
 #[test]
 #[ignore]
 fn test_version_hardware() {
