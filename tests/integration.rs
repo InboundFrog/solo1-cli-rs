@@ -396,7 +396,7 @@ fn test_known_fingerprints_validity() {
 
     for (fp, name) in KNOWN_FINGERPRINTS {
         let bytes =
-            hex::decode(fp).expect(&format!("fingerprint for '{}' should be valid hex", name));
+            hex::decode(fp).unwrap_or_else(|_| panic!("fingerprint for '{}' should be valid hex", name));
         assert_eq!(
             bytes.len(),
             32,
