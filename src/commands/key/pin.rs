@@ -14,10 +14,10 @@ use crate::error::{Result, SoloError};
 ///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
 pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
-    let old_pin = rpassword::prompt_password("Current PIN: ").map_err(|e| SoloError::IoError(e))?;
-    let new_pin = rpassword::prompt_password("New PIN: ").map_err(|e| SoloError::IoError(e))?;
+    let old_pin = rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?;
+    let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
     let confirm_pin =
-        rpassword::prompt_password("Confirm new PIN: ").map_err(|e| SoloError::IoError(e))?;
+        rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?;
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
@@ -80,9 +80,9 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 ///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
 pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
-    let new_pin = rpassword::prompt_password("New PIN: ").map_err(|e| SoloError::IoError(e))?;
+    let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
     let confirm_pin =
-        rpassword::prompt_password("Confirm PIN: ").map_err(|e| SoloError::IoError(e))?;
+        rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?;
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
