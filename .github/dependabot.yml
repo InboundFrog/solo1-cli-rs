@@ -1,0 +1,15 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # p256 0.13 / elliptic-curve 0.13 are still on rand_core 0.6.
+      # rand 0.9 brings rand_core 0.9 and breaks p256's CryptoRng /
+      # RngCore trait bounds. Stay on rand 0.8.x (patch-only) until
+      # the RustCrypto stack moves to rand_core 0.9 (p256 0.14+).
+      - dependency-name: rand
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
