@@ -121,7 +121,11 @@ mod tests {
         let err = cmd_rng_hexbytes(&device, 256).unwrap_err();
         assert!(matches!(err, SoloError::ProtocolError(_)));
         let msg = err.to_string();
-        assert!(msg.contains("256"), "error should mention the bad value: {}", msg);
+        assert!(
+            msg.contains("256"),
+            "error should mention the bad value: {}",
+            msg
+        );
     }
 
     /// Device timeout propagates as SoloError::Timeout.
@@ -139,6 +143,8 @@ mod tests {
         let device = MockDevice::new(vec![Ok(rng_bytes)]);
         let hex = cmd_rng_hexbytes(&device, 3).unwrap();
         assert_eq!(hex, "abcdef");
-        assert!(hex.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(hex
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
     }
 }

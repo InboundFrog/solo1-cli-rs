@@ -1,7 +1,7 @@
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, int_map};
 use crate::ctap2::{
-    extract_cose_coord, find_key_agreement_response,
-    parse_cbor_map_response, prompt_and_get_pin_token, CTAP2_AES_IV,
+    extract_cose_coord, find_key_agreement_response, parse_cbor_map_response,
+    prompt_and_get_pin_token, CTAP2_AES_IV,
 };
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -19,7 +19,13 @@ use sha2::{Digest, Sha256};
 ///
 /// Parses the authData from the response to extract the credential ID,
 /// then prints it as hex for use with `challenge-response` and `sign-file`.
-pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt: &str, json: bool) -> Result<()> {
+pub fn cmd_make_credential(
+    hid: &impl HidDevice,
+    host: &str,
+    user: &str,
+    prompt: &str,
+    json: bool,
+) -> Result<()> {
     use ciborium::value::Value;
     use rand::RngCore;
 
@@ -80,10 +86,7 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
             0x06,
             Value::Map(vec![(cbor_text("hmac-secret"), Value::Bool(true))]),
         ),
-        (
-            0x07,
-            Value::Map(vec![(cbor_text("rk"), Value::Bool(true))]),
-        ),
+        (0x07, Value::Map(vec![(cbor_text("rk"), Value::Bool(true))])),
     ];
     if let Some(auth_param) = pin_uv_auth {
         cbor_entries.push((0x08, cbor_bytes(auth_param)));
@@ -158,8 +161,10 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     let credential_id = &auth_data[cred_id_start..cred_id_end];
 
     if json {
-        use crate::output::{MakeCredentialOutput, print_json};
-        return print_json(&MakeCredentialOutput { credential_id: hex::encode(credential_id) });
+        use crate::output::{print_json, MakeCredentialOutput};
+        return print_json(&MakeCredentialOutput {
+            credential_id: hex::encode(credential_id),
+        });
     }
     println!("{}", hex::encode(credential_id));
 
@@ -224,11 +229,11 @@ fn ecdh_key_agreement(
         .to_vec();
 
     let ephemeral_cose_key = int_map([
-        (1,  cbor_int(2)),           // kty = EC2
-        (3,  cbor_int(-7)),          // alg = ES256
-        (-1, cbor_int(1)),           // crv = P-256
-        (-2, cbor_bytes(eph_x)),     // x
-        (-3, cbor_bytes(eph_y)),     // y
+        (1, cbor_int(2)),        // kty = EC2
+        (3, cbor_int(-7)),       // alg = ES256
+        (-1, cbor_int(1)),       // crv = P-256
+        (-2, cbor_bytes(eph_x)), // x
+        (-3, cbor_bytes(eph_y)), // y
     ]);
 
     Ok((shared_secret, ephemeral_cose_key))
@@ -297,8 +302,7 @@ fn prepare_hmac_secret_input(
         for (i, chunk) in salt.chunks_exact(16).enumerate() {
             blocks[i] = (*chunk).try_into().unwrap();
         }
-        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into())
-            .encrypt_blocks(&mut blocks);
+        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
         for (i, block) in blocks.iter().enumerate() {
             salt_enc[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
         }
@@ -356,7 +360,11 @@ pub fn cmd_challenge_response(
     let key_agreement = find_key_agreement_response(&resp_pairs)?;
     let cose_pairs = match key_agreement {
         Value::Map(p) => p,
-        _ => return Err(SoloError::MalformedResponse("keyAgreement is not a CBOR map".into())),
+        _ => {
+            return Err(SoloError::MalformedResponse(
+                "keyAgreement is not a CBOR map".into(),
+            ))
+        }
     };
 
     let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&cose_pairs, challenge)?;
@@ -459,8 +467,10 @@ pub fn cmd_challenge_response(
 
     // ── Step 9: Print the HMAC output as hex ────────────────────────────────
     if json {
-        use crate::output::{ChallengeResponseOutput, print_json};
-        return print_json(&ChallengeResponseOutput { hmac_output: hex::encode(&hmac_output[..32]) });
+        use crate::output::{print_json, ChallengeResponseOutput};
+        return print_json(&ChallengeResponseOutput {
+            hmac_output: hex::encode(&hmac_output[..32]),
+        });
     }
     println!("{}", hex::encode(&hmac_output[..32]));
 
@@ -515,8 +525,8 @@ fn ecdh_key_agreement_with_scalar(
         .to_vec();
 
     let ephemeral_cose_key = int_map([
-        (1,  cbor_int(2)),
-        (3,  cbor_int(-7)),
+        (1, cbor_int(2)),
+        (3, cbor_int(-7)),
         (-1, cbor_int(1)),
         (-2, cbor_bytes(eph_x)),
         (-3, cbor_bytes(eph_y)),
@@ -548,8 +558,7 @@ fn prepare_hmac_secret_input_with_scalar(
         for (i, chunk) in salt.chunks_exact(16).enumerate() {
             blocks[i] = (*chunk).try_into().unwrap();
         }
-        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into())
-            .encrypt_blocks(&mut blocks);
+        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
         for (i, block) in blocks.iter().enumerate() {
             salt_enc[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
         }
@@ -626,8 +635,7 @@ mod tests {
 
         // Device → platform: device computes DH with platform_pub
         let dev_scalar = dev_secret.to_nonzero_scalar();
-        let dev_shared_point =
-            p256::ecdh::diffie_hellman(&dev_scalar, platform_pub.as_affine());
+        let dev_shared_point = p256::ecdh::diffie_hellman(&dev_scalar, platform_pub.as_affine());
         let dev_shared: [u8; 32] = Sha256::digest(dev_shared_point.raw_secret_bytes()).into();
 
         assert_eq!(
@@ -640,8 +648,8 @@ mod tests {
     /// and that its coordinates correspond to the platform scalar used.
     #[test]
     fn ecdh_key_agreement_cose_key_is_correct() {
-        use rand::rngs::OsRng;
         use p256::EncodedPoint;
+        use rand::rngs::OsRng;
 
         let dev_secret = p256::SecretKey::random(&mut OsRng);
         let dev_pub = dev_secret.public_key();
@@ -654,9 +662,8 @@ mod tests {
         let expected_y = expected_point.y().unwrap().to_vec();
 
         let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
-        let (_shared, cose_key) =
-            ecdh_key_agreement_with_scalar(&dev_cose_pairs, platform_scalar)
-                .expect("ecdh_key_agreement_with_scalar failed");
+        let (_shared, cose_key) = ecdh_key_agreement_with_scalar(&dev_cose_pairs, platform_scalar)
+            .expect("ecdh_key_agreement_with_scalar failed");
 
         let cose_pairs = match cose_key {
             Value::Map(p) => p,
@@ -669,19 +676,27 @@ mod tests {
         let kty_val = cose_pairs.iter().find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: i64 = (*i).try_into().ok()?;
-                if ki == 1 { Some(v.clone()) } else { None }
-            } else { None }
+                if ki == 1 {
+                    Some(v.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         });
-        assert_eq!(kty_val, Some(Value::Integer(2i64.into())), "kty must be 2 (EC2)");
+        assert_eq!(
+            kty_val,
+            Some(Value::Integer(2i64.into())),
+            "kty must be 2 (EC2)"
+        );
 
         // x coordinate
-        let got_x = find_bytes_by_int_key(&cose_pairs, -2)
-            .expect("COSE key missing x (-2)");
+        let got_x = find_bytes_by_int_key(&cose_pairs, -2).expect("COSE key missing x (-2)");
         assert_eq!(got_x, expected_x, "COSE key x coordinate mismatch");
 
         // y coordinate
-        let got_y = find_bytes_by_int_key(&cose_pairs, -3)
-            .expect("COSE key missing y (-3)");
+        let got_y = find_bytes_by_int_key(&cose_pairs, -3).expect("COSE key missing y (-3)");
         assert_eq!(got_y, expected_y, "COSE key y coordinate mismatch");
     }
 
@@ -734,13 +749,11 @@ mod tests {
         assert!(has_key(3), "hmac-secret map missing key 3 (saltAuth)");
 
         // saltEnc must be 32 bytes
-        let salt_enc = find_bytes_by_int_key(&ext_pairs, 2)
-            .expect("saltEnc (key 2) missing");
+        let salt_enc = find_bytes_by_int_key(&ext_pairs, 2).expect("saltEnc (key 2) missing");
         assert_eq!(salt_enc.len(), 32, "saltEnc must be 32 bytes");
 
         // saltAuth must be 16 bytes
-        let salt_auth = find_bytes_by_int_key(&ext_pairs, 3)
-            .expect("saltAuth (key 3) missing");
+        let salt_auth = find_bytes_by_int_key(&ext_pairs, 3).expect("saltAuth (key 3) missing");
         assert_eq!(salt_auth.len(), 16, "saltAuth must be 16 bytes");
 
         // Decrypt saltEnc and verify it equals SHA-256(challenge)
@@ -756,11 +769,14 @@ mod tests {
                 decrypted[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
             }
         }
-        assert_eq!(decrypted, expected_salt, "Decrypted saltEnc must equal SHA-256(challenge)");
+        assert_eq!(
+            decrypted, expected_salt,
+            "Decrypted saltEnc must equal SHA-256(challenge)"
+        );
 
         // Recompute saltAuth and verify it matches
-        let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
-            .expect("HMAC init failed");
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(shared_secret.as_slice()).expect("HMAC init failed");
         mac.update(&salt_enc);
         let mac_result = mac.finalize().into_bytes();
         let expected_salt_auth = &mac_result[..16];
@@ -791,10 +807,8 @@ mod tests {
 
         // Device computes the same shared secret from the platform's public key
         let dev_scalar = dev_secret.to_nonzero_scalar();
-        let dev_shared_point =
-            p256::ecdh::diffie_hellman(&dev_scalar, platform_pub.as_affine());
-        let device_shared: [u8; 32] =
-            Sha256::digest(dev_shared_point.raw_secret_bytes()).into();
+        let dev_shared_point = p256::ecdh::diffie_hellman(&dev_scalar, platform_pub.as_affine());
+        let device_shared: [u8; 32] = Sha256::digest(dev_shared_point.raw_secret_bytes()).into();
 
         assert_eq!(
             platform_shared, device_shared,

@@ -9,8 +9,8 @@ use crate::error::{Result, SoloError};
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
 pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use ciborium::value::Value;
     use crate::output::{print_json, CredentialInfoOutput};
+    use ciborium::value::Value;
     use std::collections::HashMap;
 
     // CTAP2 getInfo
@@ -21,12 +21,18 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     let mut versions = Vec::new();
     if let Some(Value::Array(v)) = find_cbor_response_by_key(&pairs, 0x01) {
-        versions = extract_cbor_text_responses(&v).into_iter().map(|s| s.to_string()).collect();
+        versions = extract_cbor_text_responses(&v)
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
     }
 
     let mut extensions = Vec::new();
     if let Some(Value::Array(e)) = find_cbor_response_by_key(&pairs, 0x02) {
-        extensions = extract_cbor_text_responses(&e).into_iter().map(|s| s.to_string()).collect();
+        extensions = extract_cbor_text_responses(&e)
+            .into_iter()
+            .map(|s| s.to_string())
+            .collect();
     }
 
     let mut aaguid = String::new();
@@ -43,14 +49,13 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         }
     }
 
-    let max_msg_size = find_cbor_response_by_key(&pairs, 0x05)
-        .and_then(|v| {
-            if let Value::Integer(n) = v {
-                (*n).try_into().ok()
-            } else {
-                None
-            }
-        });
+    let max_msg_size = find_cbor_response_by_key(&pairs, 0x05).and_then(|v| {
+        if let Value::Integer(n) = v {
+            (*n).try_into().ok()
+        } else {
+            None
+        }
+    });
 
     let mut pin_uv_auth_protocols = Vec::new();
     if let Some(Value::Array(protos)) = find_cbor_response_by_key(&pairs, 0x06) {
@@ -63,26 +68,24 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         }
     }
 
-    let max_credential_count_in_list = find_cbor_response_by_key(&pairs, 0x07)
-        .and_then(|v| {
-            if let Value::Integer(n) = v {
-                (*n).try_into().ok()
-            } else {
-                None
-            }
-        });
+    let max_credential_count_in_list = find_cbor_response_by_key(&pairs, 0x07).and_then(|v| {
+        if let Value::Integer(n) = v {
+            (*n).try_into().ok()
+        } else {
+            None
+        }
+    });
 
-    let max_credential_id_length = find_cbor_response_by_key(&pairs, 0x08)
-        .and_then(|v| {
-            if let Value::Integer(n) = v {
-                (*n).try_into().ok()
-            } else {
-                None
-            }
-        });
+    let max_credential_id_length = find_cbor_response_by_key(&pairs, 0x08).and_then(|v| {
+        if let Value::Integer(n) = v {
+            (*n).try_into().ok()
+        } else {
+            None
+        }
+    });
 
-    let remaining_discoverable_credentials = find_cbor_response_by_key(&pairs, 0x0A)
-        .and_then(|v| {
+    let remaining_discoverable_credentials =
+        find_cbor_response_by_key(&pairs, 0x0A).and_then(|v| {
             if let Value::Integer(n) = v {
                 (*n).try_into().ok()
             } else {
@@ -112,7 +115,10 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
     println!("AAGUID:                         {}", aaguid);
     if !options.is_empty() {
-        let mut opt_strs: Vec<String> = options.iter().map(|(k, v)| format!("{}: {}", k, v)).collect();
+        let mut opt_strs: Vec<String> = options
+            .iter()
+            .map(|(k, v)| format!("{}: {}", k, v))
+            .collect();
         opt_strs.sort();
         println!("Options:                        {}", opt_strs.join(", "));
     }
@@ -120,7 +126,10 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         println!("Max message size:               {}", size);
     }
     if !pin_uv_auth_protocols.is_empty() {
-        let proto_strs: Vec<String> = pin_uv_auth_protocols.iter().map(|n| n.to_string()).collect();
+        let proto_strs: Vec<String> = pin_uv_auth_protocols
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
         println!("PIN/UV auth protocols:          {}", proto_strs.join(", "));
     }
     if let Some(c) = max_credential_count_in_list {
@@ -166,7 +175,7 @@ fn send_cred_mgmt(
     if let Some(p) = params {
         entries.push((0x02, p)); // subCommandParams
     }
-    entries.push((0x03, cbor_int(1)));        // pinUvAuthProtocol = 1
+    entries.push((0x03, cbor_int(1))); // pinUvAuthProtocol = 1
     entries.push((0x04, cbor_bytes(pin_uv))); // pinUvAuthParam
 
     let cm_cbor = int_map(entries);
@@ -193,9 +202,12 @@ fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> 
 /// Returns an empty vec if the response contains only a success status byte
 /// with no CBOR payload. Returns `Err` for any non-zero status byte or
 /// malformed CBOR.
-fn parse_cm_response(resp: Vec<u8>, ctx: &str) -> Result<Vec<(ciborium::value::Value, ciborium::value::Value)>> {
-    use ciborium::value::Value;
+fn parse_cm_response(
+    resp: Vec<u8>,
+    ctx: &str,
+) -> Result<Vec<(ciborium::value::Value, ciborium::value::Value)>> {
     use crate::ctap2::ctap2_status_message;
+    use ciborium::value::Value;
     if resp.is_empty() {
         return Err(SoloError::MalformedResponse(format!(
             "Empty response from {}",
@@ -205,13 +217,16 @@ fn parse_cm_response(resp: Vec<u8>, ctx: &str) -> Result<Vec<(ciborium::value::V
     let status = resp[0];
     if status != 0x00 {
         let message = ctap2_status_message(status);
-        return Err(SoloError::AuthenticatorError { code: status, message });
+        return Err(SoloError::AuthenticatorError {
+            code: status,
+            message,
+        });
     }
     if resp.len() == 1 {
         return Ok(vec![]);
     }
-    let val: Value = ciborium::de::from_reader(&resp[1..])
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    let val: Value =
+        ciborium::de::from_reader(&resp[1..]).map_err(|e| SoloError::CborError(e.to_string()))?;
     match val {
         Value::Map(p) => Ok(p),
         _ => Err(SoloError::MalformedResponse(format!(
@@ -353,8 +368,7 @@ fn enumerate_credentials_for_rp(
     let mut cred_responses = vec![rk_begin_pairs];
     for _ in 1..total_creds {
         let next_resp = send_cred_mgmt_next(hid, 0x05)?;
-        let next_pairs =
-            parse_cm_response(next_resp, "enumerateCredentialsGetNextCredential")?;
+        let next_pairs = parse_cm_response(next_resp, "enumerateCredentialsGetNextCredential")?;
         cred_responses.push(next_pairs);
     }
 
@@ -453,7 +467,7 @@ fn enumerate_credentials_for_rp(
 ///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
 ///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
 pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{CredentialEntry, CredentialListOutput, print_json};
+    use crate::output::{print_json, CredentialEntry, CredentialListOutput};
 
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
@@ -471,7 +485,9 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     if rps.is_empty() {
         if json {
-            return print_json(&CredentialListOutput { credentials: vec![] });
+            return print_json(&CredentialListOutput {
+                credentials: vec![],
+            });
         }
         println!("No resident credentials on this device.");
         return Ok(());
@@ -490,7 +506,9 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
                 });
             }
         }
-        return print_json(&CredentialListOutput { credentials: entries });
+        return print_json(&CredentialListOutput {
+            credentials: entries,
+        });
     }
 
     // ── Step 2: for each RP, enumerate credentials and print ─────────────
@@ -546,7 +564,9 @@ pub fn cmd_credential_rm(
     if let Some(id) = credential_id {
         cred_id_bytes = base64::engine::general_purpose::STANDARD
             .decode(id)
-            .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {}", e)))?;
+            .map_err(|e| {
+                SoloError::ProtocolError(format!("Invalid base64 credential ID: {}", e))
+            })?;
         display_label = id.to_string();
     } else {
         let host = host.expect("host required when credential_id is absent");
@@ -573,7 +593,8 @@ pub fn cmd_credential_rm(
 
         if matches.is_empty() {
             return Err(SoloError::ProtocolError(format!(
-                "No credential found for host '{}' and user '{}'", host, user
+                "No credential found for host '{}' and user '{}'",
+                host, user
             )));
         }
         if matches.len() > 1 {
@@ -601,8 +622,14 @@ pub fn cmd_credential_rm(
     // Key 0x02 (CM_subCommandCred) is for the credential descriptor in deleteCredential.
     // PublicKeyCredentialDescriptor = {"type": "public-key", "id": <bytes>}
     let cred_descriptor = ciborium::value::Value::Map(vec![
-        (ciborium::value::Value::Text("type".into()), ciborium::value::Value::Text("public-key".into())),
-        (ciborium::value::Value::Text("id".into()), cbor_bytes(cred_id_bytes)),
+        (
+            ciborium::value::Value::Text("type".into()),
+            ciborium::value::Value::Text("public-key".into()),
+        ),
+        (
+            ciborium::value::Value::Text("id".into()),
+            cbor_bytes(cred_id_bytes),
+        ),
     ]);
     let del_params = int_map([(0x02i64, cred_descriptor)]);
     let mut del_params_cbor: Vec<u8> = Vec::new();
@@ -623,10 +650,10 @@ pub fn cmd_credential_rm(
     // Send: authenticatorCredentialManagement CBOR =
     //   {0x01: 6, 0x02: {0x01: cred_id_bytes}, 0x03: 1, 0x04: pinUvAuthParam}
     let del_cbor = int_map([
-        (0x01, cbor_int(6)),                    // subCommand = deleteCredential
-        (0x02, del_params),                     // subCommandParams
-        (0x03, cbor_int(1)),                    // pinUvAuthProtocol = 1
-        (0x04, cbor_bytes(del_pin_uv_auth)),    // pinUvAuthParam
+        (0x01, cbor_int(6)),                 // subCommand = deleteCredential
+        (0x02, del_params),                  // subCommandParams
+        (0x03, cbor_int(1)),                 // pinUvAuthProtocol = 1
+        (0x04, cbor_bytes(del_pin_uv_auth)), // pinUvAuthParam
     ]);
     let mut del_req = vec![0x0Au8]; // authenticatorCredentialManagement
     ciborium::ser::into_writer(&del_cbor, &mut del_req)
@@ -641,7 +668,10 @@ pub fn cmd_credential_rm(
     let status = del_resp[0];
     if status != 0x00 {
         let message = crate::ctap2::ctap2_status_message(status);
-        return Err(SoloError::AuthenticatorError { code: status, message });
+        return Err(SoloError::AuthenticatorError {
+            code: status,
+            message,
+        });
     }
 
     println!("Credential deleted.");
@@ -656,7 +686,9 @@ mod tests {
     #[test]
     fn credential_id_decodes_from_base64() {
         let b64 = "6T35dsdagAWH0ly+ogGh/TUM8cq3GbuYX9JAuUsDrRVTsRrEkdnTcSxj97jWz634bQV9CZ04Ikbb6ch/Ez7RZ4gbaA8AAA==";
-        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap();
         assert_eq!(bytes.len(), 70); // Solo1 CredentialId is 70 bytes
         assert!(hex::decode(b64).is_err(), "credential ID is not valid hex");
     }
@@ -686,16 +718,27 @@ mod tests {
             _ => panic!("expected map"),
         };
         assert_eq!(pairs.len(), 1);
-        assert_eq!(pairs[0].0, Value::Integer(2i64.into()), "key must be 0x02 (CM_subCommandCred)");
+        assert_eq!(
+            pairs[0].0,
+            Value::Integer(2i64.into()),
+            "key must be 0x02 (CM_subCommandCred)"
+        );
 
         // The value must be a descriptor map, not raw bytes.
         let descriptor = match &pairs[0].1 {
             Value::Map(m) => m,
             _ => panic!("value must be a map (PublicKeyCredentialDescriptor), not raw bytes"),
         };
-        let keys: Vec<&str> = descriptor.iter().filter_map(|(k, _)| {
-            if let Value::Text(s) = k { Some(s.as_str()) } else { None }
-        }).collect();
+        let keys: Vec<&str> = descriptor
+            .iter()
+            .filter_map(|(k, _)| {
+                if let Value::Text(s) = k {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
         assert!(keys.contains(&"type"), "descriptor must have 'type' field");
         assert!(keys.contains(&"id"), "descriptor must have 'id' field");
     }

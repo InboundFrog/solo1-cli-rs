@@ -30,11 +30,7 @@ pub fn find_int_key(pairs: &[(Value, Value)], key: i64) -> Option<&Value> {
 }
 
 /// Require a value by integer key; error with context if missing.
-pub fn require_int_key<'a>(
-    pairs: &'a [(Value, Value)],
-    key: i64,
-    ctx: &str,
-) -> Result<&'a Value> {
+pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> Result<&'a Value> {
     find_int_key(pairs, key).ok_or_else(|| {
         SoloError::ProtocolError(format!("{}: key {} missing in CBOR map", ctx, key))
     })

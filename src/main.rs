@@ -11,7 +11,8 @@ fn main() {
     ctrlc::set_handler(|| {
         eprintln!("\nInterrupted.");
         std::process::exit(130);
-    }).expect("failed to set Ctrl-C handler");
+    })
+    .expect("failed to set Ctrl-C handler");
 
     let cli = Cli::parse();
 
@@ -32,7 +33,11 @@ fn run(cli: Cli) -> error::Result<()> {
             top::cmd_version(json)?;
         }
 
-        Commands::Genkey { output, entropy, json } => {
+        Commands::Genkey {
+            output,
+            entropy,
+            json,
+        } => {
             top::cmd_genkey(output.as_deref(), entropy.as_deref(), json)?;
         }
 
@@ -59,7 +64,12 @@ fn run(cli: Cli) -> error::Result<()> {
         }
 
         Commands::Key(key_args) => {
-            run_key_command(key_args.serial.as_deref(), key_args.command, key_args.json, timeout)?;
+            run_key_command(
+                key_args.serial.as_deref(),
+                key_args.command,
+                key_args.json,
+                timeout,
+            )?;
         }
 
         Commands::Program(prog_args) => {
@@ -73,7 +83,12 @@ fn run(cli: Cli) -> error::Result<()> {
     Ok(())
 }
 
-fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: std::time::Duration) -> error::Result<()> {
+fn run_key_command(
+    serial: Option<&str>,
+    cmd: KeyCommands,
+    json: bool,
+    timeout: std::time::Duration,
+) -> error::Result<()> {
     match cmd {
         KeyCommands::Rng { command } => {
             // Open device for all RNG subcommands
@@ -188,7 +203,11 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: 
                 CredentialCommands::Ls => {
                     key::credential::cmd_credential_ls(&hid, json)?;
                 }
-                CredentialCommands::Rm { credential_id, host, user } => {
+                CredentialCommands::Rm {
+                    credential_id,
+                    host,
+                    user,
+                } => {
                     if credential_id.is_none() && host.is_none() {
                         eprintln!("Error: provide either a credential ID or --host and --user");
                         std::process::exit(1);
@@ -214,7 +233,11 @@ fn run_key_command(serial: Option<&str>, cmd: KeyCommands, json: bool, timeout: 
     Ok(())
 }
 
-fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std::time::Duration) -> error::Result<()> {
+fn run_program_command(
+    serial: Option<&str>,
+    cmd: ProgramCommands,
+    timeout: std::time::Duration,
+) -> error::Result<()> {
     match cmd {
         ProgramCommands::Bootloader { firmware } => {
             let hid = SoloHid::open_bootloader(serial, timeout)?;

@@ -40,7 +40,9 @@ fn extract_attestation_cert(response: &[u8]) -> Result<Vec<u8>> {
             Value::Bytes(b) => Ok(b.clone()),
             _ => Err(SoloError::MalformedResponse("x5c[0] is not bytes".into())),
         },
-        _ => Err(SoloError::MalformedResponse("attStmt missing x5c array".into())),
+        _ => Err(SoloError::MalformedResponse(
+            "attStmt missing x5c array".into(),
+        )),
     }
 }
 
@@ -134,7 +136,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     let cert_expired = check_cert_validity(&cert_der).is_err();
 
     if json {
-        use crate::output::{VerifyOutput, print_json};
+        use crate::output::{print_json, VerifyOutput};
         let (device_type, device_name) = match &result {
             AttestationResult::GenuineConsumer(n) => ("genuine", Some(n.to_string())),
             AttestationResult::DeveloperDevice(n) => ("developer", Some(n.to_string())),

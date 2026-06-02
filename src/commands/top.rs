@@ -11,7 +11,7 @@ use crate::firmware::{
 /// Print the library version.
 pub fn cmd_version(json: bool) -> Result<()> {
     if json {
-        use crate::output::{CliVersionOutput, print_json};
+        use crate::output::{print_json, CliVersionOutput};
         let out = CliVersionOutput {
             name: "solo1-cli-rs".into(),
             version: env!("CARGO_PKG_VERSION").into(),
@@ -99,18 +99,21 @@ pub fn cmd_mergehex(
 
 /// List connected Solo devices.
 pub fn cmd_ls(json: bool) -> Result<()> {
-    use crate::output::{DeviceInfo, ListOutput, print_json};
+    use crate::output::{print_json, DeviceInfo, ListOutput};
 
     let devices = list_solo_devices()?;
 
     if json {
         let out = ListOutput {
-            devices: devices.iter().map(|d| DeviceInfo {
-                path: d.path.clone(),
-                serial: d.serial.clone(),
-                product: d.product.clone(),
-                manufacturer: d.manufacturer.clone(),
-            }).collect(),
+            devices: devices
+                .iter()
+                .map(|d| DeviceInfo {
+                    path: d.path.clone(),
+                    serial: d.serial.clone(),
+                    product: d.product.clone(),
+                    manufacturer: d.manufacturer.clone(),
+                })
+                .collect(),
         };
         return print_json(&out);
     }
