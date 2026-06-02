@@ -227,7 +227,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
 ///
 /// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
 pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
-    let pin = rpassword::prompt_password("Enter PIN: ").map_err(|e| SoloError::IoError(e))?;
+    let pin = rpassword::prompt_password("Enter PIN: ").map_err(SoloError::IoError)?;
     if pin.is_empty() {
         return Err(SoloError::ProtocolError("PIN is required".into()));
     }
