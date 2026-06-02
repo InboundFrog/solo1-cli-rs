@@ -513,8 +513,8 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     // ── Step 2: for each RP, enumerate credentials and print ─────────────
     println!(
-        "{:<32} {:<24} {}",
-        "Relying Party", "Username", "Credential ID (base64)"
+        "{:<32} {:<24} Credential ID (base64)",
+        "Relying Party", "Username"
     );
     println!("{}", "-".repeat(90));
 
