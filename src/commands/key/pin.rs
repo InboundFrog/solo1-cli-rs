@@ -81,8 +81,7 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
     let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
-    let confirm_pin =
-        rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?;
+    let confirm_pin = rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?;
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
