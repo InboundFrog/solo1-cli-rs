@@ -367,7 +367,7 @@ pub fn cmd_challenge_response(
         }
     };
 
-    let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&cose_pairs, challenge)?;
+    let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(cose_pairs, challenge)?;
 
     // ── Step 7: Build and send getAssertion request ───────────────────────────
     // clientDataHash: fixed bytes (device does not verify for hmac-secret use)
