@@ -38,7 +38,7 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 
     vlog!(
         "Writing {} chunks of {} bytes starting at 0x{:08X}",
-        (firmware_bytes.len() + CHUNK_SIZE - 1) / CHUNK_SIZE,
+        firmware_bytes.len().div_ceil(CHUNK_SIZE),
         CHUNK_SIZE,
         flash_start
     );
@@ -91,7 +91,7 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 /// for the progress display and loop termination.
 pub fn firmware_chunk_count(firmware_len: usize) -> usize {
     const CHUNK_SIZE: usize = 256;
-    (firmware_len + CHUNK_SIZE - 1) / CHUNK_SIZE
+    firmware_len.div_ceil(CHUNK_SIZE)
 }
 
 /// Simulate the address sequence produced by the write loop in
