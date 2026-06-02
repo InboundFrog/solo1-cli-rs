@@ -47,7 +47,7 @@ pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
 /// Returns (private_key_pem, public_key_pem).
 pub fn generate_keypair() -> Result<(String, String)> {
     let signing_key = SigningKey::random(&mut rand::thread_rng());
-    let secret_key = SecretKey::from(signing_key.as_nonzero_scalar().clone());
+    let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
     let private_pem = secret_key
         .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
         .map_err(|e| SoloError::CryptoError(format!("PEM encode error: {}", e)))?;
