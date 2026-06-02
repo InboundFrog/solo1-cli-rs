@@ -21,7 +21,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     let mut versions = Vec::new();
     if let Some(Value::Array(v)) = find_cbor_response_by_key(&pairs, 0x01) {
-        versions = extract_cbor_text_responses(&v)
+        versions = extract_cbor_text_responses(v)
             .into_iter()
             .map(|s| s.to_string())
             .collect();
@@ -29,7 +29,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     let mut extensions = Vec::new();
     if let Some(Value::Array(e)) = find_cbor_response_by_key(&pairs, 0x02) {
-        extensions = extract_cbor_text_responses(&e)
+        extensions = extract_cbor_text_responses(e)
             .into_iter()
             .map(|s| s.to_string())
             .collect();
