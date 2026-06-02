@@ -272,6 +272,8 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
     Ok(output)
 }
 
+// TODO Cleanup doc - need to talk to Claude
+#[allow(clippy::doc_lazy_continuation)]
 /// Build the hmac-secret extension input for a getAssertion request.
 ///
 /// Performs steps 1–6 of the hmac-secret protocol:
