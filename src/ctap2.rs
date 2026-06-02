@@ -380,7 +380,7 @@ impl ClientPinSession {
     pub fn decrypt_pin_token(&self, pin_token_enc: &[u8]) -> Result<Vec<u8>> {
         type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
-        if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
+        if pin_token_enc.is_empty() || !pin_token_enc.len().is_multiple_of(16) {
             return Err(SoloError::MalformedResponse(format!(
                 "pinTokenEnc has unexpected length: {}",
                 pin_token_enc.len()
