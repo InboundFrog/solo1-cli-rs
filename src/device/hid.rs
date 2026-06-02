@@ -65,7 +65,7 @@ impl SoloHid {
         let info = if let Some(sn) = serial {
             devices
                 .iter()
-                .find(|d| d.serial_number().map_or(false, |s| s == sn))
+                .find(|d| d.serial_number() == Some(sn))
                 .ok_or_else(|| SoloError::DeviceError(format!("No device with serial {}", sn)))?
         } else {
             if devices.len() > 1 {
