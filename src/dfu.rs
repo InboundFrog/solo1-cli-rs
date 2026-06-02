@@ -89,7 +89,7 @@ impl DfuDevice {
         let handle = open_dfu_device()?;
         handle
             .claim_interface(DFU_INTERFACE)
-            .map_err(|e| SoloError::UsbError(e))?;
+            .map_err(SoloError::UsbError)?;
         Ok(DfuDevice {
             handle,
             transaction: 0,
