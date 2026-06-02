@@ -356,8 +356,7 @@ impl ClientPinSession {
         hmac.update(message);
         let full = hmac.finalize().into_bytes();
         let truncated: Vec<u8> = full[..16]
-            .try_into()
-            .map_err(|_| SoloError::CryptoError("HMAC output truncation failed".into()))?;
+            .into();
         Ok(truncated)
     }
 
