@@ -32,7 +32,7 @@ pub fn cmd_make_credential(
     // Generate random challenge and hash it as clientDataHash
     let mut challenge = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut challenge);
-    let client_data_hash: Vec<u8> = Sha256::digest(&challenge).to_vec();
+    let client_data_hash: Vec<u8> = Sha256::digest(challenge).to_vec();
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     // PIN prompt comes first; the touch prompt is printed after PIN entry.
