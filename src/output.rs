@@ -1,21 +1,21 @@
-use serde::Serialize;
 use crate::error::Result;
+use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct MakeCredentialOutput {
-    pub credential_id: String,   // hex
+    pub credential_id: String, // hex
 }
 
 #[derive(Serialize)]
 pub struct ChallengeResponseOutput {
-    pub hmac_output: String,     // hex, 32 bytes
+    pub hmac_output: String, // hex, 32 bytes
 }
 
 #[derive(Serialize)]
 pub struct CredentialEntry {
     pub rp_id: String,
     pub user_name: String,
-    pub credential_id: String,   // base64, matching the human display
+    pub credential_id: String, // base64, matching the human display
 }
 
 #[derive(Serialize)]
@@ -95,8 +95,10 @@ pub struct PingOutput {
 
 /// Serialize `value` to pretty JSON and print to stdout.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(value)
-        .map_err(crate::error::SoloError::JsonError)?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(value).map_err(crate::error::SoloError::JsonError)?
+    );
     Ok(())
 }
 
@@ -106,7 +108,9 @@ mod tests {
 
     #[test]
     fn make_credential_output_serializes() {
-        let out = MakeCredentialOutput { credential_id: "deadbeef".into() };
+        let out = MakeCredentialOutput {
+            credential_id: "deadbeef".into(),
+        };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["credential_id"], "deadbeef");
@@ -171,12 +175,17 @@ mod tests {
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(v["hmac_output"], "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20");
+        assert_eq!(
+            v["hmac_output"],
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        );
     }
 
     #[test]
     fn version_output_serializes() {
-        let out = VersionOutput { firmware_version: "4.1.2".into() };
+        let out = VersionOutput {
+            firmware_version: "4.1.2".into(),
+        };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["firmware_version"], "4.1.2");

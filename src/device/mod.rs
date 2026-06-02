@@ -2,7 +2,6 @@
 ///
 /// Implements the CTAP HID protocol framing and the Solo-specific
 /// vendor commands on top of it.
-
 pub mod frame;
 pub mod hid;
 pub mod protocol;
@@ -17,7 +16,8 @@ pub trait HidDevice {
     fn send_recv(&self, cmd: u8, data: &[u8]) -> crate::error::Result<Vec<u8>>;
 
     /// Send a vendor (bootloader) command and return the response payload.
-    fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> crate::error::Result<Vec<u8>>;
+    fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8])
+        -> crate::error::Result<Vec<u8>>;
 
     /// Send a command with payload without waiting for a response.
     fn send(&self, cmd: u8, data: &[u8]) -> crate::error::Result<()>;
@@ -29,53 +29,21 @@ pub trait HidDevice {
 
 // USB / protocol constants
 pub use protocol::{
-    SOLO_VID,
-    SOLO_PID,
-    SOLO_DFU_PID,
-    HID_REPORT_SIZE,
-    CTAPHID_INIT,
-    CTAPHID_MSG,
-    CTAPHID_CBOR,
-    CTAPHID_PING,
-    CTAPHID_WINK,
-    CTAPHID_VENDOR_FIRST,
-    CMD_WRITE,
-    CMD_DONE,
-    CMD_CHECK,
-    CMD_ERASE,
-    CMD_VERSION,
-    CMD_REBOOT,
-    CMD_ENTER_DFU,
-    CMD_DISABLE_BOOTLOADER,
-    CMD_BOOT,
-    CMD_ENTER_BOOT,
-    CMD_ENTER_ST_BOOT,
-    CMD_RNG,
-    CMD_GET_VERSION,
-    CMD_SET_VERSION,
-    CMD_PROBE,
-    SOLO_TAG,
-    CTAPHID_BROADCAST_CID,
+    CMD_BOOT, CMD_CHECK, CMD_DISABLE_BOOTLOADER, CMD_DONE, CMD_ENTER_BOOT, CMD_ENTER_DFU,
+    CMD_ENTER_ST_BOOT, CMD_ERASE, CMD_GET_VERSION, CMD_PROBE, CMD_REBOOT, CMD_RNG, CMD_SET_VERSION,
+    CMD_VERSION, CMD_WRITE, CTAPHID_BROADCAST_CID, CTAPHID_CBOR, CTAPHID_INIT, CTAPHID_MSG,
+    CTAPHID_PING, CTAPHID_VENDOR_FIRST, CTAPHID_WINK, HID_REPORT_SIZE, SOLO_DFU_PID, SOLO_PID,
+    SOLO_TAG, SOLO_VID,
 };
 
 // Frame types and helpers
 pub use frame::{
-    CtapHidFrame,
-    FramePayload,
-    build_ctaphid_frames,
-    reassemble_frames,
-    build_bootloader_packet,
-    FLASH_BASE,
-    DFU_CHUNK_SIZE,
-    dfu_block_index,
+    build_bootloader_packet, build_ctaphid_frames, dfu_block_index, reassemble_frames,
+    CtapHidFrame, FramePayload, DFU_CHUNK_SIZE, FLASH_BASE,
 };
 
 // Device communication
-pub use hid::{
-    SoloDevice,
-    SoloHid,
-    list_solo_devices,
-};
+pub use hid::{list_solo_devices, SoloDevice, SoloHid};
 
 #[cfg(test)]
 pub mod mock {

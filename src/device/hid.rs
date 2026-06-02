@@ -1,15 +1,14 @@
 /// Solo HID device communication — SoloHid, SoloDevice, list_solo_devices.
-
 use std::time::{Duration, Instant};
 
 use hidapi::{HidApi, HidDevice as HidApiDevice};
 
+use crate::device::frame::{build_ctaphid_frames, reassemble_frames, CtapHidFrame, FramePayload};
+use crate::device::protocol::{
+    CMD_BOOT, CTAPHID_BROADCAST_CID, CTAPHID_INIT, SOLO_PID, SOLO_TAG, SOLO_VID,
+};
 use crate::error::{Result, SoloError};
 use crate::vlog;
-use crate::device::protocol::{
-    SOLO_VID, SOLO_PID, SOLO_TAG, CTAPHID_INIT, CTAPHID_BROADCAST_CID, CMD_BOOT,
-};
-use crate::device::frame::{CtapHidFrame, FramePayload, build_ctaphid_frames, reassemble_frames};
 
 /// Information about a connected Solo device.
 #[derive(Debug, Clone)]
@@ -66,7 +65,7 @@ impl SoloHid {
         let info = if let Some(sn) = serial {
             devices
                 .iter()
-                .find(|d| d.serial_number().map_or(false, |s| s == sn))
+                .find(|d| d.serial_number() == Some(sn))
                 .ok_or_else(|| SoloError::DeviceError(format!("No device with serial {}", sn)))?
         } else {
             if devices.len() > 1 {
@@ -334,7 +333,9 @@ mod tests {
 
         // Verify init's fixed timeout is independent of the configurable one.
         let init_timeout = Duration::from_secs(5);
-        assert!(init_timeout < default_timeout,
-            "init timeout must be less than the default response timeout");
+        assert!(
+            init_timeout < default_timeout,
+            "init timeout must be less than the default response timeout"
+        );
     }
 }

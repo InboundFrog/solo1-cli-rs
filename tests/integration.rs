@@ -23,7 +23,8 @@ fn test_list_devices_no_hardware() {
 #[test]
 #[ignore]
 fn test_ping_hardware() {
-    let hid = SoloHid::open(None, std::time::Duration::from_secs(30)).expect("Failed to open Solo device");
+    let hid = SoloHid::open(None, std::time::Duration::from_secs(30))
+        .expect("Failed to open Solo device");
     let data = b"hello";
     let response = hid
         .send_recv(solo1::device::CTAPHID_PING, data)
@@ -31,11 +32,12 @@ fn test_ping_hardware() {
     assert_eq!(response, data, "Ping response should match sent data");
 }
 
-/// Get firmware version (requires hardware).
+/// Get the firmware version (requires hardware).
 #[test]
 #[ignore]
 fn test_version_hardware() {
-    let hid = SoloHid::open(None, std::time::Duration::from_secs(30)).expect("Failed to open Solo device");
+    let hid = SoloHid::open(None, std::time::Duration::from_secs(30))
+        .expect("Failed to open Solo device");
     let response = hid
         .send_recv(solo1::device::CMD_GET_VERSION, &[])
         .expect("Version command failed");
@@ -267,7 +269,7 @@ fn test_mergehex_key_cert_must_both_be_provided() {
 /// Test that mergehex with no attestation args uses default hacker attestation.
 #[test]
 fn test_mergehex_default_attestation() {
-    use solo1::firmware::{merge_hex_files};
+    use solo1::firmware::merge_hex_files;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -314,7 +316,7 @@ fn test_mergehex_default_attestation() {
 /// Test that signed firmware JSON has both version signatures.
 #[test]
 fn test_firmware_sign_versioned_json_structure() {
-    use solo1::firmware::{create_firmware_json_versioned};
+    use solo1::firmware::create_firmware_json_versioned;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -394,7 +396,7 @@ fn test_known_fingerprints_validity() {
 
     for (fp, name) in KNOWN_FINGERPRINTS {
         let bytes =
-            hex::decode(fp).expect(&format!("fingerprint for '{}' should be valid hex", name));
+            hex::decode(fp).unwrap_or_else(|_| panic!("fingerprint for '{}' should be valid hex", name));
         assert_eq!(
             bytes.len(),
             32,

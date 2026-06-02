@@ -1,4 +1,4 @@
-/// CTAPHID protocol constants and USB device identifiers.
+// CTAPHID protocol constants and USB device identifiers.
 
 // USB identifiers
 pub const SOLO_VID: u16 = 0x0483;
