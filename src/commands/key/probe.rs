@@ -113,8 +113,8 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
 }
 
 fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
-    use ciborium::value::Value;
     use crate::ctap2::ctap2_status_message;
+    use ciborium::value::Value;
     if ga_response.is_empty() {
         return Err(SoloError::MalformedResponse(
             "Empty response from getAssertion".into(),
@@ -194,7 +194,10 @@ mod tests {
         let path = file.path();
 
         // status=0x00, map {0x03: bytes([0xAA, 0xBB])}
-        let ga_val = Value::Map(vec![(Value::Integer(0x03u64.into()), Value::Bytes(vec![0xAA, 0xBB]))]);
+        let ga_val = Value::Map(vec![(
+            Value::Integer(0x03u64.into()),
+            Value::Bytes(vec![0xAA, 0xBB]),
+        )]);
         let mut ga_response = vec![0x00u8];
         ciborium::ser::into_writer(&ga_val, &mut ga_response).unwrap();
 

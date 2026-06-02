@@ -1,7 +1,6 @@
-/// CTAP HID frame types, encoding/decoding, and message assembly.
-
-use crate::error::{Result, SoloError};
 use crate::device::protocol::SOLO_TAG;
+/// CTAP HID frame types, encoding/decoding, and message assembly.
+use crate::error::{Result, SoloError};
 
 /// A single 64-byte HID frame (init or continuation).
 #[derive(Debug, Clone)]

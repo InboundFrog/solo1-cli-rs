@@ -2,13 +2,13 @@
 /// attestation fingerprint checking.
 use std::path::Path;
 
-use x509_cert::der::{Decode, Encode};
 use p256::{
     ecdsa::{SigningKey, VerifyingKey},
     pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey},
     SecretKey,
 };
 use sha2::{Digest, Sha256};
+use x509_cert::der::{Decode, Encode};
 use x509_cert::Certificate;
 
 use crate::error::{Result, SoloError};
@@ -47,7 +47,7 @@ pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
 /// Returns (private_key_pem, public_key_pem).
 pub fn generate_keypair() -> Result<(String, String)> {
     let signing_key = SigningKey::random(&mut rand::thread_rng());
-    let secret_key = SecretKey::from(signing_key.as_nonzero_scalar().clone());
+    let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
     let private_pem = secret_key
         .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
         .map_err(|e| SoloError::CryptoError(format!("PEM encode error: {}", e)))?;
@@ -169,11 +169,12 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
 //
 // These are also documented in the issue referenced above.
 
-pub const SOLO_V3_SPKI_FINGERPRINT: &str = "";       // TODO(0003): populate from hardware
-pub const SOMU_SPKI_FINGERPRINT: &str = "";           // TODO(0003): populate from hardware
-pub const SOLO_SPKI_FINGERPRINT: &str = "";           // TODO(0003): populate from hardware
-pub const SOLO_TAP_SPKI_FINGERPRINT: &str = "6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049";
-pub const SOLO_HACKER_SPKI_FINGERPRINT: &str = "";    // TODO(0003): populate from hardware
+pub const SOLO_V3_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
+pub const SOMU_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
+pub const SOLO_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
+pub const SOLO_TAP_SPKI_FINGERPRINT: &str =
+    "6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049";
+pub const SOLO_HACKER_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
 pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
 
 // ---------------------------------------------------------------------------

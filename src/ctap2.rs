@@ -227,7 +227,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
 ///
 /// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
 pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
-    let pin = rpassword::prompt_password("Enter PIN: ").map_err(|e| SoloError::IoError(e))?;
+    let pin = rpassword::prompt_password("Enter PIN: ").map_err(SoloError::IoError)?;
     if pin.is_empty() {
         return Err(SoloError::ProtocolError("PIN is required".into()));
     }
@@ -356,8 +356,7 @@ impl ClientPinSession {
         hmac.update(message);
         let full = hmac.finalize().into_bytes();
         let truncated: Vec<u8> = full[..16]
-            .try_into()
-            .map_err(|_| SoloError::CryptoError("HMAC output truncation failed".into()))?;
+            .into();
         Ok(truncated)
     }
 
@@ -380,7 +379,7 @@ impl ClientPinSession {
     pub fn decrypt_pin_token(&self, pin_token_enc: &[u8]) -> Result<Vec<u8>> {
         type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
-        if pin_token_enc.is_empty() || pin_token_enc.len() % 16 != 0 {
+        if pin_token_enc.is_empty() || !pin_token_enc.len().is_multiple_of(16) {
             return Err(SoloError::MalformedResponse(format!(
                 "pinTokenEnc has unexpected length: {}",
                 pin_token_enc.len()

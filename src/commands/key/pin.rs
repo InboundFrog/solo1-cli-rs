@@ -14,10 +14,10 @@ use crate::error::{Result, SoloError};
 ///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
 pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
-    let old_pin = rpassword::prompt_password("Current PIN: ").map_err(|e| SoloError::IoError(e))?;
-    let new_pin = rpassword::prompt_password("New PIN: ").map_err(|e| SoloError::IoError(e))?;
+    let old_pin = rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?;
+    let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
     let confirm_pin =
-        rpassword::prompt_password("Confirm new PIN: ").map_err(|e| SoloError::IoError(e))?;
+        rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?;
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
@@ -39,12 +39,12 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let pin_uv_auth_param = session.authenticate(&auth_msg)?;
 
     let change_pin_cbor = int_map([
-        (0x01, cbor_int(1)),                                          // pinUvAuthProtocol = 1
-        (0x02, cbor_int(4)),                                          // subCommand = changePin (0x04)
-        (0x03, session.ephemeral_pub_key.clone()),                    // keyAgreement
-        (0x04, cbor_bytes(pin_uv_auth_param)),                        // pinUvAuthParam (16 bytes)
-        (0x05, cbor_bytes(new_pin_enc)),                              // newPinEnc (64 bytes)
-        (0x06, cbor_bytes(pin_hash_enc.to_vec())),                    // pinHashEnc (16 bytes)
+        (0x01, cbor_int(1)),                       // pinUvAuthProtocol = 1
+        (0x02, cbor_int(4)),                       // subCommand = changePin (0x04)
+        (0x03, session.ephemeral_pub_key.clone()), // keyAgreement
+        (0x04, cbor_bytes(pin_uv_auth_param)),     // pinUvAuthParam (16 bytes)
+        (0x05, cbor_bytes(new_pin_enc)),           // newPinEnc (64 bytes)
+        (0x06, cbor_bytes(pin_hash_enc.to_vec())), // pinHashEnc (16 bytes)
     ]);
 
     let mut change_pin_bytes = vec![0x06u8];
@@ -80,9 +80,9 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 ///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
 pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
-    let new_pin = rpassword::prompt_password("New PIN: ").map_err(|e| SoloError::IoError(e))?;
+    let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
     let confirm_pin =
-        rpassword::prompt_password("Confirm PIN: ").map_err(|e| SoloError::IoError(e))?;
+        rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?;
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
@@ -100,11 +100,11 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let pin_uv_auth_param = session.authenticate(&new_pin_enc)?;
 
     let set_pin_cbor = int_map([
-        (0x01, cbor_int(1)),                                          // pinUvAuthProtocol = 1
-        (0x02, cbor_int(3)),                                          // subCommand = setPin
-        (0x03, session.ephemeral_pub_key.clone()),                    // keyAgreement
-        (0x04, cbor_bytes(pin_uv_auth_param)),                        // pinUvAuthParam
-        (0x05, cbor_bytes(new_pin_enc)),                              // newPinEnc
+        (0x01, cbor_int(1)),                       // pinUvAuthProtocol = 1
+        (0x02, cbor_int(3)),                       // subCommand = setPin
+        (0x03, session.ephemeral_pub_key.clone()), // keyAgreement
+        (0x04, cbor_bytes(pin_uv_auth_param)),     // pinUvAuthParam
+        (0x05, cbor_bytes(new_pin_enc)),           // newPinEnc
     ]);
 
     let mut set_pin_bytes = vec![0x06u8];
@@ -114,7 +114,9 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let set_pin_response = hid.send_recv(CTAPHID_CBOR, &set_pin_bytes)?;
 
     if set_pin_response.is_empty() {
-        return Err(SoloError::MalformedResponse("Empty response from setPin".into()));
+        return Err(SoloError::MalformedResponse(
+            "Empty response from setPin".into(),
+        ));
     }
     let set_pin_status = set_pin_response[0];
     if set_pin_status != 0x00 {
