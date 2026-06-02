@@ -186,7 +186,7 @@ impl DfuDevice {
     /// Program a firmware binary to the device.
     pub fn program(&mut self, firmware: &[u8]) -> Result<()> {
         let chunk_size = DFU_CHUNK_SIZE as usize;
-        let total_chunks = (firmware.len() + chunk_size - 1) / chunk_size;
+        let total_chunks = firmware.len().div_ceil(chunk_size);
 
         let pb = ProgressBar::new(total_chunks as u64);
         pb.set_style(
