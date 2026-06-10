@@ -100,6 +100,19 @@ pub fn get_info_client_pin_set(hid: &impl HidDevice) -> Result<bool> {
     Ok(client_pin_set)
 }
 
+/// Build a raw CTAP2 request: the command byte followed by the CBOR-serialized payload.
+pub fn ctap2_request(cmd: u8, payload: &Value) -> Result<Vec<u8>> {
+    let mut request = vec![cmd];
+    ciborium::ser::into_writer(payload, &mut request)?;
+    Ok(request)
+}
+
+/// Build a CTAP2 request and exchange it over CTAPHID_CBOR, returning the raw response.
+pub fn ctap2_call(hid: &impl HidDevice, cmd: u8, payload: &Value) -> Result<Vec<u8>> {
+    let request = ctap2_request(cmd, payload)?;
+    hid.send_recv(CTAPHID_CBOR, &request)
+}
+
 #[inline]
 pub fn create_key_agreement_cbor() -> Value {
     int_map([
@@ -190,10 +203,7 @@ pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
 pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let get_ka_cbor = create_key_agreement_cbor();
-    let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
-    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)?;
-
-    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
+    let response = ctap2_call(hid, 0x06, &get_ka_cbor)?; // authenticatorClientPIN
 
     let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
 
@@ -252,10 +262,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
         (0x06, cbor_bytes(pin_hash_enc.to_vec())), // pinHashEnc
     ]);
 
-    let mut gpt_req = vec![0x06u8]; // authenticatorClientPIN
-    ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)?;
-
-    let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
+    let gpt_resp = ctap2_call(hid, 0x06, &get_pin_token_cbor)?; // authenticatorClientPIN
     let gpt_pairs = parse_cbor_map_response(&gpt_resp, "getPINToken")?;
 
     let pin_token_enc = match find_int_key(&gpt_pairs, 0x02) {

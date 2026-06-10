@@ -2,7 +2,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::device::{HidDevice, CMD_PROBE, CTAPHID_CBOR};
+use crate::device::{HidDevice, CMD_PROBE};
 use crate::error::{Result, SoloError};
 
 /// Run a hash probe on the device.
@@ -103,10 +103,8 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
         ),
     ]);
 
-    let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command byte
-    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)?;
-
-    let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
+    // CTAP2 getAssertion (0x02)
+    let ga_response = crate::ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
     check_ga_response(&ga_response, filename)
 }
 

@@ -1,5 +1,5 @@
 use crate::cbor::{cbor_bytes, cbor_int, int_map};
-use crate::device::{HidDevice, CTAPHID_CBOR};
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 
 /// Change the existing PIN (prompts for old and new PIN).
@@ -47,10 +47,8 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
         (0x06, cbor_bytes(pin_hash_enc.to_vec())), // pinHashEnc (16 bytes)
     ]);
 
-    let mut change_pin_bytes = vec![0x06u8];
-    ciborium::ser::into_writer(&change_pin_cbor, &mut change_pin_bytes)?;
-
-    let change_pin_response = hid.send_recv(CTAPHID_CBOR, &change_pin_bytes)?;
+    // authenticatorClientPIN (0x06)
+    let change_pin_response = crate::ctap2::ctap2_call(hid, 0x06, &change_pin_cbor)?;
     crate::ctap2::check_ctap_status(&change_pin_response, "changePin")?;
 
     println!("PIN changed successfully.");
@@ -94,10 +92,8 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
         (0x05, cbor_bytes(new_pin_enc)),           // newPinEnc
     ]);
 
-    let mut set_pin_bytes = vec![0x06u8];
-    ciborium::ser::into_writer(&set_pin_cbor, &mut set_pin_bytes)?;
-
-    let set_pin_response = hid.send_recv(CTAPHID_CBOR, &set_pin_bytes)?;
+    // authenticatorClientPIN (0x06)
+    let set_pin_response = crate::ctap2::ctap2_call(hid, 0x06, &set_pin_cbor)?;
     crate::ctap2::check_ctap_status(&set_pin_response, "setPin")?;
 
     println!("PIN set successfully.");

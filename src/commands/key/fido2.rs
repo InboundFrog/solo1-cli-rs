@@ -5,7 +5,7 @@ use crate::ctap2::{
     extract_cose_coord, find_key_agreement_response, parse_cbor_map_response,
     prompt_and_get_pin_token, CTAP2_AES_IV,
 };
-use crate::device::{HidDevice, CTAPHID_CBOR};
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
 
@@ -100,11 +100,8 @@ pub fn cmd_make_credential(
         eprintln!("{}", prompt);
     }
 
-    // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
-    let mut request_bytes = vec![0x01u8];
-    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)?;
-
-    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
+    // CTAP2 makeCredential (0x01)
+    let response = crate::ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
 
     // First byte is CTAP2 status code; 0x00 = success
     let pairs = parse_cbor_map_response(&response, "makeCredential")?;
@@ -353,10 +350,7 @@ pub fn cmd_challenge_response(
 
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
     let get_ka_cbor = crate::ctap2::create_key_agreement_cbor();
-    let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
-    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)?;
-
-    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
+    let response = crate::ctap2::ctap2_call(hid, 0x06, &get_ka_cbor)?; // authenticatorClientPIN
     let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
 
     let key_agreement = find_key_agreement_response(&resp_pairs)?;
@@ -398,10 +392,8 @@ pub fn cmd_challenge_response(
 
     eprintln!("Touch your authenticator to generate a response...");
 
-    let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command
-    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)?;
-
-    let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
+    // CTAP2 getAssertion (0x02)
+    let ga_response = crate::ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
 
     // ── Step 8: Parse authData from getAssertion response ────────────────────
     let ga_pairs = parse_cbor_map_response(&ga_response, "getAssertion")?;

@@ -1,6 +1,6 @@
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
 use crate::ctap2::{parse_cbor_map_response, prompt_and_get_pin_token};
-use crate::device::{HidDevice, CTAPHID_CBOR};
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
 
@@ -189,11 +189,8 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
     let cbor_request = int_map(cbor_entries);
 
-    // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
-    let mut request_bytes = vec![0x01u8];
-    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)?;
-
-    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
+    // CTAP2 makeCredential (0x01)
+    let response = crate::ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
 
     // Extract the attestation: certificate, authData, and signature
     let att = extract_attestation(&response)?;

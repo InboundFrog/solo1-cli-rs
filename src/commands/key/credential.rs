@@ -1,7 +1,7 @@
 use crate::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
 use crate::commands::key::common;
 use crate::ctap2::{
-    check_ctap_status, extract_cbor_text_responses, get_info_client_pin_set,
+    check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set,
     parse_cbor_map_response, parse_cbor_map_response_allow_empty, prompt_and_get_pin_token,
 };
 use crate::device::{HidDevice, CTAPHID_CBOR};
@@ -154,9 +154,7 @@ fn send_cred_mgmt(
     entries.push((0x04, cbor_bytes(pin_uv))); // pinUvAuthParam
 
     let cm_cbor = int_map(entries);
-    let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
-    ciborium::ser::into_writer(&cm_cbor, &mut req)?;
-    hid.send_recv(CTAPHID_CBOR, &req)
+    ctap2_call(hid, 0x0A, &cm_cbor) // authenticatorCredentialManagement
 }
 
 /// Send a credMgmt (0x0A) subcommand with no authentication parameters.
@@ -165,9 +163,7 @@ fn send_cred_mgmt(
 /// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
 fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
     let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
-    let mut req = vec![0x0Au8];
-    ciborium::ser::into_writer(&cm_cbor, &mut req)?;
-    hid.send_recv(CTAPHID_CBOR, &req)
+    ctap2_call(hid, 0x0A, &cm_cbor) // authenticatorCredentialManagement
 }
 
 /// Send enumerateRPsBegin (subcommand 0x02) then enumerateRPsGetNextRP
@@ -535,10 +531,8 @@ pub fn cmd_credential_rm(
         (0x03, cbor_int(1)),                 // pinUvAuthProtocol = 1
         (0x04, cbor_bytes(del_pin_uv_auth)), // pinUvAuthParam
     ]);
-    let mut del_req = vec![0x0Au8]; // authenticatorCredentialManagement
-    ciborium::ser::into_writer(&del_cbor, &mut del_req)?;
-
-    let del_resp = hid.send_recv(CTAPHID_CBOR, &del_req)?;
+    // authenticatorCredentialManagement (0x0A)
+    let del_resp = ctap2_call(hid, 0x0A, &del_cbor)?;
     check_ctap_status(&del_resp, "deleteCredential")?;
 
     println!("Credential deleted.");
