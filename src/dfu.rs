@@ -6,7 +6,7 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use rusb::{Context, DeviceHandle, UsbContext};
 
-use crate::device::{DFU_CHUNK_SIZE, FLASH_BASE, SOLO_DFU_PID, SOLO_VID};
+use crate::device::{DFU_CHUNK_SIZE, SOLO_DFU_PID, SOLO_VID};
 use crate::error::{Result, SoloError};
 use crate::vlog;
 
@@ -210,12 +210,6 @@ impl DfuDevice {
     }
 }
 
-/// Calculate the DFU block index for a given flash address.
-/// Exported here for use in tests and commands.
-pub fn block_index_for_address(address: u32) -> u32 {
-    (address - FLASH_BASE) / DFU_CHUNK_SIZE + 2
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,19 +230,6 @@ mod tests {
         let status = DfuStatus::parse(&bytes).unwrap();
         assert!(!status.is_ok());
         assert_eq!(status.state, DFU_STATE_ERROR);
-    }
-
-    #[test]
-    fn test_dfu_block_index() {
-        // Base address -> block 2
-        assert_eq!(block_index_for_address(0x08000000), 2);
-        // + 2048 -> block 3
-        assert_eq!(block_index_for_address(0x08000800), 3);
-        // + 4096 -> block 4
-        assert_eq!(block_index_for_address(0x08001000), 4);
-        // Page 113 = 113 * 2048 = 0x38800 offset
-        let page113_addr = 0x08000000 + 113 * 2048;
-        assert_eq!(block_index_for_address(page113_addr), 113 + 2);
     }
 
     #[test]

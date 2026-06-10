@@ -154,14 +154,8 @@ pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Vec<u8> {
     packet
 }
 
-/// DFU block index from flash address.
-/// block_index = (address - BASE_ADDR) / chunk_size + 2
-pub const FLASH_BASE: u32 = 0x08000000;
+/// DFU transfer chunk size in bytes.
 pub const DFU_CHUNK_SIZE: u32 = 2048;
-
-pub fn dfu_block_index(address: u32) -> u32 {
-    (address - FLASH_BASE) / DFU_CHUNK_SIZE + 2
-}
 
 #[cfg(test)]
 mod tests {
@@ -286,12 +280,5 @@ mod tests {
         // 0x08012345 → offset 0x012345 → LE: [0x45, 0x23, 0x01]
         let pkt3 = build_bootloader_packet(0x40, 0x08012345, &[]);
         assert_eq!(&pkt3[1..4], &[0x45, 0x23, 0x01]);
-    }
-
-    #[test]
-    fn test_dfu_block_index() {
-        assert_eq!(dfu_block_index(0x08000000), 2);
-        assert_eq!(dfu_block_index(0x08000800), 3); // + 2048
-        assert_eq!(dfu_block_index(0x08001000), 4); // + 4096
     }
 }
