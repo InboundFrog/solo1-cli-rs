@@ -130,7 +130,6 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
 pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
     use ciborium::value::Value;
-    use hmac::{Hmac, KeyInit as _, Mac as _};
 
     // clientDataHash: fixed 32-byte value (Solo does not verify it for attestation)
     let client_data_hash: Vec<u8> = Sha256::digest(b"solokeys_verify_test").to_vec();
@@ -138,13 +137,8 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     let pin_uv_auth: Option<Vec<u8>> = if crate::ctap2::get_info_client_pin_set(hid)? {
         let pin_token = prompt_and_get_pin_token(hid)?;
-
         // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
-        let mut mac = Hmac::<Sha256>::new_from_slice(&pin_token)
-            .map_err(|e| SoloError::CryptoError(format!("HMAC key error: {}", e)))?;
-        mac.update(&client_data_hash);
-        let hmac_result = mac.finalize().into_bytes();
-        Some(hmac_result[..16].to_vec())
+        Some(crate::ctap2::pin_uv_auth(&pin_token, &client_data_hash)?)
     } else {
         None
     };

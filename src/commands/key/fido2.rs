@@ -39,14 +39,9 @@ pub fn cmd_make_credential(
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     // PIN prompt comes first; the touch prompt is printed after PIN entry.
     let pin_uv_auth: Option<Vec<u8>> = if crate::ctap2::get_info_client_pin_set(hid)? {
-        use hmac::{Hmac, KeyInit as _, Mac as _};
         let pin_token = prompt_and_get_pin_token(hid)?;
         // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
-        let mut mac = Hmac::<Sha256>::new_from_slice(&pin_token)
-            .map_err(|e| SoloError::CryptoError(format!("HMAC key error: {}", e)))?;
-        mac.update(&client_data_hash);
-        let result = mac.finalize().into_bytes();
-        Some(result[..16].to_vec())
+        Some(crate::ctap2::pin_uv_auth(&pin_token, &client_data_hash)?)
     } else {
         None
     };
@@ -269,8 +264,6 @@ fn prepare_hmac_secret_input(
     cose_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
     challenge: &str,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
-    use hmac::{Hmac, KeyInit as _, Mac as _};
-
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
     let (shared_secret, ephemeral_cose_key) = derive_shared_secret(cose_pairs)?;
@@ -279,17 +272,13 @@ fn prepare_hmac_secret_input(
     let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
 
     // saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
-    let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
-        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
-    mac.update(&salt_enc);
-    let mac_result = mac.finalize().into_bytes();
-    let salt_auth = &mac_result[..16];
+    let salt_auth = crate::ctap2::pin_uv_auth(&shared_secret, &salt_enc)?;
 
     // hmac-secret extension input: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
     let hmac_secret_ext = int_map([
         (1, ephemeral_cose_key),
         (2, cbor_bytes(salt_enc)),
-        (3, cbor_bytes(salt_auth.to_vec())),
+        (3, cbor_bytes(salt_auth)),
     ]);
 
     Ok((hmac_secret_ext, shared_secret))
@@ -492,8 +481,6 @@ fn prepare_hmac_secret_input_with_scalar(
     challenge: &str,
     platform_scalar: p256::NonZeroScalar,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
-    use hmac::{Hmac, KeyInit as _, Mac as _};
-
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
     let (shared_secret, ephemeral_cose_key) =
@@ -501,16 +488,12 @@ fn prepare_hmac_secret_input_with_scalar(
 
     let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
 
-    let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
-        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
-    mac.update(&salt_enc);
-    let mac_result = mac.finalize().into_bytes();
-    let salt_auth = &mac_result[..16];
+    let salt_auth = crate::ctap2::pin_uv_auth(&shared_secret, &salt_enc)?;
 
     let hmac_secret_ext = int_map([
         (1, ephemeral_cose_key),
         (2, cbor_bytes(salt_enc)),
-        (3, cbor_bytes(salt_auth.to_vec())),
+        (3, cbor_bytes(salt_auth)),
     ]);
 
     Ok((hmac_secret_ext, shared_secret))

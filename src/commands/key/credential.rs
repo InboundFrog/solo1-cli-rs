@@ -2,7 +2,8 @@ use crate::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, 
 use crate::commands::key::common;
 use crate::ctap2::{
     check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set,
-    parse_cbor_map_response, parse_cbor_map_response_allow_empty, prompt_and_get_pin_token,
+    parse_cbor_map_response, parse_cbor_map_response_allow_empty, pin_uv_auth,
+    prompt_and_get_pin_token,
 };
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -120,17 +121,6 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Compute `pinUvAuthParam = HMAC-SHA-256(pin_token, msg)[0..16]`.
-fn pin_uv_auth(pin_token: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
-    use hmac::{Hmac, KeyInit as _, Mac as _};
-    use sha2::Sha256;
-    let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
-        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
-    mac.update(msg);
-    let result = mac.finalize().into_bytes();
-    Ok(result[..16].to_vec())
 }
 
 /// Send a credMgmt (0x0A) subcommand with optional params and pinUvAuthParam.
@@ -420,8 +410,6 @@ pub fn cmd_credential_rm(
     user: Option<&str>,
 ) -> Result<()> {
     use base64::Engine as _;
-    use hmac::{Hmac, KeyInit as _, Mac as _};
-    use sha2::Sha256;
 
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
@@ -515,13 +503,7 @@ pub fn cmd_credential_rm(
     // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x06] || subCommandParamsCbor)[0..16]
     let mut del_auth_msg = vec![0x06u8];
     del_auth_msg.extend_from_slice(&del_params_cbor);
-    let del_pin_uv_auth: Vec<u8> = {
-        let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
-            .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
-        mac.update(&del_auth_msg);
-        let result = mac.finalize().into_bytes();
-        result[..16].to_vec()
-    };
+    let del_pin_uv_auth = pin_uv_auth(pin_token, &del_auth_msg)?;
 
     // Send: authenticatorCredentialManagement CBOR =
     //   {0x01: 6, 0x02: {0x01: cred_id_bytes}, 0x03: 1, 0x04: pinUvAuthParam}

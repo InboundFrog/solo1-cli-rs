@@ -317,6 +317,17 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     session.decrypt_pin_token(&pin_token_enc)
 }
 
+/// Compute `pinUvAuthParam = HMAC-SHA-256(key, msg)[0..16]` (PIN/UV Auth Protocol One).
+///
+/// `key` is the PIN token, or the shared secret for clientPIN subcommands.
+pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
+    type HmacSha256 = Hmac<Sha256>;
+    let mut hmac = HmacSha256::new_from_slice(key)
+        .map_err(|_| SoloError::CryptoError("HMAC key length invalid".into()))?;
+    hmac.update(msg);
+    Ok(hmac.finalize().into_bytes()[..16].to_vec())
+}
+
 /// Represents an established shared secret with a CTAP2 device.
 pub struct ClientPinSession {
     shared_secret: [u8; 32],
@@ -360,13 +371,7 @@ impl ClientPinSession {
 
     /// Compute pinUvAuthParam for a message.
     pub fn authenticate(&self, message: &[u8]) -> Result<Vec<u8>> {
-        type HmacSha256 = Hmac<Sha256>;
-        let mut hmac = HmacSha256::new_from_slice(&self.shared_secret)
-            .map_err(|_| SoloError::CryptoError("HMAC key length invalid".into()))?;
-        hmac.update(message);
-        let full = hmac.finalize().into_bytes();
-        let truncated: Vec<u8> = full[..16].into();
-        Ok(truncated)
+        pin_uv_auth(&self.shared_secret, message)
     }
 
     /// Encrypt the PIN hash for getPinToken.
