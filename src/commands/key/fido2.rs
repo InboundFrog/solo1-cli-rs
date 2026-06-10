@@ -2,8 +2,8 @@ use crate::cbor::{
     cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, find_text_key, int_map,
 };
 use crate::ctap2::{
-    aes256_cbc_decrypt, aes256_cbc_encrypt, cose_to_public_key, ecdh_shared_secret,
-    find_key_agreement_response, parse_cbor_map_response, prompt_and_get_pin_token,
+    aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response,
+    prompt_and_get_pin_token,
 };
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
@@ -164,25 +164,6 @@ pub fn cmd_make_credential(
     Ok(())
 }
 
-/// Perform ECDH key agreement with the device's COSE P-256 public key.
-///
-/// Parses `dev_pub_key_cbor_pairs` (a COSE key map) into a public key, then
-/// computes the shared secret as SHA-256 of the ECDH x-coordinate using the
-/// caller-supplied platform scalar. Returns the 32-byte shared secret and the
-/// platform public key as a CBOR `Value` (COSE_Key map) suitable for use as
-/// `keyAgreement` in the hmac-secret extension input.
-///
-/// Production callers must pass a freshly generated random scalar (see
-/// `prepare_hmac_secret_input`); tests pass a fixed scalar to verify the
-/// ECDH math deterministically.
-fn ecdh_key_agreement(
-    dev_pub_key_cbor_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
-    platform_scalar: &p256::NonZeroScalar,
-) -> Result<([u8; 32], ciborium::value::Value)> {
-    let dev_pub_key = cose_to_public_key(dev_pub_key_cbor_pairs)?;
-    Ok(ecdh_shared_secret(&dev_pub_key, platform_scalar))
-}
-
 /// Decrypt the hmac-secret extension output returned by the authenticator.
 ///
 /// The authenticator encrypts the HMAC output with AES-256-CBC using the
@@ -212,24 +193,24 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
 /// Returns the hmac-secret extension map `{1: keyAgreement, 2: saltEnc, 3: saltAuth}`
 /// and the shared_secret needed to decrypt the authenticator's response.
 fn prepare_hmac_secret_input(
-    cose_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
+    dev_pub_key: &p256::PublicKey,
     challenge: &str,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
     use rand::rngs::OsRng;
     let platform_scalar = p256::NonZeroScalar::random(&mut OsRng);
-    prepare_hmac_secret_input_with_scalar(cose_pairs, challenge, &platform_scalar)
+    prepare_hmac_secret_input_with_scalar(dev_pub_key, challenge, &platform_scalar)
 }
 
 /// Scalar-parameterized implementation of [`prepare_hmac_secret_input`];
 /// tests call this directly with a fixed scalar.
 fn prepare_hmac_secret_input_with_scalar(
-    cose_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
+    dev_pub_key: &p256::PublicKey,
     challenge: &str,
     platform_scalar: &p256::NonZeroScalar,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
-    let (shared_secret, ephemeral_cose_key) = ecdh_key_agreement(cose_pairs, platform_scalar)?;
+    let (shared_secret, ephemeral_cose_key) = ecdh_shared_secret(dev_pub_key, platform_scalar);
 
     // saltEnc = AES-256-CBC(shared_secret, IV=0, salt) — 32 bytes (2 AES blocks)
     let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
@@ -271,21 +252,8 @@ pub fn cmd_challenge_response(
     let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
-    let get_ka_cbor = crate::ctap2::create_key_agreement_cbor();
-    let response = crate::ctap2::ctap2_call(hid, 0x06, &get_ka_cbor)?; // authenticatorClientPIN
-    let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
-
-    let key_agreement = find_key_agreement_response(&resp_pairs)?;
-    let cose_pairs = match key_agreement {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "keyAgreement is not a CBOR map".into(),
-            ))
-        }
-    };
-
-    let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(cose_pairs, challenge)?;
+    let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
+    let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&dev_pub_key, challenge)?;
 
     // ── Step 7: Build and send getAssertion request ───────────────────────────
     // clientDataHash: fixed bytes (device does not verify for hmac-secret use)
@@ -382,6 +350,7 @@ pub fn cmd_challenge_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ctap2::cose_to_public_key;
     use ciborium::value::Value;
 
     /// Build a COSE key map (integer-keyed) from a `p256::PublicKey`.
@@ -427,10 +396,15 @@ mod tests {
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 
-        // Platform → device: platform computes DH with dev_pub
+        // Platform → device: platform computes DH with dev_pub, going through
+        // the COSE-key parse the production code performs on device responses.
         let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
-        let (platform_shared, _cose_key) = ecdh_key_agreement(&dev_cose_pairs, &platform_scalar)
-            .expect("ecdh_key_agreement failed");
+        let parsed_dev_pub = cose_to_public_key(&dev_cose_pairs).expect("COSE parse failed");
+        assert_eq!(
+            parsed_dev_pub, dev_pub,
+            "COSE round-trip must preserve the key"
+        );
+        let (platform_shared, _cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
 
         // Device → platform: device computes DH with platform_pub
         let dev_scalar = dev_secret.to_nonzero_scalar();
@@ -461,8 +435,8 @@ mod tests {
         let expected_y = expected_point.y().unwrap().to_vec();
 
         let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
-        let (_shared, cose_key) = ecdh_key_agreement(&dev_cose_pairs, &platform_scalar)
-            .expect("ecdh_key_agreement failed");
+        let parsed_dev_pub = cose_to_public_key(&dev_cose_pairs).expect("COSE parse failed");
+        let (_shared, cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
 
         let cose_pairs = match cose_key {
             Value::Map(p) => p,
@@ -518,9 +492,8 @@ mod tests {
         let platform_secret = p256::SecretKey::random(&mut OsRng);
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
-        let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
         let (hmac_ext, shared_secret) =
-            prepare_hmac_secret_input_with_scalar(&dev_cose_pairs, challenge, &platform_scalar)
+            prepare_hmac_secret_input_with_scalar(&dev_pub, challenge, &platform_scalar)
                 .expect("prepare_hmac_secret_input_with_scalar failed");
 
         // The result must be a CBOR map
@@ -586,9 +559,8 @@ mod tests {
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 
-        let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
         let (_hmac_ext, platform_shared) =
-            prepare_hmac_secret_input_with_scalar(&dev_cose_pairs, challenge, &platform_scalar)
+            prepare_hmac_secret_input_with_scalar(&dev_pub, challenge, &platform_scalar)
                 .expect("prepare_hmac_secret_input_with_scalar failed");
 
         // Device computes the same shared secret from the platform's public key
