@@ -493,36 +493,35 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    if json {
-        let mut entries = Vec::new();
-        for (rp_id, rp_id_hash) in &rps {
-            let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
-            for (username, cred_id) in credentials {
-                entries.push(CredentialEntry {
-                    rp_id: rp_id.clone(),
-                    user_name: username,
-                    credential_id: base64::engine::general_purpose::STANDARD.encode(&cred_id),
-                });
-            }
+    // ── Step 2: for each RP, enumerate credentials ───────────────────────
+    let mut entries = Vec::new();
+    for (rp_id, rp_id_hash) in &rps {
+        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
+        for (username, cred_id) in credentials {
+            entries.push(CredentialEntry {
+                rp_id: rp_id.clone(),
+                user_name: username,
+                credential_id: base64::engine::general_purpose::STANDARD.encode(&cred_id),
+            });
         }
+    }
+
+    if json {
         return print_json(&CredentialListOutput {
             credentials: entries,
         });
     }
 
-    // ── Step 2: for each RP, enumerate credentials and print ─────────────
     println!(
         "{:<32} {:<24} Credential ID (base64)",
         "Relying Party", "Username"
     );
     println!("{}", "-".repeat(90));
-
-    for (rp_id, rp_id_hash) in &rps {
-        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
-        for (username, cred_id) in credentials {
-            let cred_id_b64 = base64::engine::general_purpose::STANDARD.encode(&cred_id);
-            println!("{:<32} {:<24} {}", rp_id, username, cred_id_b64);
-        }
+    for entry in &entries {
+        println!(
+            "{:<32} {:<24} {}",
+            entry.rp_id, entry.user_name, entry.credential_id
+        );
     }
 
     Ok(())
