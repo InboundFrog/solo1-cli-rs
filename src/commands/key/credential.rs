@@ -325,7 +325,8 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
 
 /// Send enumerateCredentialsBegin (subcommand 0x04) for the given RP hash,
 /// then enumerateCredentialsGetNextCredential (subcommand 0x05) for all
-/// remaining credentials, returning `(username, cred_id_base64)` pairs.
+/// remaining credentials, returning `(username, cred_id)` pairs where
+/// `cred_id` is the raw credential ID bytes.
 ///
 /// `pin_auth_protocol` is always 1 for the current implementation (CTAP 2.0).
 fn enumerate_credentials_for_rp(
@@ -334,7 +335,6 @@ fn enumerate_credentials_for_rp(
     rp_id_hash: &[u8],
     _pin_auth_protocol: u8,
 ) -> Result<Vec<(String, Vec<u8>)>> {
-    use base64::Engine as _;
     use ciborium::value::Value;
 
     // subCommandParams = CBOR({0x01: rpIdHash})
@@ -418,7 +418,7 @@ fn enumerate_credentials_for_rp(
             })
             .unwrap_or_else(|| "<unknown>".into());
 
-        // credentialId: key 0x07 → map with "id" (bytes); store as base64
+        // credentialId: key 0x07 → map with "id" (bytes)
         let cred_id: Vec<u8> = find_cbor_response_by_key(&cred_pairs, 0x07)
             .and_then(|v| {
                 if let Value::Map(m) = v {
@@ -443,8 +443,7 @@ fn enumerate_credentials_for_rp(
             })
             .unwrap_or_default();
 
-        let cred_id_b64 = base64::engine::general_purpose::STANDARD.encode(&cred_id);
-        result.push((username, cred_id_b64.into_bytes()));
+        result.push((username, cred_id));
     }
 
     Ok(result)
@@ -468,6 +467,7 @@ fn enumerate_credentials_for_rp(
 ///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
 pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::output::{print_json, CredentialEntry, CredentialListOutput};
+    use base64::Engine as _;
 
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
@@ -497,12 +497,11 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
         let mut entries = Vec::new();
         for (rp_id, rp_id_hash) in &rps {
             let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
-            for (username, cred_id_bytes) in credentials {
-                let cred_id_b64 = String::from_utf8(cred_id_bytes).unwrap_or_default();
+            for (username, cred_id) in credentials {
                 entries.push(CredentialEntry {
                     rp_id: rp_id.clone(),
                     user_name: username,
-                    credential_id: cred_id_b64,
+                    credential_id: base64::engine::general_purpose::STANDARD.encode(&cred_id),
                 });
             }
         }
@@ -520,8 +519,8 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     for (rp_id, rp_id_hash) in &rps {
         let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
-        for (username, cred_id_bytes) in credentials {
-            let cred_id_b64 = String::from_utf8(cred_id_bytes).unwrap_or_default();
+        for (username, cred_id) in credentials {
+            let cred_id_b64 = base64::engine::general_purpose::STANDARD.encode(&cred_id);
             println!("{:<32} {:<24} {}", rp_id, username, cred_id_b64);
         }
     }
@@ -581,14 +580,7 @@ pub fn cmd_credential_rm(
         let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
         let mut matches: Vec<Vec<u8>> = credentials
             .into_iter()
-            .filter_map(|(username, cred_id_b64_bytes)| {
-                if username == user {
-                    let b64 = String::from_utf8(cred_id_b64_bytes).ok()?;
-                    base64::engine::general_purpose::STANDARD.decode(b64).ok()
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(username, cred_id)| (username == user).then_some(cred_id))
             .collect();
 
         if matches.is_empty() {
