@@ -3,10 +3,10 @@ use std::time::{Duration, Instant};
 
 use hidapi::{HidApi, HidDevice as HidApiDevice};
 
-use crate::device::frame::{build_ctaphid_frames, reassemble_frames, CtapHidFrame, FramePayload};
-use crate::device::protocol::{
-    CMD_BOOT, CTAPHID_BROADCAST_CID, CTAPHID_INIT, SOLO_PID, SOLO_TAG, SOLO_VID,
+use crate::device::frame::{
+    build_bootloader_packet, build_ctaphid_frames, reassemble_frames, CtapHidFrame, FramePayload,
 };
+use crate::device::protocol::{CMD_BOOT, CTAPHID_BROADCAST_CID, CTAPHID_INIT, SOLO_PID, SOLO_VID};
 use crate::error::{Result, SoloError};
 use crate::vlog;
 
@@ -91,7 +91,7 @@ impl SoloHid {
         // Generate a random nonce
         let nonce: [u8; 8] = rand::random();
         vlog!("CTAPHID_INIT: sending nonce {}", hex::encode(nonce));
-        let frames = build_ctaphid_frames(&CTAPHID_BROADCAST_CID, CTAPHID_INIT, &nonce);
+        let frames = build_ctaphid_frames(&CTAPHID_BROADCAST_CID, CTAPHID_INIT, &nonce)?;
         for frame in &frames {
             let encoded = frame.encode();
             self.device.write(&encoded)?;
@@ -130,7 +130,7 @@ impl SoloHid {
                 format!("{}...", hex::encode(&data[..64]))
             }
         );
-        let frames = build_ctaphid_frames(&self.channel_id, cmd, data);
+        let frames = build_ctaphid_frames(&self.channel_id, cmd, data)?;
         vlog!("HID send: {} frame(s)", frames.len());
         for frame in &frames {
             let encoded = frame.encode();
@@ -265,17 +265,9 @@ impl SoloHid {
             addr,
             data.len()
         );
-        let mut packet = Vec::with_capacity(10 + data.len());
-        packet.push(cmd);
-        // 3-byte address, little-endian (firmware does: *(uint32_t*)addr & 0xffffff | 0x8000000)
-        packet.push((addr & 0xFF) as u8);
-        packet.push(((addr >> 8) & 0xFF) as u8);
-        packet.push(((addr >> 16) & 0xFF) as u8);
-        packet.extend_from_slice(&SOLO_TAG);
-        let len = data.len() as u16;
-        packet.push((len >> 8) as u8);
-        packet.push(len as u8);
-        packet.extend_from_slice(data);
+        // [cmd(1)] [addr(3) LE] [TAG(4)] [length_be(2)] [data]; errors if
+        // data is longer than the 16-bit length field can express.
+        let packet = build_bootloader_packet(cmd, addr, data)?;
 
         let resp = self.send_recv(CMD_BOOT, &packet)?;
 
