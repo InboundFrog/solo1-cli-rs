@@ -205,9 +205,7 @@ fn parse_map_payload(payload: &[u8], context: &str) -> Result<Vec<(Value, Value)
 }
 
 #[inline]
-pub fn find_key_agreement_response(
-    response_pairs: &[(Value, Value)],
-) -> core::result::Result<&Value, SoloError> {
+pub fn find_key_agreement_response(response_pairs: &[(Value, Value)]) -> Result<&Value> {
     find_int_key(response_pairs, 0x01).ok_or_else(|| {
         SoloError::MalformedResponse("keyAgreement (0x01) missing in response".into())
     })
