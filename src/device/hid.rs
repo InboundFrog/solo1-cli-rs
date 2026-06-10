@@ -313,29 +313,3 @@ impl crate::device::HidDevice for SoloHid {
         SoloHid::send(self, cmd, data)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn solohid_stores_response_timeout() {
-        // We cannot open a real HID device in a unit test, but we can verify
-        // that the Duration arithmetic used when threading --timeout through
-        // the CLI is correct, and that the field type matches expectations.
-        let secs: u64 = 42;
-        let timeout = Duration::from_secs(secs);
-        assert_eq!(timeout.as_secs(), secs);
-
-        // Also verify that the default timeout value (30 s) round-trips cleanly.
-        let default_timeout = Duration::from_secs(30);
-        assert_eq!(default_timeout.as_secs(), 30);
-
-        // Verify init's fixed timeout is independent of the configurable one.
-        let init_timeout = Duration::from_secs(5);
-        assert!(
-            init_timeout < default_timeout,
-            "init timeout must be less than the default response timeout"
-        );
-    }
-}
