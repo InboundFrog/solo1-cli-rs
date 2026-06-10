@@ -5,7 +5,7 @@ use p256::EncodedPoint;
 use rand::rngs::OsRng;
 use sha2::{Digest as _, Sha256};
 
-use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, int_map};
+use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -107,35 +107,15 @@ fn from_aes_blocks(blocks: &[aes::Block]) -> Vec<u8> {
 
 /// Query CTAP2 getInfo (0x04) and return whether a PIN has been set on the device.
 pub fn get_info_client_pin_set(hid: &impl HidDevice) -> Result<bool> {
-    let get_info_req = vec![0x04u8];
-    let info_resp = hid.send_recv(CTAPHID_CBOR, &get_info_req)?;
+    let info_resp = hid.send_recv(CTAPHID_CBOR, &[0x04u8])?;
     let pairs = parse_cbor_map_response(&info_resp, "getInfo")?;
     // Key 0x04 in getInfo response is the options map (text → bool)
-    let client_pin_set = pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == 0x04 {
-                    if let Value::Map(opts) = v {
-                        return Some(opts.iter().find_map(|(ok, ov)| {
-                            if let (Value::Text(name), Value::Bool(b)) = (ok, ov) {
-                                if name == "clientPin" {
-                                    Some(*b)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        }));
-                    }
-                }
-            }
-            None
-        })
-        .flatten()
-        .unwrap_or(false);
+    let client_pin_set = match find_int_key(&pairs, 0x04) {
+        Some(Value::Map(opts)) => {
+            matches!(find_text_key(opts, "clientPin"), Some(Value::Bool(true)))
+        }
+        _ => false,
+    };
     Ok(client_pin_set)
 }
 
