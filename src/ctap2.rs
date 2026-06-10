@@ -66,6 +66,46 @@ pub fn ctap2_status_message(code: u8) -> &'static str {
 /// Reference: <https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1>
 pub const CTAP2_AES_IV: [u8; 16] = [0u8; 16];
 
+/// Encrypt `data` with AES-256-CBC using `key` and the zero IV ([`CTAP2_AES_IV`]).
+///
+/// `data` must be a non-empty multiple of the 16-byte AES block size.
+pub fn aes256_cbc_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
+    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
+    let mut blocks = to_aes_blocks(data)?;
+    Aes256CbcEnc::new(key.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
+    Ok(from_aes_blocks(&blocks))
+}
+
+/// Decrypt `data` with AES-256-CBC using `key` and the zero IV ([`CTAP2_AES_IV`]).
+///
+/// `data` must be a non-empty multiple of the 16-byte AES block size.
+pub fn aes256_cbc_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
+    type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
+    let mut blocks = to_aes_blocks(data)?;
+    Aes256CbcDec::new(key.into(), &CTAP2_AES_IV.into()).decrypt_blocks(&mut blocks);
+    Ok(from_aes_blocks(&blocks))
+}
+
+fn to_aes_blocks(data: &[u8]) -> Result<Vec<aes::Block>> {
+    if data.is_empty() || !data.len().is_multiple_of(16) {
+        return Err(SoloError::CryptoError(format!(
+            "AES-256-CBC input has unexpected length: {}",
+            data.len()
+        )));
+    }
+    Ok(data
+        .chunks_exact(16)
+        .map(|chunk| aes::Block::try_from(chunk).expect("chunks_exact yields 16-byte chunks"))
+        .collect())
+}
+
+fn from_aes_blocks(blocks: &[aes::Block]) -> Vec<u8> {
+    blocks
+        .iter()
+        .flat_map(|b| b.as_slice().iter().copied())
+        .collect()
+}
+
 /// Query CTAP2 getInfo (0x04) and return whether a PIN has been set on the device.
 pub fn get_info_client_pin_set(hid: &impl HidDevice) -> Result<bool> {
     let get_info_req = vec![0x04u8];
@@ -310,27 +350,12 @@ impl ClientPinSession {
 
     /// Encrypt a PIN for setPin or changePin.
     pub fn encrypt_pin(&self, pin: &str) -> Result<Vec<u8>> {
-        type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-
         let pin_bytes = pin.as_bytes();
         let mut padded_pin = [0u8; 64];
         let copy_len = pin_bytes.len().min(64);
         padded_pin[..copy_len].copy_from_slice(&pin_bytes[..copy_len]);
 
-        let mut encrypted = [0u8; 64];
-        let mut blocks = [aes::Block::default(); 4];
-        for (i, chunk) in padded_pin.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-
-        Aes256CbcEnc::new(&self.shared_secret.into(), &CTAP2_AES_IV.into())
-            .encrypt_blocks(&mut blocks);
-
-        for (i, block) in blocks.iter().enumerate() {
-            encrypted[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-
-        Ok(encrypted.to_vec())
+        aes256_cbc_encrypt(&self.shared_secret, &padded_pin)
     }
 
     /// Compute pinUvAuthParam for a message.
@@ -346,23 +371,16 @@ impl ClientPinSession {
 
     /// Encrypt the PIN hash for getPinToken.
     pub fn encrypt_pin_hash(&self, pin: &str) -> Result<[u8; 16]> {
-        type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
         let pin_hash_full = Sha256::digest(pin.as_bytes());
-        let pin_hash: [u8; 16] = pin_hash_full[..16].try_into().unwrap();
+        let enc = aes256_cbc_encrypt(&self.shared_secret, &pin_hash_full[..16])?;
 
-        let mut pin_hash_enc = pin_hash;
-        let mut block = aes::Block::from(pin_hash_enc);
-        Aes256CbcEnc::new(&self.shared_secret.into(), &CTAP2_AES_IV.into())
-            .encrypt_blocks(std::slice::from_mut(&mut block));
-        pin_hash_enc.copy_from_slice(block.as_slice());
-
+        let mut pin_hash_enc = [0u8; 16];
+        pin_hash_enc.copy_from_slice(&enc);
         Ok(pin_hash_enc)
     }
 
     /// Decrypt a PIN token from the device.
     pub fn decrypt_pin_token(&self, pin_token_enc: &[u8]) -> Result<Vec<u8>> {
-        type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
-
         if pin_token_enc.is_empty() || !pin_token_enc.len().is_multiple_of(16) {
             return Err(SoloError::MalformedResponse(format!(
                 "pinTokenEnc has unexpected length: {}",
@@ -370,21 +388,7 @@ impl ClientPinSession {
             )));
         }
 
-        let mut pin_token = pin_token_enc.to_vec();
-        let n_blocks = pin_token.len() / 16;
-        let mut blocks = vec![aes::Block::default(); n_blocks];
-        for (i, chunk) in pin_token.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-
-        Aes256CbcDec::new(&self.shared_secret.into(), &CTAP2_AES_IV.into())
-            .decrypt_blocks(&mut blocks);
-
-        for (i, block) in blocks.iter().enumerate() {
-            pin_token[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-
-        Ok(pin_token)
+        aes256_cbc_decrypt(&self.shared_secret, pin_token_enc)
     }
 }
 

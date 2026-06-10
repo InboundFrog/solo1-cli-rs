@@ -2,8 +2,8 @@ use crate::cbor::{
     cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, find_text_key, int_map,
 };
 use crate::ctap2::{
-    extract_cose_coord, find_key_agreement_response, parse_cbor_map_response,
-    prompt_and_get_pin_token, CTAP2_AES_IV,
+    aes256_cbc_decrypt, aes256_cbc_encrypt, extract_cose_coord, find_key_agreement_response,
+    parse_cbor_map_response, prompt_and_get_pin_token,
 };
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
@@ -243,10 +243,6 @@ fn ecdh_key_agreement(
 /// shared secret and a zero IV. `encrypted` must be 32 or 64 bytes (one or
 /// two HMAC-SHA-256 outputs). Returns the decrypted bytes.
 fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec<u8>> {
-    use aes::cipher::{BlockModeDecrypt, KeyIvInit};
-
-    type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
-
     if encrypted.len() != 32 && encrypted.len() != 64 {
         return Err(SoloError::MalformedResponse(format!(
             "hmac-secret encrypted output has unexpected length: {}",
@@ -254,20 +250,7 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
         )));
     }
 
-    let n_blocks = encrypted.len() / 16;
-    let mut output = encrypted.to_vec();
-    {
-        let mut blocks = vec![aes::Block::default(); n_blocks];
-        for (i, chunk) in encrypted.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-        Aes256CbcDec::new(&(*shared_secret).into(), &CTAP2_AES_IV.into())
-            .decrypt_blocks(&mut blocks);
-        for (i, block) in blocks.iter().enumerate() {
-            output[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-    }
-    Ok(output)
+    aes256_cbc_decrypt(shared_secret, encrypted)
 }
 
 // TODO Cleanup doc - need to talk to Claude
@@ -286,27 +269,14 @@ fn prepare_hmac_secret_input(
     cose_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
     challenge: &str,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
-    use aes::cipher::{BlockModeEncrypt, KeyIvInit};
     use hmac::{Hmac, KeyInit as _, Mac as _};
-
-    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
     let (shared_secret, ephemeral_cose_key) = derive_shared_secret(cose_pairs)?;
 
     // saltEnc = AES-256-CBC(shared_secret, IV=0, salt) — 32 bytes (2 AES blocks)
-    let mut salt_enc = [0u8; 32];
-    {
-        let mut blocks = [aes::Block::default(); 2];
-        for (i, chunk) in salt.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
-        for (i, block) in blocks.iter().enumerate() {
-            salt_enc[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-    }
+    let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
 
     // saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
     let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
@@ -318,7 +288,7 @@ fn prepare_hmac_secret_input(
     // hmac-secret extension input: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
     let hmac_secret_ext = int_map([
         (1, ephemeral_cose_key),
-        (2, cbor_bytes(salt_enc.to_vec())),
+        (2, cbor_bytes(salt_enc)),
         (3, cbor_bytes(salt_auth.to_vec())),
     ]);
 
@@ -522,27 +492,14 @@ fn prepare_hmac_secret_input_with_scalar(
     challenge: &str,
     platform_scalar: p256::NonZeroScalar,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
-    use aes::cipher::{BlockModeEncrypt, KeyIvInit};
     use hmac::{Hmac, KeyInit as _, Mac as _};
-
-    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
 
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
     let (shared_secret, ephemeral_cose_key) =
         ecdh_key_agreement_with_scalar(cose_pairs, platform_scalar)?;
 
-    let mut salt_enc = [0u8; 32];
-    {
-        let mut blocks = [aes::Block::default(); 2];
-        for (i, chunk) in salt.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
-        for (i, block) in blocks.iter().enumerate() {
-            salt_enc[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-    }
+    let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
 
     let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
         .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
@@ -552,7 +509,7 @@ fn prepare_hmac_secret_input_with_scalar(
 
     let hmac_secret_ext = int_map([
         (1, ephemeral_cose_key),
-        (2, cbor_bytes(salt_enc.to_vec())),
+        (2, cbor_bytes(salt_enc)),
         (3, cbor_bytes(salt_auth.to_vec())),
     ]);
 
@@ -688,11 +645,8 @@ mod tests {
     /// - saltAuth equals HMAC-SHA-256(shared_secret, saltEnc)[0..16]
     #[test]
     fn prepare_hmac_secret_input_output_is_correct() {
-        use aes::cipher::{BlockModeDecrypt, KeyIvInit};
         use hmac::{Hmac, KeyInit as _, Mac as _};
         use rand::rngs::OsRng;
-
-        type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
         let challenge = "test-challenge";
         let expected_salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
@@ -737,20 +691,10 @@ mod tests {
         assert_eq!(salt_auth.len(), 16, "saltAuth must be 16 bytes");
 
         // Decrypt saltEnc and verify it equals SHA-256(challenge)
-        let mut decrypted = [0u8; 32];
-        {
-            let mut blocks = [aes::Block::default(); 2];
-            for (i, chunk) in salt_enc.chunks_exact(16).enumerate() {
-                blocks[i] = (*chunk).try_into().unwrap();
-            }
-            Aes256CbcDec::new(&shared_secret.into(), &CTAP2_AES_IV.into())
-                .decrypt_blocks(&mut blocks);
-            for (i, block) in blocks.iter().enumerate() {
-                decrypted[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-            }
-        }
+        let decrypted = aes256_cbc_decrypt(&shared_secret, &salt_enc).expect("decrypt failed");
         assert_eq!(
-            decrypted, expected_salt,
+            decrypted.as_slice(),
+            expected_salt,
             "Decrypted saltEnc must equal SHA-256(challenge)"
         );
 
