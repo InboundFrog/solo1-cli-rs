@@ -16,18 +16,12 @@ use crate::error::{Result, SoloError};
 /// File must be <= 6144 bytes.
 pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Result<()> {
     // Normalize hash type to the canonical form expected by the device
-    let hash_type_str = match hash_type.to_lowercase().as_str() {
-        "sha256" => "SHA256",
-        "sha512" => "SHA512",
-        "rsa2048" => "RSA2048",
-        "ed25519" => "Ed25519",
-        other => {
-            return Err(SoloError::DeviceError(format!(
-                "Unknown hash type: {}. Valid: SHA256, SHA512, RSA2048, Ed25519",
-                other
-            )))
-        }
-    };
+    let hash_type_str = normalize_hash_type(hash_type).ok_or_else(|| {
+        SoloError::DeviceError(format!(
+            "Unknown hash type: {}. Valid: SHA256, SHA512, RSA2048, Ed25519",
+            hash_type.to_lowercase()
+        ))
+    })?;
 
     let file_bytes = std::fs::read(filename)?;
     if file_bytes.len() > 6 * 1024 {
@@ -64,6 +58,19 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
     }
 
     Ok(())
+}
+
+/// Normalize a probe hash type to the canonical form expected by the device.
+///
+/// Matching is case-insensitive. Returns `None` for unknown hash types.
+fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
+    match hash_type.to_lowercase().as_str() {
+        "sha256" => Some("SHA256"),
+        "sha512" => Some("SHA512"),
+        "rsa2048" => Some("RSA2048"),
+        "ed25519" => Some("Ed25519"),
+        _ => None,
+    }
 }
 
 /// Sign a file using CTAP2 getAssertion with the file's SHA-256 as clientDataHash.
@@ -185,6 +192,58 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_normalize_hash_type_known_types() {
+        let cases: &[(&str, &str)] = &[
+            ("sha256", "SHA256"),
+            ("SHA256", "SHA256"),
+            ("Sha256", "SHA256"),
+            ("sha512", "SHA512"),
+            ("SHA512", "SHA512"),
+            ("rsa2048", "RSA2048"),
+            ("RSA2048", "RSA2048"),
+            ("ed25519", "Ed25519"),
+            ("Ed25519", "Ed25519"),
+            ("ED25519", "Ed25519"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                normalize_hash_type(input),
+                Some(*expected),
+                "hash type '{}' should normalize to '{}'",
+                input,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_normalize_hash_type_unknown_types() {
+        for input in ["md5", "sha1", "blake3", ""] {
+            assert_eq!(
+                normalize_hash_type(input),
+                None,
+                "hash type '{}' should be rejected",
+                input
+            );
+        }
+    }
+
+    /// cmd_probe must reject an unknown hash type before touching the file or device.
+    #[test]
+    fn test_cmd_probe_rejects_unknown_hash_type() {
+        use crate::device::mock::MockDevice;
+        // Empty queue: any device call would return Timeout, not DeviceError.
+        let device = MockDevice::new(vec![]);
+        let err = cmd_probe(&device, "md5", Path::new("/nonexistent")).unwrap_err();
+        assert!(
+            matches!(err, SoloError::DeviceError(_)),
+            "unexpected error: {}",
+            err
+        );
+        assert!(err.to_string().contains("Unknown hash type"));
+    }
 
     #[test]
     fn test_check_ga_response_ok() {
