@@ -39,7 +39,7 @@ pub use protocol::{
 // Frame types and helpers
 pub use frame::{
     build_bootloader_packet, build_ctaphid_frames, dfu_block_index, reassemble_frames,
-    CtapHidFrame, FramePayload, DFU_CHUNK_SIZE, FLASH_BASE,
+    CtapHidFrame, FramePayload, CTAPHID_MAX_PAYLOAD, DFU_CHUNK_SIZE, FLASH_BASE,
 };
 
 // Device communication
