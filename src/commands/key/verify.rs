@@ -207,8 +207,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
     let mut request_bytes = vec![0x01u8];
-    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)?;
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 

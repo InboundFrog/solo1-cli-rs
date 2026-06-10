@@ -148,8 +148,7 @@ pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
 /// Returns the map pairs on success.
 pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
-    let val: Value = ciborium::de::from_reader(&response[1..])
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    let val: Value = ciborium::de::from_reader(&response[1..])?;
     match val {
         Value::Map(p) => Ok(p),
         _ => Err(SoloError::MalformedResponse(format!(
@@ -191,8 +190,7 @@ pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec
 pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let get_ka_cbor = create_key_agreement_cbor();
     let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
-    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)?;
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
@@ -254,8 +252,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     ]);
 
     let mut gpt_req = vec![0x06u8]; // authenticatorClientPIN
-    ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)?;
 
     let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
     if gpt_resp.is_empty() {
@@ -269,8 +266,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
         return Err(SoloError::AuthenticatorError { code, message });
     }
 
-    let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])?;
     let gpt_pairs = match gpt_val {
         Value::Map(p) => p,
         _ => {

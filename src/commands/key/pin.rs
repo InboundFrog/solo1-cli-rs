@@ -48,8 +48,7 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     ]);
 
     let mut change_pin_bytes = vec![0x06u8];
-    ciborium::ser::into_writer(&change_pin_cbor, &mut change_pin_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&change_pin_cbor, &mut change_pin_bytes)?;
 
     let change_pin_response = hid.send_recv(CTAPHID_CBOR, &change_pin_bytes)?;
 
@@ -107,8 +106,7 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     ]);
 
     let mut set_pin_bytes = vec![0x06u8];
-    ciborium::ser::into_writer(&set_pin_cbor, &mut set_pin_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&set_pin_cbor, &mut set_pin_bytes)?;
 
     let set_pin_response = hid.send_recv(CTAPHID_CBOR, &set_pin_bytes)?;
 

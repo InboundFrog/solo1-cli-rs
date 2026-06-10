@@ -180,8 +180,7 @@ fn send_cred_mgmt(
 
     let cm_cbor = int_map(entries);
     let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
-    ciborium::ser::into_writer(&cm_cbor, &mut req)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&cm_cbor, &mut req)?;
     hid.send_recv(CTAPHID_CBOR, &req)
 }
 
@@ -192,8 +191,7 @@ fn send_cred_mgmt(
 fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
     let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
     let mut req = vec![0x0Au8];
-    ciborium::ser::into_writer(&cm_cbor, &mut req)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&cm_cbor, &mut req)?;
     hid.send_recv(CTAPHID_CBOR, &req)
 }
 
@@ -225,8 +223,7 @@ fn parse_cm_response(
     if resp.len() == 1 {
         return Ok(vec![]);
     }
-    let val: Value =
-        ciborium::de::from_reader(&resp[1..]).map_err(|e| SoloError::CborError(e.to_string()))?;
+    let val: Value = ciborium::de::from_reader(&resp[1..])?;
     match val {
         Value::Map(p) => Ok(p),
         _ => Err(SoloError::MalformedResponse(format!(
@@ -341,8 +338,7 @@ fn enumerate_credentials_for_rp(
     // pinUvAuthParam   = HMAC-SHA-256(pinToken, [0x04] || subCommandParamsCbor)[0..16]
     let rk_begin_params = int_map([(0x01i64, cbor_bytes(rp_id_hash.to_vec()))]);
     let mut rk_params_cbor: Vec<u8> = Vec::new();
-    ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)?;
 
     let mut rk_auth_msg = vec![0x04u8];
     rk_auth_msg.extend_from_slice(&rk_params_cbor);
@@ -633,8 +629,7 @@ pub fn cmd_credential_rm(
     ]);
     let del_params = int_map([(0x02i64, cred_descriptor)]);
     let mut del_params_cbor: Vec<u8> = Vec::new();
-    ciborium::ser::into_writer(&del_params, &mut del_params_cbor)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&del_params, &mut del_params_cbor)?;
 
     // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x06] || subCommandParamsCbor)[0..16]
     let mut del_auth_msg = vec![0x06u8];
@@ -656,8 +651,7 @@ pub fn cmd_credential_rm(
         (0x04, cbor_bytes(del_pin_uv_auth)), // pinUvAuthParam
     ]);
     let mut del_req = vec![0x0Au8]; // authenticatorCredentialManagement
-    ciborium::ser::into_writer(&del_cbor, &mut del_req)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&del_cbor, &mut del_req)?;
 
     let del_resp = hid.send_recv(CTAPHID_CBOR, &del_req)?;
     if del_resp.is_empty() {

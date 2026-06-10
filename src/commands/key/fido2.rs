@@ -100,8 +100,7 @@ pub fn cmd_make_credential(
 
     // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
     let mut request_bytes = vec![0x01u8];
-    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)?;
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
 
@@ -353,8 +352,7 @@ pub fn cmd_challenge_response(
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
     let get_ka_cbor = crate::ctap2::create_key_agreement_cbor();
     let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
-    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)?;
 
     let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
     let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
@@ -399,8 +397,7 @@ pub fn cmd_challenge_response(
     eprintln!("Touch your authenticator to generate a response...");
 
     let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command
-    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)?;
 
     let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
 
@@ -437,8 +434,7 @@ pub fn cmd_challenge_response(
 
     // Parse extensions CBOR starting at byte 37
     let ext_cbor_bytes = &auth_data[37..];
-    let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)?;
 
     let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
 

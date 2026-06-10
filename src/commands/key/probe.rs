@@ -47,8 +47,7 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
         (Value::Text("data".into()), Value::Bytes(file_bytes)),
     ]);
     let mut cbor_bytes = Vec::new();
-    ciborium::ser::into_writer(&cbor_val, &mut cbor_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&cbor_val, &mut cbor_bytes)?;
 
     let response = hid.send_recv(CMD_PROBE, &cbor_bytes)?;
     let result_hex = hex::encode(&response);
@@ -105,8 +104,7 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
     ]);
 
     let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command byte
-    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)?;
 
     let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
     check_ga_response(&ga_response, filename)
@@ -128,8 +126,7 @@ fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
     }
 
     // Parse CBOR response map
-    let ga_val: Value = ciborium::de::from_reader(&ga_response[1..])
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    let ga_val: Value = ciborium::de::from_reader(&ga_response[1..])?;
 
     let ga_pairs = match ga_val {
         Value::Map(p) => p,
