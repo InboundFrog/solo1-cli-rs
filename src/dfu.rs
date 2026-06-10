@@ -11,13 +11,8 @@ use crate::error::{Result, SoloError};
 use crate::vlog;
 
 // DFU request codes
-pub const DFU_DETACH: u8 = 0x00;
 pub const DFU_DNLOAD: u8 = 0x01;
-pub const DFU_UPLOAD: u8 = 0x02;
 pub const DFU_GETSTATUS: u8 = 0x03;
-pub const DFU_CLRSTATUS: u8 = 0x04;
-pub const DFU_GETSTATE: u8 = 0x05;
-pub const DFU_ABORT: u8 = 0x06;
 
 // DFU states
 pub const DFU_STATE_IDLE: u8 = 0x02;
@@ -137,16 +132,6 @@ impl DfuDevice {
             status.poll_timeout_ms
         );
         Ok(status)
-    }
-
-    pub fn clear_status(&self) -> Result<()> {
-        self.control_out(DFU_CLRSTATUS, 0, &[])?;
-        Ok(())
-    }
-
-    pub fn abort(&self) -> Result<()> {
-        self.control_out(DFU_ABORT, 0, &[])?;
-        Ok(())
     }
 
     /// Wait while device is in DNBUSY state.
