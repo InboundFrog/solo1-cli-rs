@@ -233,7 +233,7 @@ fn run_program_command(
 ) -> error::Result<()> {
     match cmd {
         ProgramCommands::Bootloader { firmware } => {
-            let hid = SoloHid::open_bootloader(serial, timeout)?;
+            let hid = SoloHid::open(serial, timeout)?;
             program::cmd_program_bootloader(&hid, &firmware)?;
         }
 
