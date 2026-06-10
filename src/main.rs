@@ -89,54 +89,47 @@ fn run_key_command(
     json: bool,
     timeout: std::time::Duration,
 ) -> error::Result<()> {
+    // Every key subcommand talks to a device, so open it once up front.
+    let hid = SoloHid::open(serial, timeout)?;
     match cmd {
-        KeyCommands::Rng { command } => {
-            // Open device for all RNG subcommands
-            let hid = SoloHid::open(serial, timeout)?;
-            match command {
-                RngCommands::Hexbytes { num } => {
-                    let hex = key::cmd_rng_hexbytes(&hid, num)?;
-                    if json {
-                        output::print_json(&output::RngOutput { bytes: hex })?;
-                    } else {
-                        println!("{}", hex);
-                    }
-                }
-                RngCommands::Raw => {
-                    key::cmd_rng_raw(&hid)?;
-                }
-                RngCommands::Feedkernel => {
-                    key::cmd_rng_feedkernel(&hid)?;
+        KeyCommands::Rng { command } => match command {
+            RngCommands::Hexbytes { num } => {
+                let hex = key::cmd_rng_hexbytes(&hid, num)?;
+                if json {
+                    output::print_json(&output::RngOutput { bytes: hex })?;
+                } else {
+                    println!("{}", hex);
                 }
             }
-        }
+            RngCommands::Raw => {
+                key::cmd_rng_raw(&hid)?;
+            }
+            RngCommands::Feedkernel => {
+                key::cmd_rng_feedkernel(&hid)?;
+            }
+        },
 
         KeyCommands::ChallengeResponse {
             credential_id,
             challenge,
             host,
         } => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_challenge_response(&hid, &credential_id, &challenge, &host, json)?;
         }
 
         KeyCommands::Verify => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_verify(&hid, json)?;
         }
 
         KeyCommands::Version => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_key_version(&hid, json)?;
         }
 
         KeyCommands::Wink => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_wink(&hid)?;
         }
 
         KeyCommands::Ping { count, data } => {
-            let hid = SoloHid::open(serial, timeout)?;
             // Parse data as hex if it looks like hex, otherwise use as UTF-8 bytes
             let ping_data = if data.chars().all(|c| c.is_ascii_hexdigit()) && data.len() % 2 == 0 {
                 hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec())
@@ -147,27 +140,22 @@ fn run_key_command(
         }
 
         KeyCommands::Keyboard { data } => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_keyboard(&hid, data.as_bytes())?;
         }
 
         KeyCommands::Reset => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_reset(&hid)?;
         }
 
         KeyCommands::ChangePin => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_change_pin(&hid)?;
         }
 
         KeyCommands::SetPin => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_set_pin(&hid)?;
         }
 
         KeyCommands::DisableUpdates => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_disable_updates(&hid)?;
         }
 
@@ -175,7 +163,6 @@ fn run_key_command(
             hash_type,
             filename,
         } => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_probe(&hid, &hash_type, &filename)?;
         }
 
@@ -183,45 +170,40 @@ fn run_key_command(
             credential_id,
             filename,
         } => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_sign_file(&hid, &credential_id, &filename)?;
         }
 
         KeyCommands::Update { firmware } => {
-            let hid = SoloHid::open(serial, timeout)?;
             key::cmd_update(&hid, firmware.as_deref())?;
         }
 
-        KeyCommands::Credential { command } => {
-            let hid = SoloHid::open(serial, timeout)?;
-            match command {
-                CredentialCommands::Info => {
-                    key::credential::cmd_credential_info(&hid, json)?;
-                }
-                CredentialCommands::Ls => {
-                    key::credential::cmd_credential_ls(&hid, json)?;
-                }
-                CredentialCommands::Rm {
-                    credential_id,
-                    host,
-                    user,
-                } => {
-                    if credential_id.is_none() && host.is_none() {
-                        eprintln!("Error: provide either a credential ID or --host and --user");
-                        std::process::exit(1);
-                    }
-                    key::credential::cmd_credential_rm(
-                        &hid,
-                        credential_id.as_deref(),
-                        host.as_deref(),
-                        user.as_deref(),
-                    )?;
-                }
-                CredentialCommands::Create { host, user, prompt } => {
-                    key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
-                }
+        KeyCommands::Credential { command } => match command {
+            CredentialCommands::Info => {
+                key::credential::cmd_credential_info(&hid, json)?;
             }
-        }
+            CredentialCommands::Ls => {
+                key::credential::cmd_credential_ls(&hid, json)?;
+            }
+            CredentialCommands::Rm {
+                credential_id,
+                host,
+                user,
+            } => {
+                if credential_id.is_none() && host.is_none() {
+                    eprintln!("Error: provide either a credential ID or --host and --user");
+                    std::process::exit(1);
+                }
+                key::credential::cmd_credential_rm(
+                    &hid,
+                    credential_id.as_deref(),
+                    host.as_deref(),
+                    user.as_deref(),
+                )?;
+            }
+            CredentialCommands::Create { host, user, prompt } => {
+                key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
+            }
+        },
     }
     Ok(())
 }
