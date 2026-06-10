@@ -5,7 +5,7 @@ use p256::EncodedPoint;
 use rand::rngs::OsRng;
 use sha2::{Digest as _, Sha256};
 
-use crate::cbor::{cbor_bytes, cbor_int, find_int_key, int_map};
+use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, int_map};
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
@@ -360,6 +360,64 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     };
 
     session.decrypt_pin_token(&pin_token_enc)
+}
+
+/// If a PIN is set on the device, prompt for it, fetch a PIN token, and
+/// compute `pinUvAuthParam` over `msg`. Returns `None` when no PIN is set.
+pub fn maybe_pin_uv_auth(hid: &impl HidDevice, msg: &[u8]) -> Result<Option<Vec<u8>>> {
+    if !get_info_client_pin_set(hid)? {
+        return Ok(None);
+    }
+    let pin_token = prompt_and_get_pin_token(hid)?;
+    Ok(Some(pin_uv_auth(&pin_token, msg)?))
+}
+
+/// Build a CTAP2 makeCredential (0x01) request payload.
+///
+/// Includes the common scaffolding: clientDataHash (0x01), rp (0x02, with id
+/// and name both set to `rp_id`), user (0x03, with id/name/displayName all
+/// derived from `user`), and the ES256 pubKeyCredParams list (0x04).
+/// `extra_entries` (e.g. extensions 0x06 or options 0x07) are appended in
+/// order, followed by pinUvAuthParam (0x08) and pinUvAuthProtocol = 1 (0x09)
+/// when `pin_uv_auth` is provided.
+pub fn build_make_credential(
+    rp_id: &str,
+    user: &str,
+    client_data_hash: &[u8],
+    pin_uv_auth: Option<Vec<u8>>,
+    extra_entries: impl IntoIterator<Item = (i64, Value)>,
+) -> Value {
+    let mut entries: Vec<(i64, Value)> = vec![
+        (0x01, cbor_bytes(client_data_hash.to_vec())),
+        (
+            0x02,
+            Value::Map(vec![
+                (cbor_text("id"), cbor_text(rp_id)),
+                (cbor_text("name"), cbor_text(rp_id)),
+            ]),
+        ),
+        (
+            0x03,
+            Value::Map(vec![
+                (cbor_text("id"), cbor_bytes(user.as_bytes().to_vec())),
+                (cbor_text("name"), cbor_text(user)),
+                (cbor_text("displayName"), cbor_text(user)),
+            ]),
+        ),
+        (
+            0x04,
+            Value::Array(vec![Value::Map(vec![
+                (cbor_text("alg"), cbor_int(-7)),
+                (cbor_text("type"), cbor_text("public-key")),
+            ])]),
+        ),
+    ];
+    entries.extend(extra_entries);
+    if let Some(auth_param) = pin_uv_auth {
+        entries.push((0x08, cbor_bytes(auth_param)));
+        entries.push((0x09, cbor_int(1)));
+    }
+    int_map(entries)
 }
 
 /// Compute `pinUvAuthParam = HMAC-SHA-256(key, msg)[0..16]` (PIN/UV Auth Protocol One).

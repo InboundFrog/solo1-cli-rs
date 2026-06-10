@@ -1,9 +1,6 @@
-use crate::cbor::{
-    cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, find_text_key, int_map,
-};
+use crate::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
 use crate::ctap2::{
     aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response,
-    prompt_and_get_pin_token,
 };
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
@@ -38,58 +35,23 @@ pub fn cmd_make_credential(
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     // PIN prompt comes first; the touch prompt is printed after PIN entry.
-    let pin_uv_auth: Option<Vec<u8>> = if crate::ctap2::get_info_client_pin_set(hid)? {
-        let pin_token = prompt_and_get_pin_token(hid)?;
-        // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
-        Some(crate::ctap2::pin_uv_auth(&pin_token, &client_data_hash)?)
-    } else {
-        None
-    };
+    let pin_uv_auth = crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash)?;
 
-    // Build CTAP2 makeCredential CBOR request map (integer keys per CTAP2 spec):
-    //   0x01: clientDataHash
-    //   0x02: rp  {"id": host, "name": host}
-    //   0x03: user {"id": user bytes, "name": user, "displayName": user}
-    //   0x04: pubKeyCredParams [{"alg": -7, "type": "public-key"}]
-    //   0x06: extensions {"hmac-secret": true}
-    //   0x07: options {"rk": true}
-    //   0x08: pinUvAuthParam (if PIN is set)
-    //   0x09: pinUvAuthProtocol = 1 (if PIN is set)
-    let mut cbor_entries: Vec<(i64, Value)> = vec![
-        (0x01, cbor_bytes(client_data_hash)),
-        (
-            0x02,
-            Value::Map(vec![
-                (cbor_text("id"), cbor_text(host)),
-                (cbor_text("name"), cbor_text(host)),
-            ]),
-        ),
-        (
-            0x03,
-            Value::Map(vec![
-                (cbor_text("id"), cbor_bytes(user.as_bytes().to_vec())),
-                (cbor_text("name"), cbor_text(user)),
-                (cbor_text("displayName"), cbor_text(user)),
-            ]),
-        ),
-        (
-            0x04,
-            Value::Array(vec![Value::Map(vec![
-                (cbor_text("alg"), cbor_int(-7)),
-                (cbor_text("type"), cbor_text("public-key")),
-            ])]),
-        ),
-        (
-            0x06,
-            Value::Map(vec![(cbor_text("hmac-secret"), Value::Bool(true))]),
-        ),
-        (0x07, Value::Map(vec![(cbor_text("rk"), Value::Bool(true))])),
-    ];
-    if let Some(auth_param) = pin_uv_auth {
-        cbor_entries.push((0x08, cbor_bytes(auth_param)));
-        cbor_entries.push((0x09, cbor_int(1)));
-    }
-    let cbor_request = int_map(cbor_entries);
+    // makeCredential request with extensions {"hmac-secret": true} (0x06)
+    // and options {"rk": true} (0x07) on top of the shared scaffolding.
+    let cbor_request = crate::ctap2::build_make_credential(
+        host,
+        user,
+        &client_data_hash,
+        pin_uv_auth,
+        [
+            (
+                0x06,
+                Value::Map(vec![(cbor_text("hmac-secret"), Value::Bool(true))]),
+            ),
+            (0x07, Value::Map(vec![(cbor_text("rk"), Value::Bool(true))])),
+        ],
+    );
 
     if !prompt.is_empty() {
         eprintln!("{}", prompt);
