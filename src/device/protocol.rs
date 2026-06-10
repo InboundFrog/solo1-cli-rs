@@ -28,6 +28,7 @@ pub const CMD_DISABLE_BOOTLOADER: u8 = 0x47;
 pub const CMD_BOOT: u8 = 0x50;
 pub const CMD_ENTER_BOOT: u8 = 0x51;
 pub const CMD_ENTER_ST_BOOT: u8 = 0x52;
+pub const CMD_KEYBOARD: u8 = 0x53;
 
 // Firmware-mode custom commands
 pub const CMD_RNG: u8 = 0x60;

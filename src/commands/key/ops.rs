@@ -1,7 +1,9 @@
 use std::time::Instant;
 
 use crate::commands::key::common;
-use crate::device::{HidDevice, CMD_GET_VERSION, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK};
+use crate::device::{
+    HidDevice, CMD_GET_VERSION, CMD_KEYBOARD, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK,
+};
 use crate::error::{Result, SoloError};
 use crate::firmware::FirmwareVersion;
 use crate::output::{print_json, PingOutput};
@@ -79,10 +81,7 @@ pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
             "Keyboard data too long (max 64 bytes)".into(),
         ));
     }
-    // Use a vendor command for keyboard programming
-    // This uses CTAPHID_VENDOR_FIRST + offset
-    let cmd = 0x53u8; // vendor keyboard command
-    hid.send_recv(cmd, data)?;
+    hid.send_recv(CMD_KEYBOARD, data)?;
     println!("Keyboard sequence programmed ({} bytes)", data.len());
     Ok(())
 }
