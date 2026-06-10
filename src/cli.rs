@@ -130,12 +130,6 @@ pub enum KeyCommands {
         /// Relying party host
         #[arg(long, default_value = "solokeys.dev")]
         host: String,
-        /// User ID
-        #[arg(long, default_value = "they")]
-        user: String,
-        /// PIN (prompted if not provided)
-        #[arg(long)]
-        pin: Option<String>,
     },
 
     /// Verify key authenticity via attestation
@@ -249,9 +243,6 @@ pub enum CredentialCommands {
         /// User ID / username
         #[arg(long)]
         user: String,
-        /// PIN (prompted if not provided and key has PIN set)
-        #[arg(long)]
-        pin: Option<String>,
         /// Prompt text (use empty string to suppress, outputting only the credential_id)
         #[arg(
             long,
