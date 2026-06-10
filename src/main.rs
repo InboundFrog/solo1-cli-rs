@@ -115,8 +115,6 @@ fn run_key_command(
             credential_id,
             challenge,
             host,
-            user: _,
-            pin: _,
         } => {
             let hid = SoloHid::open(serial, timeout)?;
             key::cmd_challenge_response(&hid, &credential_id, &challenge, &host, json)?;
@@ -219,12 +217,7 @@ fn run_key_command(
                         user.as_deref(),
                     )?;
                 }
-                CredentialCommands::Create {
-                    host,
-                    user,
-                    pin: _,
-                    prompt,
-                } => {
+                CredentialCommands::Create { host, user, prompt } => {
                     key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
                 }
             }
