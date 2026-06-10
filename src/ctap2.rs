@@ -1,7 +1,6 @@
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use ciborium::value::Value;
 use hmac::{Hmac, KeyInit as _, Mac as _};
-use p256::ecdh::EphemeralSecret;
 use p256::EncodedPoint;
 use rand::rngs::OsRng;
 use sha2::{Digest as _, Sha256};
@@ -240,6 +239,64 @@ pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec
     crate::cbor::require_bytes(cose_pairs, key, "COSE key")
 }
 
+/// Parse a COSE_Key map (EC2 / P-256) into a `p256::PublicKey`.
+///
+/// Extracts the x (-2) and y (-3) coordinates, validates their length, and
+/// assembles the uncompressed SEC1 point.
+pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicKey> {
+    let dev_x = extract_cose_coord(cose_pairs, -2)?;
+    let dev_y = extract_cose_coord(cose_pairs, -3)?;
+    if dev_x.len() != 32 || dev_y.len() != 32 {
+        return Err(SoloError::MalformedResponse(
+            "Device COSE key coordinates are not 32 bytes".into(),
+        ));
+    }
+
+    let mut uncompressed = vec![0x04u8];
+    uncompressed.extend_from_slice(&dev_x);
+    uncompressed.extend_from_slice(&dev_y);
+    p256::PublicKey::from_sec1_bytes(&uncompressed)
+        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))
+}
+
+/// Perform ECDH against `dev_pub_key` with the given platform scalar.
+///
+/// Returns the PIN/UV Auth Protocol One shared secret (SHA-256 of the ECDH
+/// x-coordinate) together with the platform public key wrapped as a COSE_Key
+/// CBOR map suitable for the `keyAgreement` request field.
+///
+/// Production callers must use a freshly generated random scalar (see
+/// [`ClientPinSession::new`]); tests may pass a fixed scalar to make the
+/// key-agreement math deterministic.
+pub fn ecdh_shared_secret(
+    dev_pub_key: &p256::PublicKey,
+    platform_scalar: &p256::NonZeroScalar,
+) -> ([u8; 32], Value) {
+    let shared_point = p256::ecdh::diffie_hellman(platform_scalar, dev_pub_key.as_affine());
+    let shared_secret: [u8; 32] = Sha256::digest(shared_point.raw_secret_bytes()).into();
+
+    let platform_pub = p256::PublicKey::from_secret_scalar(platform_scalar);
+    let platform_point = EncodedPoint::from(&platform_pub);
+    let x = platform_point
+        .x()
+        .expect("uncompressed SEC1 point always has x")
+        .to_vec();
+    let y = platform_point
+        .y()
+        .expect("uncompressed SEC1 point always has y")
+        .to_vec();
+
+    let cose_key = int_map([
+        (1, cbor_int(2)),    // kty: EC2
+        (3, cbor_int(-7)),   // alg: ES256
+        (-1, cbor_int(1)),   // crv: P-256
+        (-2, cbor_bytes(x)), // x
+        (-3, cbor_bytes(y)), // y
+    ]);
+
+    (shared_secret, cose_key)
+}
+
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
 pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let get_ka_cbor = create_key_agreement_cbor();
@@ -257,19 +314,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
         }
     };
 
-    let dev_x = extract_cose_coord(cose_pairs, -2)?;
-    let dev_y = extract_cose_coord(cose_pairs, -3)?;
-    if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::MalformedResponse(
-            "Device COSE key coordinates are not 32 bytes".into(),
-        ));
-    }
-
-    let mut uncompressed = vec![0x04u8];
-    uncompressed.extend_from_slice(&dev_x);
-    uncompressed.extend_from_slice(&dev_y);
-    p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))
+    cose_to_public_key(cose_pairs)
 }
 
 /// Prompt the user for a PIN, validate it is non-empty, and acquire a PIN token from the device.
@@ -335,24 +380,11 @@ pub struct ClientPinSession {
 }
 
 impl ClientPinSession {
-    /// Establish a session by performing ECDH with the device's public key.
+    /// Establish a session by performing ECDH with the device's public key
+    /// using a freshly generated ephemeral scalar.
     pub fn new(dev_pub_key: &p256::PublicKey) -> Self {
-        let ephemeral_secret = EphemeralSecret::random(&mut OsRng);
-        let ephemeral_pub = p256::PublicKey::from(&ephemeral_secret);
-        let ephemeral_point = EncodedPoint::from(&ephemeral_pub);
-
-        let shared_secret_point = ephemeral_secret.diffie_hellman(dev_pub_key);
-        let shared_secret: [u8; 32] = Sha256::digest(shared_secret_point.raw_secret_bytes()).into();
-
-        // Wrap ephemeral public key in COSE_Key format for CTAP2
-        let ephemeral_pub_key = int_map([
-            (1, cbor_int(2)),                                        // kty: EC2
-            (3, cbor_int(-7)),                                       // alg: ES256
-            (-1, cbor_int(1)),                                       // crv: P-256
-            (-2, cbor_bytes(ephemeral_point.x().unwrap().to_vec())), // x
-            (-3, cbor_bytes(ephemeral_point.y().unwrap().to_vec())), // y
-        ]);
-
+        let platform_scalar = p256::NonZeroScalar::random(&mut OsRng);
+        let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar);
         Self {
             shared_secret,
             ephemeral_pub_key,
@@ -430,8 +462,7 @@ mod tests {
     fn test_client_pin_session_crypto_roundtrip() {
         // We need a dummy public key to initialize the session.
         // P-256 public key is 65 bytes (0x04 || X || Y)
-        let secret = EphemeralSecret::random(&mut OsRng);
-        let pub_key = p256::PublicKey::from(&secret);
+        let pub_key = p256::SecretKey::random(&mut OsRng).public_key();
 
         let session = ClientPinSession::new(&pub_key);
 
