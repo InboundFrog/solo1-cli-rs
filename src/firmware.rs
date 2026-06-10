@@ -199,9 +199,12 @@ pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
     hex_records_to_binary(&records)
 }
 
-/// Convert Intel HEX records to a flat binary.
-/// Returns (base_address, bytes).
-pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
+/// Walk Intel HEX records and accumulate `(absolute_address, data)` segments.
+///
+/// Handles `Data`, `ExtendedLinearAddress` and `ExtendedSegmentAddress`
+/// records and stops at the first `EndOfFile` record. Start-address records
+/// are ignored. Segments are returned in record order (not sorted).
+fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
     let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
     let mut base_addr: u32 = 0;
     let mut upper_linear: u32 = 0;
@@ -224,6 +227,14 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
             Record::EndOfFile => break,
         }
     }
+
+    Ok(segments)
+}
+
+/// Convert Intel HEX records to a flat binary.
+/// Returns (base_address, bytes).
+pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
+    let mut segments = hex_records_to_segments(records)?;
 
     if segments.is_empty() {
         return Err(SoloError::FirmwareError(
@@ -448,25 +459,15 @@ pub fn merge_hex_files(
 
     for input_path in inputs {
         let content = std::fs::read_to_string(input_path)?;
-        let reader = ihex::Reader::new(&content);
-        let mut upper_linear: u32 = 0;
-
-        for record in reader {
-            let r = record.map_err(|e| {
+        let records: Vec<Record> = ihex::Reader::new(&content)
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| {
                 SoloError::FirmwareError(format!("HEX parse error in {:?}: {:?}", input_path, e))
             })?;
-            match r {
-                Record::Data { offset, value } => {
-                    let base = upper_linear + (offset as u32);
-                    for (i, &b) in value.iter().enumerate() {
-                        byte_map.insert(base + i as u32, b);
-                    }
-                }
-                Record::ExtendedLinearAddress(upper) => {
-                    upper_linear = (upper as u32) << 16;
-                }
-                Record::EndOfFile => break,
-                _ => {}
+
+        for (addr, data) in hex_records_to_segments(&records)? {
+            for (i, &b) in data.iter().enumerate() {
+                byte_map.insert(addr + i as u32, b);
             }
         }
     }
@@ -572,25 +573,10 @@ pub fn flash_addr(page: u32) -> u32 {
 ///   app_end_page=20: for bootloaders >2.5.3  (APPLICATION_END_PAGE_COUNT=20)
 pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) -> Result<Vec<u8>> {
     let content = std::fs::read_to_string(hex_path)?;
-    let reader = ihex::Reader::new(&content);
-    let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
-    let mut upper_linear: u32 = 0;
-
-    for record in reader {
-        let r = record
-            .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e)))?;
-        match r {
-            Record::Data { offset, value } => {
-                let addr = upper_linear + (offset as u32);
-                segments.push((addr, value));
-            }
-            Record::ExtendedLinearAddress(upper) => {
-                upper_linear = (upper as u32) << 16;
-            }
-            Record::EndOfFile => break,
-            _ => {}
-        }
-    }
+    let records: Vec<Record> = ihex::Reader::new(&content)
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e)))?;
+    let mut segments = hex_records_to_segments(&records)?;
 
     if segments.is_empty() {
         return Err(SoloError::FirmwareError("No data in HEX file".into()));
