@@ -626,12 +626,6 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
     Ok(binary)
 }
 
-/// Extract the firmware binary from an Intel HEX file, stripping the last 8 bytes.
-/// This uses the default app_end_page=20 (for bootloaders >2.5.3).
-pub fn firmware_bytes_to_sign(hex_path: &Path) -> Result<Vec<u8>> {
-    firmware_bytes_to_sign_for_version(hex_path, 20)
-}
-
 /// Create a FirmwareJson from the hex file text and both versioned signatures.
 ///
 /// The firmware field contains the base64 of the HEX FILE TEXT (not binary),
