@@ -88,19 +88,18 @@ solo1 key credential ls                  # List resident credentials
 solo1 key credential rm <ID>             # Remove credential by base64 ID
 solo1 key credential rm --host <HOST> --user <USER>
                                          # Remove credential by relying party and username
-solo1 key credential create --host <HOST> --user <USER> [--pin <PIN>] [--prompt <TEXT>]
+solo1 key credential create --host <HOST> --user <USER> [--prompt <TEXT>]
                                          # Create FIDO2 credential with hmac-secret
 ```
 
 #### Challenge-response
 
 ```sh
-solo1 key challenge-response <CREDENTIAL_ID> <CHALLENGE> \
-    [--host <HOST>] [--user <USER>] [--pin <PIN>]
+solo1 key challenge-response <CREDENTIAL_ID> <CHALLENGE> [--host <HOST>]
 # HMAC-secret challenge-response using an existing credential
 # CREDENTIAL_ID: hex string from credential create output
 # CHALLENGE: string to hash
-# --host defaults to "solokeys.dev", --user defaults to "they"
+# --host defaults to "solokeys.dev"
 ```
 
 ### Programming commands (`solo1 program [--serial <SN>] [--udp]`)
