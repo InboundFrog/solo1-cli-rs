@@ -86,12 +86,6 @@ impl SoloHid {
         Ok(hid)
     }
 
-    /// Open a device for bootloader use (may be in firmware or bootloader mode).
-    pub fn open_bootloader(serial: Option<&str>, timeout: Duration) -> Result<Self> {
-        // Try the normal firmware PID first; if that fails, same VID/PID for bootloader
-        Self::open(serial, timeout)
-    }
-
     /// Send a CTAPHID_INIT to get a channel ID.
     fn init(&mut self) -> Result<()> {
         // Generate a random nonce
