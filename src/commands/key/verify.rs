@@ -1,4 +1,4 @@
-use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, int_map};
+use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
 use crate::ctap2::{parse_cbor_map_response, prompt_and_get_pin_token};
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -19,22 +19,6 @@ struct AttestationData {
     auth_data: Option<Vec<u8>>,
     /// DER-encoded ECDSA signature (`attStmt.sig`), if present.
     sig: Option<Vec<u8>>,
-}
-
-/// Find a value by text key inside a CBOR map's pairs.
-fn find_text_key<'a>(
-    pairs: &'a [(ciborium::value::Value, ciborium::value::Value)],
-    key: &str,
-) -> Option<&'a ciborium::value::Value> {
-    use ciborium::value::Value;
-    pairs.iter().find_map(|(k, v)| {
-        if let Value::Text(s) = k {
-            if s == key {
-                return Some(v);
-            }
-        }
-        None
-    })
 }
 
 /// Parse a raw makeCredential CTAP2 response and extract the packed

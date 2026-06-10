@@ -1,8 +1,8 @@
-use crate::cbor::{cbor_bytes, cbor_int, int_map};
+use crate::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
 use crate::commands::key::common;
 use crate::ctap2::{
-    extract_cbor_text_responses, find_cbor_response_by_key, get_info_client_pin_set,
-    parse_cbor_map_response, prompt_and_get_pin_token,
+    extract_cbor_text_responses, get_info_client_pin_set, parse_cbor_map_response,
+    prompt_and_get_pin_token,
 };
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -20,7 +20,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     let pairs = parse_cbor_map_response(&response, "authenticatorGetInfo")?;
 
     let mut versions = Vec::new();
-    if let Some(Value::Array(v)) = find_cbor_response_by_key(&pairs, 0x01) {
+    if let Some(Value::Array(v)) = find_int_key(&pairs, 0x01) {
         versions = extract_cbor_text_responses(v)
             .into_iter()
             .map(|s| s.to_string())
@@ -28,7 +28,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
 
     let mut extensions = Vec::new();
-    if let Some(Value::Array(e)) = find_cbor_response_by_key(&pairs, 0x02) {
+    if let Some(Value::Array(e)) = find_int_key(&pairs, 0x02) {
         extensions = extract_cbor_text_responses(e)
             .into_iter()
             .map(|s| s.to_string())
@@ -36,12 +36,12 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
 
     let mut aaguid = String::new();
-    if let Some(Value::Bytes(b)) = find_cbor_response_by_key(&pairs, 0x03) {
+    if let Some(Value::Bytes(b)) = find_int_key(&pairs, 0x03) {
         aaguid = hex::encode(b);
     }
 
     let mut options = HashMap::new();
-    if let Some(Value::Map(m)) = find_cbor_response_by_key(&pairs, 0x04) {
+    if let Some(Value::Map(m)) = find_int_key(&pairs, 0x04) {
         for (k, v) in m {
             if let (Value::Text(name), Value::Bool(b)) = (k, v) {
                 options.insert(name.to_string(), *b);
@@ -49,16 +49,10 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         }
     }
 
-    let max_msg_size = find_cbor_response_by_key(&pairs, 0x05).and_then(|v| {
-        if let Value::Integer(n) = v {
-            (*n).try_into().ok()
-        } else {
-            None
-        }
-    });
+    let max_msg_size = find_uint(&pairs, 0x05);
 
     let mut pin_uv_auth_protocols = Vec::new();
-    if let Some(Value::Array(protos)) = find_cbor_response_by_key(&pairs, 0x06) {
+    if let Some(Value::Array(protos)) = find_int_key(&pairs, 0x06) {
         for v in protos {
             if let Value::Integer(i) = v {
                 if let Ok(n) = (*i).try_into() {
@@ -68,30 +62,11 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         }
     }
 
-    let max_credential_count_in_list = find_cbor_response_by_key(&pairs, 0x07).and_then(|v| {
-        if let Value::Integer(n) = v {
-            (*n).try_into().ok()
-        } else {
-            None
-        }
-    });
+    let max_credential_count_in_list = find_uint(&pairs, 0x07);
 
-    let max_credential_id_length = find_cbor_response_by_key(&pairs, 0x08).and_then(|v| {
-        if let Value::Integer(n) = v {
-            (*n).try_into().ok()
-        } else {
-            None
-        }
-    });
+    let max_credential_id_length = find_uint(&pairs, 0x08);
 
-    let remaining_discoverable_credentials =
-        find_cbor_response_by_key(&pairs, 0x0A).and_then(|v| {
-            if let Value::Integer(n) = v {
-                (*n).try_into().ok()
-            } else {
-                None
-            }
-        });
+    let remaining_discoverable_credentials = find_uint(&pairs, 0x0A);
 
     if json {
         return print_json(&CredentialInfoOutput {
@@ -249,15 +224,9 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
     }
 
     // totalRPs (key 0x05); may be absent when there is only one RP
-    let total_rps: usize = find_cbor_response_by_key(&rp_begin_pairs, 0x05)
-        .and_then(|v| {
-            if let Value::Integer(i) = v {
-                (*i).try_into().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(1usize);
+    let total_rps: usize = find_uint(&rp_begin_pairs, 0x05)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(1);
 
     let mut rp_responses: Vec<Vec<(Value, Value)>> = vec![rp_begin_pairs];
     for _ in 1..total_rps {
@@ -269,24 +238,13 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
     let mut result = Vec::new();
     for rp_pairs in rp_responses {
         // rp map at key 0x03 — extract the "id" text field
-        let rp_id: String = find_cbor_response_by_key(&rp_pairs, 0x03)
+        let rp_id: String = find_int_key(&rp_pairs, 0x03)
             .and_then(|v| {
                 if let Value::Map(m) = v {
-                    m.iter().find_map(|(k, val)| {
-                        if let Value::Text(s) = k {
-                            if s == "id" {
-                                if let Value::Text(id) = val {
-                                    Some(id.clone())
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
+                    match find_text_key(m, "id") {
+                        Some(Value::Text(id)) => Some(id.clone()),
+                        _ => None,
+                    }
                 } else {
                     None
                 }
@@ -294,7 +252,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
             .unwrap_or_else(|| "<unknown>".into());
 
         // rpIdHash at key 0x04 (32 bytes)
-        let rp_id_hash: Vec<u8> = find_cbor_response_by_key(&rp_pairs, 0x04)
+        let rp_id_hash: Vec<u8> = find_int_key(&rp_pairs, 0x04)
             .and_then(|v| {
                 if let Value::Bytes(b) = v {
                     Some(b.clone())
@@ -351,15 +309,9 @@ fn enumerate_credentials_for_rp(
         return Ok(vec![]);
     }
 
-    let total_creds: usize = find_cbor_response_by_key(&rk_begin_pairs, 0x09)
-        .and_then(|v| {
-            if let Value::Integer(i) = v {
-                (*i).try_into().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(1usize);
+    let total_creds: usize = find_uint(&rk_begin_pairs, 0x09)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(1);
 
     let mut cred_responses = vec![rk_begin_pairs];
     for _ in 1..total_creds {
@@ -371,42 +323,20 @@ fn enumerate_credentials_for_rp(
     let mut result = Vec::new();
     for cred_pairs in cred_responses {
         // user: key 0x06 → map with "name" or "displayName"
-        let username: String = find_cbor_response_by_key(&cred_pairs, 0x06)
+        let username: String = find_int_key(&cred_pairs, 0x06)
             .and_then(|v| {
                 if let Value::Map(m) = v {
                     // prefer "name", fall back to "displayName", then "id" as hex
-                    m.iter()
-                        .find_map(|(k, val)| {
-                            if let Value::Text(s) = k {
-                                if s == "name" || s == "displayName" {
-                                    if let Value::Text(n) = val {
-                                        Some(n.clone())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                        .or_else(|| {
-                            m.iter().find_map(|(k, val)| {
-                                if let Value::Text(s) = k {
-                                    if s == "id" {
-                                        match val {
-                                            Value::Text(t) => Some(t.clone()),
-                                            Value::Bytes(b) => Some(hex::encode(b)),
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
+                    let text_field = |key: &str| match find_text_key(m, key) {
+                        Some(Value::Text(n)) => Some(n.clone()),
+                        _ => None,
+                    };
+                    text_field("name")
+                        .or_else(|| text_field("displayName"))
+                        .or_else(|| match find_text_key(m, "id") {
+                            Some(Value::Text(t)) => Some(t.clone()),
+                            Some(Value::Bytes(b)) => Some(hex::encode(b)),
+                            _ => None,
                         })
                 } else {
                     None
@@ -415,24 +345,13 @@ fn enumerate_credentials_for_rp(
             .unwrap_or_else(|| "<unknown>".into());
 
         // credentialId: key 0x07 → map with "id" (bytes); store as base64
-        let cred_id: Vec<u8> = find_cbor_response_by_key(&cred_pairs, 0x07)
+        let cred_id: Vec<u8> = find_int_key(&cred_pairs, 0x07)
             .and_then(|v| {
                 if let Value::Map(m) = v {
-                    m.iter().find_map(|(k, val)| {
-                        if let Value::Text(s) = k {
-                            if s == "id" {
-                                if let Value::Bytes(b) = val {
-                                    Some(b.clone())
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
+                    match find_text_key(m, "id") {
+                        Some(Value::Bytes(b)) => Some(b.clone()),
+                        _ => None,
+                    }
                 } else {
                     None
                 }

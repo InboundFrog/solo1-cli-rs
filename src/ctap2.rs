@@ -109,11 +109,6 @@ pub fn create_key_agreement_cbor() -> Value {
 }
 
 #[inline]
-pub fn find_cbor_response_by_key(response_pairs: &[(Value, Value)], key: u64) -> Option<&Value> {
-    find_int_key(response_pairs, key as i64)
-}
-
-#[inline]
 pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
     response_values
         .iter()
@@ -162,7 +157,7 @@ pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Va
 pub fn find_key_agreement_response(
     response_pairs: &[(Value, Value)],
 ) -> core::result::Result<&Value, SoloError> {
-    find_cbor_response_by_key(response_pairs, 0x01).ok_or_else(|| {
+    find_int_key(response_pairs, 0x01).ok_or_else(|| {
         SoloError::MalformedResponse("keyAgreement (0x01) missing in response".into())
     })
 }
@@ -170,20 +165,7 @@ pub fn find_key_agreement_response(
 /// Extract a byte-valued coordinate from a COSE key map by its integer key.
 #[inline]
 pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec<u8>> {
-    cose_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: i64 = (*i).try_into().ok()?;
-                if ki == key {
-                    if let Value::Bytes(b) = v {
-                        return Some(b.clone());
-                    }
-                }
-            }
-            None
-        })
-        .ok_or_else(|| SoloError::MalformedResponse(format!("COSE key missing coordinate {}", key)))
+    crate::cbor::require_bytes(cose_pairs, key, "COSE key")
 }
 
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
@@ -276,7 +258,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
         }
     };
 
-    let pin_token_enc = match find_cbor_response_by_key(&gpt_pairs, 0x02) {
+    let pin_token_enc = match find_int_key(&gpt_pairs, 0x02) {
         Some(Value::Bytes(b)) => b.clone(),
         _ => {
             return Err(SoloError::MalformedResponse(
@@ -415,23 +397,6 @@ mod tests {
         );
         let err_empty = check_ctap_status(&[], "test").unwrap_err();
         assert!(err_empty.to_string().contains("Empty response"));
-    }
-
-    #[test]
-    fn test_find_cbor_response_by_key() {
-        let pairs = vec![
-            (Value::Integer(1u64.into()), Value::Text("one".into())),
-            (Value::Integer(2u64.into()), Value::Bytes(vec![0x02])),
-        ];
-        assert_eq!(
-            find_cbor_response_by_key(&pairs, 1),
-            Some(&Value::Text("one".into()))
-        );
-        assert_eq!(
-            find_cbor_response_by_key(&pairs, 2),
-            Some(&Value::Bytes(vec![0x02]))
-        );
-        assert_eq!(find_cbor_response_by_key(&pairs, 3), None);
     }
 
     #[test]

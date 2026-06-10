@@ -1,4 +1,6 @@
-use crate::cbor::{cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, int_map};
+use crate::cbor::{
+    cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, find_text_key, int_map,
+};
 use crate::ctap2::{
     extract_cose_coord, find_key_agreement_response, parse_cbor_map_response,
     prompt_and_get_pin_token, CTAP2_AES_IV,
@@ -439,26 +441,14 @@ pub fn cmd_challenge_response(
     let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
 
     // Find "hmac-secret" key in extensions
-    let hmac_secret_enc = ext_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Text(s) = k {
-                if s == "hmac-secret" {
-                    if let Value::Bytes(b) = v {
-                        Some(b.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| {
-            SoloError::MalformedResponse("hmac-secret missing from authData extensions".into())
-        })?;
+    let hmac_secret_enc = match find_text_key(&ext_pairs, "hmac-secret") {
+        Some(Value::Bytes(b)) => b.clone(),
+        _ => {
+            return Err(SoloError::MalformedResponse(
+                "hmac-secret missing from authData extensions".into(),
+            ))
+        }
+    };
 
     // ── Step 8 (cont): Decrypt the hmac-secret output ────────────────────────
     let hmac_output = decrypt_hmac_secret(&shared_secret, &hmac_secret_enc)?;
