@@ -189,10 +189,6 @@ fn run_key_command(
                 host,
                 user,
             } => {
-                if credential_id.is_none() && host.is_none() {
-                    eprintln!("Error: provide either a credential ID or --host and --user");
-                    std::process::exit(1);
-                }
                 key::credential::cmd_credential_rm(
                     &hid,
                     credential_id.as_deref(),

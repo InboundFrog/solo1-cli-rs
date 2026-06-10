@@ -226,6 +226,7 @@ pub enum CredentialCommands {
     /// Remove a resident credential
     Rm {
         /// Credential ID (base64); alternative to --host/--user
+        #[arg(required_unless_present = "host")]
         credential_id: Option<String>,
         /// Relying party host (requires --user)
         #[arg(long, requires = "user")]
