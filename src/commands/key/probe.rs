@@ -111,49 +111,13 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
 }
 
 fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
-    use crate::ctap2::ctap2_status_message;
+    use crate::cbor::find_int_key;
     use ciborium::value::Value;
-    if ga_response.is_empty() {
-        return Err(SoloError::MalformedResponse(
-            "Empty response from getAssertion".into(),
-        ));
-    }
-    let ga_status = ga_response[0];
-    if ga_status != 0x00 {
-        let code = ga_status;
-        let message = ctap2_status_message(code);
-        return Err(SoloError::AuthenticatorError { code, message });
-    }
 
-    // Parse CBOR response map
-    let ga_val: Value = ciborium::de::from_reader(&ga_response[1..])?;
-
-    let ga_pairs = match ga_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "getAssertion response is not a map".into(),
-            ))
-        }
-    };
-
-    let get_ga_key = |key: u64| -> Option<&Value> {
-        ga_pairs.iter().find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == key {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-    };
+    let ga_pairs = crate::ctap2::parse_cbor_map_response(ga_response, "getAssertion")?;
 
     // 0x03: signature bytes
-    let signature = match get_ga_key(0x03) {
+    let signature = match find_int_key(&ga_pairs, 0x03) {
         Some(Value::Bytes(b)) => b.clone(),
         _ => {
             return Err(SoloError::MalformedResponse(

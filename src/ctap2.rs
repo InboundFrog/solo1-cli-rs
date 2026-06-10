@@ -143,7 +143,26 @@ pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
 /// Returns the map pairs on success.
 pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
-    let val: Value = ciborium::de::from_reader(&response[1..])?;
+    parse_map_payload(&response[1..], context)
+}
+
+/// Like [`parse_cbor_map_response`], but tolerates a response consisting of a
+/// lone success status byte with no CBOR payload, returning an empty map.
+///
+/// Some credMgmt subcommands (e.g. enumerating an empty device) reply this way.
+pub fn parse_cbor_map_response_allow_empty(
+    response: &[u8],
+    context: &str,
+) -> Result<Vec<(Value, Value)>> {
+    check_ctap_status(response, context)?;
+    if response.len() == 1 {
+        return Ok(vec![]);
+    }
+    parse_map_payload(&response[1..], context)
+}
+
+fn parse_map_payload(payload: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
+    let val: Value = ciborium::de::from_reader(payload)?;
     match val {
         Value::Map(p) => Ok(p),
         _ => Err(SoloError::MalformedResponse(format!(
@@ -237,26 +256,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     ciborium::ser::into_writer(&get_pin_token_cbor, &mut gpt_req)?;
 
     let gpt_resp = hid.send_recv(CTAPHID_CBOR, &gpt_req)?;
-    if gpt_resp.is_empty() {
-        return Err(SoloError::MalformedResponse(
-            "Empty response from getPINToken".into(),
-        ));
-    }
-    if gpt_resp[0] != 0x00 {
-        let code = gpt_resp[0];
-        let message = ctap2_status_message(code);
-        return Err(SoloError::AuthenticatorError { code, message });
-    }
-
-    let gpt_val: Value = ciborium::de::from_reader(&gpt_resp[1..])?;
-    let gpt_pairs = match gpt_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "getPINToken response is not a CBOR map".into(),
-            ))
-        }
-    };
+    let gpt_pairs = parse_cbor_map_response(&gpt_resp, "getPINToken")?;
 
     let pin_token_enc = match find_int_key(&gpt_pairs, 0x02) {
         Some(Value::Bytes(b)) => b.clone(),

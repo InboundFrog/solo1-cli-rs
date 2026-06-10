@@ -51,18 +51,7 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     ciborium::ser::into_writer(&change_pin_cbor, &mut change_pin_bytes)?;
 
     let change_pin_response = hid.send_recv(CTAPHID_CBOR, &change_pin_bytes)?;
-
-    if change_pin_response.is_empty() {
-        return Err(SoloError::MalformedResponse(
-            "Empty response from changePin".into(),
-        ));
-    }
-    let change_pin_status = change_pin_response[0];
-    if change_pin_status != 0x00 {
-        let code = change_pin_status;
-        let message = crate::ctap2::ctap2_status_message(code);
-        return Err(SoloError::AuthenticatorError { code, message });
-    }
+    crate::ctap2::check_ctap_status(&change_pin_response, "changePin")?;
 
     println!("PIN changed successfully.");
     Ok(())
@@ -109,18 +98,7 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     ciborium::ser::into_writer(&set_pin_cbor, &mut set_pin_bytes)?;
 
     let set_pin_response = hid.send_recv(CTAPHID_CBOR, &set_pin_bytes)?;
-
-    if set_pin_response.is_empty() {
-        return Err(SoloError::MalformedResponse(
-            "Empty response from setPin".into(),
-        ));
-    }
-    let set_pin_status = set_pin_response[0];
-    if set_pin_status != 0x00 {
-        let code = set_pin_status;
-        let message = crate::ctap2::ctap2_status_message(code);
-        return Err(SoloError::AuthenticatorError { code, message });
-    }
+    crate::ctap2::check_ctap_status(&set_pin_response, "setPin")?;
 
     println!("PIN set successfully.");
     Ok(())

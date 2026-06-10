@@ -1,8 +1,8 @@
 use crate::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
 use crate::commands::key::common;
 use crate::ctap2::{
-    extract_cbor_text_responses, get_info_client_pin_set, parse_cbor_map_response,
-    prompt_and_get_pin_token,
+    check_ctap_status, extract_cbor_text_responses, get_info_client_pin_set,
+    parse_cbor_map_response, parse_cbor_map_response_allow_empty, prompt_and_get_pin_token,
 };
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -170,44 +170,6 @@ fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> 
     hid.send_recv(CTAPHID_CBOR, &req)
 }
 
-/// Parse a raw credMgmt HID response into a CBOR map, checking the status byte.
-///
-/// Returns an empty vec if the response contains only a success status byte
-/// with no CBOR payload. Returns `Err` for any non-zero status byte or
-/// malformed CBOR.
-fn parse_cm_response(
-    resp: Vec<u8>,
-    ctx: &str,
-) -> Result<Vec<(ciborium::value::Value, ciborium::value::Value)>> {
-    use crate::ctap2::ctap2_status_message;
-    use ciborium::value::Value;
-    if resp.is_empty() {
-        return Err(SoloError::MalformedResponse(format!(
-            "Empty response from {}",
-            ctx
-        )));
-    }
-    let status = resp[0];
-    if status != 0x00 {
-        let message = ctap2_status_message(status);
-        return Err(SoloError::AuthenticatorError {
-            code: status,
-            message,
-        });
-    }
-    if resp.len() == 1 {
-        return Ok(vec![]);
-    }
-    let val: Value = ciborium::de::from_reader(&resp[1..])?;
-    match val {
-        Value::Map(p) => Ok(p),
-        _ => Err(SoloError::MalformedResponse(format!(
-            "{} response is not a CBOR map",
-            ctx
-        ))),
-    }
-}
-
 /// Send enumerateRPsBegin (subcommand 0x02) then enumerateRPsGetNextRP
 /// (subcommand 0x03) for all remaining RPs, returning `(rp_id, rp_id_hash)`
 /// pairs for every relying party that has at least one resident credential.
@@ -217,7 +179,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
     // enumerateRPsBegin — pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
     let rp_begin_auth = pin_uv_auth(pin_token, &[0x02u8])?;
     let rp_begin_resp = send_cred_mgmt(hid, 0x02, None, rp_begin_auth)?;
-    let rp_begin_pairs = parse_cm_response(rp_begin_resp, "enumerateRPsBegin")?;
+    let rp_begin_pairs = parse_cbor_map_response_allow_empty(&rp_begin_resp, "enumerateRPsBegin")?;
 
     if rp_begin_pairs.is_empty() {
         return Ok(vec![]);
@@ -231,7 +193,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
     let mut rp_responses: Vec<Vec<(Value, Value)>> = vec![rp_begin_pairs];
     for _ in 1..total_rps {
         let next_resp = send_cred_mgmt_next(hid, 0x03)?;
-        let next_pairs = parse_cm_response(next_resp, "enumerateRPsGetNextRP")?;
+        let next_pairs = parse_cbor_map_response_allow_empty(&next_resp, "enumerateRPsGetNextRP")?;
         rp_responses.push(next_pairs);
     }
 
@@ -303,7 +265,8 @@ fn enumerate_credentials_for_rp(
     let rk_begin_auth = pin_uv_auth(pin_token, &rk_auth_msg)?;
 
     let rk_begin_resp = send_cred_mgmt(hid, 0x04, Some(rk_begin_params), rk_begin_auth)?;
-    let rk_begin_pairs = parse_cm_response(rk_begin_resp, "enumerateCredentialsBegin")?;
+    let rk_begin_pairs =
+        parse_cbor_map_response_allow_empty(&rk_begin_resp, "enumerateCredentialsBegin")?;
 
     if rk_begin_pairs.is_empty() {
         return Ok(vec![]);
@@ -316,7 +279,10 @@ fn enumerate_credentials_for_rp(
     let mut cred_responses = vec![rk_begin_pairs];
     for _ in 1..total_creds {
         let next_resp = send_cred_mgmt_next(hid, 0x05)?;
-        let next_pairs = parse_cm_response(next_resp, "enumerateCredentialsGetNextCredential")?;
+        let next_pairs = parse_cbor_map_response_allow_empty(
+            &next_resp,
+            "enumerateCredentialsGetNextCredential",
+        )?;
         cred_responses.push(next_pairs);
     }
 
@@ -573,19 +539,7 @@ pub fn cmd_credential_rm(
     ciborium::ser::into_writer(&del_cbor, &mut del_req)?;
 
     let del_resp = hid.send_recv(CTAPHID_CBOR, &del_req)?;
-    if del_resp.is_empty() {
-        return Err(SoloError::MalformedResponse(
-            "Empty response from deleteCredential".into(),
-        ));
-    }
-    let status = del_resp[0];
-    if status != 0x00 {
-        let message = crate::ctap2::ctap2_status_message(status);
-        return Err(SoloError::AuthenticatorError {
-            code: status,
-            message,
-        });
-    }
+    check_ctap_status(&del_resp, "deleteCredential")?;
 
     println!("Credential deleted.");
     Ok(())
