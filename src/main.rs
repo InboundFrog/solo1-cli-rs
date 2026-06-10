@@ -130,12 +130,8 @@ fn run_key_command(
         }
 
         KeyCommands::Ping { count, data } => {
-            // Parse data as hex if it looks like hex, otherwise use as UTF-8 bytes
-            let ping_data = if data.chars().all(|c| c.is_ascii_hexdigit()) && data.len() % 2 == 0 {
-                hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec())
-            } else {
-                data.as_bytes().to_vec()
-            };
+            // Parse data as hex if it decodes cleanly, otherwise use as UTF-8 bytes
+            let ping_data = hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec());
             key::cmd_ping(&hid, count, &ping_data, json)?;
         }
 
