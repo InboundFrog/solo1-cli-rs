@@ -163,58 +163,6 @@ fn test_version_constraint_equals() {
     assert!(!version_matches_constraint(&v, "=3.0.0").unwrap());
 }
 
-/// Test rng_hexbytes count validation (no hardware needed - tests error path).
-#[test]
-fn test_rng_hexbytes_count_validation_logic() {
-    // Verify that counts > 255 are invalid by checking the validation condition
-    // (We can't call the actual function without hardware, but we test the boundary.)
-    let valid_count: usize = 255;
-    let invalid_count: usize = 256;
-    assert!(valid_count <= 255, "255 should be a valid count");
-    assert!(invalid_count > 255, "256 should be an invalid count");
-
-    // Test that the exact boundary is correct
-    let max_valid: u8 = u8::MAX; // 255
-    assert_eq!(max_valid as usize, 255);
-}
-
-/// Test that probe hash type validation works correctly.
-#[test]
-fn test_probe_hash_type_validation() {
-    // Valid types (case-insensitive input, canonical output)
-    let valid_types = [
-        "sha256", "SHA256", "sha512", "SHA512", "rsa2048", "RSA2048", "ed25519", "Ed25519",
-    ];
-    let invalid_types = ["md5", "sha1", "blake3", ""];
-
-    for hash_type in &valid_types {
-        let canonical = match hash_type.to_lowercase().as_str() {
-            "sha256" => Some("SHA256"),
-            "sha512" => Some("SHA512"),
-            "rsa2048" => Some("RSA2048"),
-            "ed25519" => Some("Ed25519"),
-            _ => None,
-        };
-        assert!(
-            canonical.is_some(),
-            "Hash type '{}' should be valid",
-            hash_type
-        );
-    }
-
-    for hash_type in &invalid_types {
-        let canonical = match hash_type.to_lowercase().as_str() {
-            "sha256" | "sha512" | "rsa2048" | "ed25519" => Some("valid"),
-            _ => None,
-        };
-        assert!(
-            canonical.is_none(),
-            "Hash type '{}' should be invalid",
-            hash_type
-        );
-    }
-}
-
 /// Test mergehex default attestation constants.
 #[test]
 fn test_mergehex_default_attestation_constants() {

@@ -112,6 +112,15 @@ mod tests {
         assert_eq!(hex, "");
     }
 
+    /// n=255 is the largest accepted count: validation passes and the device is queried.
+    #[test]
+    fn test_cmd_rng_hexbytes_boundary_255_accepted() {
+        let rng_bytes = vec![0x42u8; 255];
+        let device = MockDevice::new(vec![Ok(rng_bytes)]);
+        let hex = cmd_rng_hexbytes(&device, 255).unwrap();
+        assert_eq!(hex.len(), 510); // 255 bytes × 2 hex chars each
+    }
+
     /// n > 255 must be rejected before any device communication.
     #[test]
     fn test_cmd_rng_hexbytes_n_too_large() {

@@ -14,8 +14,11 @@ pub enum SoloError {
     #[error("Invalid hex string: {0}")]
     InvalidHex(#[from] hex::FromHexError),
 
-    #[error("CBOR error: {0}")]
-    CborError(String),
+    #[error("CBOR serialization error: {0}")]
+    CborSerError(#[from] ciborium::ser::Error<std::io::Error>),
+
+    #[error("CBOR deserialization error: {0}")]
+    CborDeError(#[from] ciborium::de::Error<std::io::Error>),
 
     #[error("Authenticator error (CTAP2 {code:#04x}): {message}")]
     AuthenticatorError { code: u8, message: &'static str },

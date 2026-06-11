@@ -1,9 +1,8 @@
-use crate::cbor::{cbor_bytes, cbor_int, cbor_text, expect_map, find_int_key, int_map};
+use crate::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
 use crate::ctap2::{
-    extract_cose_coord, find_key_agreement_response, parse_cbor_map_response,
-    prompt_and_get_pin_token, CTAP2_AES_IV,
+    aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response,
 };
-use crate::device::{HidDevice, CTAPHID_CBOR};
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
 
@@ -36,74 +35,30 @@ pub fn cmd_make_credential(
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     // PIN prompt comes first; the touch prompt is printed after PIN entry.
-    let pin_uv_auth: Option<Vec<u8>> = if crate::ctap2::get_info_client_pin_set(hid)? {
-        use hmac::{Hmac, KeyInit as _, Mac as _};
-        let pin_token = prompt_and_get_pin_token(hid)?;
-        // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
-        let mut mac = Hmac::<Sha256>::new_from_slice(&pin_token)
-            .map_err(|e| SoloError::CryptoError(format!("HMAC key error: {}", e)))?;
-        mac.update(&client_data_hash);
-        let result = mac.finalize().into_bytes();
-        Some(result[..16].to_vec())
-    } else {
-        None
-    };
+    let pin_uv_auth = crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash)?;
 
-    // Build CTAP2 makeCredential CBOR request map (integer keys per CTAP2 spec):
-    //   0x01: clientDataHash
-    //   0x02: rp  {"id": host, "name": host}
-    //   0x03: user {"id": user bytes, "name": user, "displayName": user}
-    //   0x04: pubKeyCredParams [{"alg": -7, "type": "public-key"}]
-    //   0x06: extensions {"hmac-secret": true}
-    //   0x07: options {"rk": true}
-    //   0x08: pinUvAuthParam (if PIN is set)
-    //   0x09: pinUvAuthProtocol = 1 (if PIN is set)
-    let mut cbor_entries: Vec<(i64, Value)> = vec![
-        (0x01, cbor_bytes(client_data_hash)),
-        (
-            0x02,
-            Value::Map(vec![
-                (cbor_text("id"), cbor_text(host)),
-                (cbor_text("name"), cbor_text(host)),
-            ]),
-        ),
-        (
-            0x03,
-            Value::Map(vec![
-                (cbor_text("id"), cbor_bytes(user.as_bytes().to_vec())),
-                (cbor_text("name"), cbor_text(user)),
-                (cbor_text("displayName"), cbor_text(user)),
-            ]),
-        ),
-        (
-            0x04,
-            Value::Array(vec![Value::Map(vec![
-                (cbor_text("alg"), cbor_int(-7)),
-                (cbor_text("type"), cbor_text("public-key")),
-            ])]),
-        ),
-        (
-            0x06,
-            Value::Map(vec![(cbor_text("hmac-secret"), Value::Bool(true))]),
-        ),
-        (0x07, Value::Map(vec![(cbor_text("rk"), Value::Bool(true))])),
-    ];
-    if let Some(auth_param) = pin_uv_auth {
-        cbor_entries.push((0x08, cbor_bytes(auth_param)));
-        cbor_entries.push((0x09, cbor_int(1)));
-    }
-    let cbor_request = int_map(cbor_entries);
+    // makeCredential request with extensions {"hmac-secret": true} (0x06)
+    // and options {"rk": true} (0x07) on top of the shared scaffolding.
+    let cbor_request = crate::ctap2::build_make_credential(
+        host,
+        user,
+        &client_data_hash,
+        pin_uv_auth,
+        [
+            (
+                0x06,
+                Value::Map(vec![(cbor_text("hmac-secret"), Value::Bool(true))]),
+            ),
+            (0x07, Value::Map(vec![(cbor_text("rk"), Value::Bool(true))])),
+        ],
+    );
 
     if !prompt.is_empty() {
         eprintln!("{}", prompt);
     }
 
-    // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
-    let mut request_bytes = vec![0x01u8];
-    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-
-    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
+    // CTAP2 makeCredential (0x01)
+    let response = crate::ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
 
     // First byte is CTAP2 status code; 0x00 = success
     let pairs = parse_cbor_map_response(&response, "makeCredential")?;
@@ -171,84 +126,12 @@ pub fn cmd_make_credential(
     Ok(())
 }
 
-/// Perform ECDH key agreement with the device's COSE P-256 public key.
-///
-/// Extracts the x and y coordinates from `dev_pub_key_cbor_pairs` (a COSE key
-/// map), generates an ephemeral P-256 keypair, and computes the shared secret
-/// as SHA-256 of the ECDH x-coordinate. Returns the 32-byte shared secret and
-/// the ephemeral public key as a CBOR `Value` (COSE_Key map) suitable for use
-/// as `keyAgreement` in the hmac-secret extension input.
-fn derive_shared_secret(
-    dev_pub_key_cbor_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
-) -> Result<([u8; 32], ciborium::value::Value)> {
-    use p256::ecdh::EphemeralSecret;
-    use rand::rngs::OsRng;
-    ecdh_key_agreement(dev_pub_key_cbor_pairs, EphemeralSecret::random(&mut OsRng))
-}
-
-/// Inner key-agreement function that accepts a caller-supplied ephemeral secret.
-///
-/// Separated from `derive_shared_secret` so that tests can inject a known
-/// ephemeral key and verify the ECDH math deterministically.
-fn ecdh_key_agreement(
-    dev_pub_key_cbor_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
-    ephemeral_secret: p256::ecdh::EphemeralSecret,
-) -> Result<([u8; 32], ciborium::value::Value)> {
-    use p256::EncodedPoint;
-
-    let dev_x = extract_cose_coord(dev_pub_key_cbor_pairs, -2)?;
-    let dev_y = extract_cose_coord(dev_pub_key_cbor_pairs, -3)?;
-
-    if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::MalformedResponse(
-            "Device COSE key coordinates are not 32 bytes".into(),
-        ));
-    }
-
-    let mut uncompressed = vec![0x04u8];
-    uncompressed.extend_from_slice(&dev_x);
-    uncompressed.extend_from_slice(&dev_y);
-    let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))?;
-
-    let ephemeral_pub = p256::PublicKey::from(&ephemeral_secret);
-    let ephemeral_point = EncodedPoint::from(&ephemeral_pub);
-
-    // ECDH + SHA-256 → shared_secret
-    let shared_secret_point = ephemeral_secret.diffie_hellman(&dev_pub_key);
-    let raw_x = shared_secret_point.raw_secret_bytes();
-    let shared_secret: [u8; 32] = Sha256::digest(raw_x).into();
-
-    let eph_x = ephemeral_point
-        .x()
-        .ok_or_else(|| SoloError::MalformedResponse("Ephemeral key missing x coordinate".into()))?
-        .to_vec();
-    let eph_y = ephemeral_point
-        .y()
-        .ok_or_else(|| SoloError::MalformedResponse("Ephemeral key missing y coordinate".into()))?
-        .to_vec();
-
-    let ephemeral_cose_key = int_map([
-        (1, cbor_int(2)),        // kty = EC2
-        (3, cbor_int(-7)),       // alg = ES256
-        (-1, cbor_int(1)),       // crv = P-256
-        (-2, cbor_bytes(eph_x)), // x
-        (-3, cbor_bytes(eph_y)), // y
-    ]);
-
-    Ok((shared_secret, ephemeral_cose_key))
-}
-
 /// Decrypt the hmac-secret extension output returned by the authenticator.
 ///
 /// The authenticator encrypts the HMAC output with AES-256-CBC using the
 /// shared secret and a zero IV. `encrypted` must be 32 or 64 bytes (one or
 /// two HMAC-SHA-256 outputs). Returns the decrypted bytes.
 fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec<u8>> {
-    use aes::cipher::{BlockModeDecrypt, KeyIvInit};
-
-    type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
-
     if encrypted.len() != 32 && encrypted.len() != 64 {
         return Err(SoloError::MalformedResponse(format!(
             "hmac-secret encrypted output has unexpected length: {}",
@@ -256,20 +139,7 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
         )));
     }
 
-    let n_blocks = encrypted.len() / 16;
-    let mut output = encrypted.to_vec();
-    {
-        let mut blocks = vec![aes::Block::default(); n_blocks];
-        for (i, chunk) in encrypted.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-        Aes256CbcDec::new(&(*shared_secret).into(), &CTAP2_AES_IV.into())
-            .decrypt_blocks(&mut blocks);
-        for (i, block) in blocks.iter().enumerate() {
-            output[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-    }
-    Ok(output)
+    aes256_cbc_decrypt(shared_secret, encrypted)
 }
 
 // TODO Cleanup doc - need to talk to Claude
@@ -285,43 +155,36 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
 /// Returns the hmac-secret extension map `{1: keyAgreement, 2: saltEnc, 3: saltAuth}`
 /// and the shared_secret needed to decrypt the authenticator's response.
 fn prepare_hmac_secret_input(
-    cose_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
+    dev_pub_key: &p256::PublicKey,
     challenge: &str,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
-    use aes::cipher::{BlockModeEncrypt, KeyIvInit};
-    use hmac::{Hmac, KeyInit as _, Mac as _};
+    use rand::rngs::OsRng;
+    let platform_scalar = p256::NonZeroScalar::random(&mut OsRng);
+    prepare_hmac_secret_input_with_scalar(dev_pub_key, challenge, &platform_scalar)
+}
 
-    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-
+/// Scalar-parameterized implementation of [`prepare_hmac_secret_input`];
+/// tests call this directly with a fixed scalar.
+fn prepare_hmac_secret_input_with_scalar(
+    dev_pub_key: &p256::PublicKey,
+    challenge: &str,
+    platform_scalar: &p256::NonZeroScalar,
+) -> Result<(ciborium::value::Value, [u8; 32])> {
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
-    let (shared_secret, ephemeral_cose_key) = derive_shared_secret(cose_pairs)?;
+    let (shared_secret, ephemeral_cose_key) = ecdh_shared_secret(dev_pub_key, platform_scalar);
 
     // saltEnc = AES-256-CBC(shared_secret, IV=0, salt) — 32 bytes (2 AES blocks)
-    let mut salt_enc = [0u8; 32];
-    {
-        let mut blocks = [aes::Block::default(); 2];
-        for (i, chunk) in salt.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
-        for (i, block) in blocks.iter().enumerate() {
-            salt_enc[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-    }
+    let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
 
     // saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
-    let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
-        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
-    mac.update(&salt_enc);
-    let mac_result = mac.finalize().into_bytes();
-    let salt_auth = &mac_result[..16];
+    let salt_auth = crate::ctap2::pin_uv_auth(&shared_secret, &salt_enc)?;
 
     // hmac-secret extension input: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
     let hmac_secret_ext = int_map([
         (1, ephemeral_cose_key),
-        (2, cbor_bytes(salt_enc.to_vec())),
-        (3, cbor_bytes(salt_auth.to_vec())),
+        (2, cbor_bytes(salt_enc)),
+        (3, cbor_bytes(salt_auth)),
     ]);
 
     Ok((hmac_secret_ext, shared_secret))
@@ -351,25 +214,8 @@ pub fn cmd_challenge_response(
     let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
-    let get_ka_cbor = crate::ctap2::create_key_agreement_cbor();
-    let mut request_bytes = vec![0x06u8]; // authenticatorClientPIN command byte
-    ciborium::ser::into_writer(&get_ka_cbor, &mut request_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-
-    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
-    let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
-
-    let key_agreement = find_key_agreement_response(&resp_pairs)?;
-    let cose_pairs = match key_agreement {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "keyAgreement is not a CBOR map".into(),
-            ))
-        }
-    };
-
-    let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(cose_pairs, challenge)?;
+    let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
+    let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&dev_pub_key, challenge)?;
 
     // ── Step 7: Build and send getAssertion request ───────────────────────────
     // clientDataHash: fixed bytes (device does not verify for hmac-secret use)
@@ -398,11 +244,8 @@ pub fn cmd_challenge_response(
 
     eprintln!("Touch your authenticator to generate a response...");
 
-    let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command
-    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-
-    let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
+    // CTAP2 getAssertion (0x02)
+    let ga_response = crate::ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
 
     // ── Step 8: Parse authData from getAssertion response ────────────────────
     let ga_pairs = parse_cbor_map_response(&ga_response, "getAssertion")?;
@@ -437,32 +280,19 @@ pub fn cmd_challenge_response(
 
     // Parse extensions CBOR starting at byte 37
     let ext_cbor_bytes = &auth_data[37..];
-    let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)?;
 
     let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
 
     // Find "hmac-secret" key in extensions
-    let hmac_secret_enc = ext_pairs
-        .iter()
-        .find_map(|(k, v)| {
-            if let Value::Text(s) = k {
-                if s == "hmac-secret" {
-                    if let Value::Bytes(b) = v {
-                        Some(b.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-        .ok_or_else(|| {
-            SoloError::MalformedResponse("hmac-secret missing from authData extensions".into())
-        })?;
+    let hmac_secret_enc = match find_text_key(&ext_pairs, "hmac-secret") {
+        Some(Value::Bytes(b)) => b.clone(),
+        _ => {
+            return Err(SoloError::MalformedResponse(
+                "hmac-secret missing from authData extensions".into(),
+            ))
+        }
+    };
 
     // ── Step 8 (cont): Decrypt the hmac-secret output ────────────────────────
     let hmac_output = decrypt_hmac_secret(&shared_secret, &hmac_secret_enc)?;
@@ -479,111 +309,10 @@ pub fn cmd_challenge_response(
     Ok(())
 }
 
-/// Test-only inner function: runs the ECDH key-agreement math using a raw
-/// `NonZeroScalar` instead of an `EphemeralSecret`.
-///
-/// `EphemeralSecret` has no public constructor from a scalar (by design — it is
-/// intended to be ephemeral). In tests we need a deterministic key, so we call
-/// `p256::ecdh::diffie_hellman` directly with the raw scalar and bypass the
-/// `EphemeralSecret` wrapper entirely.
-#[cfg(test)]
-fn ecdh_key_agreement_with_scalar(
-    dev_pub_key_cbor_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
-    platform_scalar: p256::NonZeroScalar,
-) -> Result<([u8; 32], ciborium::value::Value)> {
-    use p256::EncodedPoint;
-
-    let dev_x = extract_cose_coord(dev_pub_key_cbor_pairs, -2)?;
-    let dev_y = extract_cose_coord(dev_pub_key_cbor_pairs, -3)?;
-
-    if dev_x.len() != 32 || dev_y.len() != 32 {
-        return Err(SoloError::MalformedResponse(
-            "Device COSE key coordinates are not 32 bytes".into(),
-        ));
-    }
-
-    let mut uncompressed = vec![0x04u8];
-    uncompressed.extend_from_slice(&dev_x);
-    uncompressed.extend_from_slice(&dev_y);
-    let dev_pub_key = p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))?;
-
-    // Compute DH with the raw scalar (equivalent to EphemeralSecret::diffie_hellman)
-    let shared_point = p256::ecdh::diffie_hellman(&platform_scalar, dev_pub_key.as_affine());
-    let raw_x = shared_point.raw_secret_bytes();
-    let shared_secret: [u8; 32] = Sha256::digest(raw_x).into();
-
-    // Derive the platform public key from the scalar to build the COSE key
-    let platform_pub = p256::PublicKey::from_secret_scalar(&platform_scalar);
-    let platform_point = EncodedPoint::from(&platform_pub);
-
-    let eph_x = platform_point
-        .x()
-        .ok_or_else(|| SoloError::MalformedResponse("Platform key missing x coordinate".into()))?
-        .to_vec();
-    let eph_y = platform_point
-        .y()
-        .ok_or_else(|| SoloError::MalformedResponse("Platform key missing y coordinate".into()))?
-        .to_vec();
-
-    let ephemeral_cose_key = int_map([
-        (1, cbor_int(2)),
-        (3, cbor_int(-7)),
-        (-1, cbor_int(1)),
-        (-2, cbor_bytes(eph_x)),
-        (-3, cbor_bytes(eph_y)),
-    ]);
-
-    Ok((shared_secret, ephemeral_cose_key))
-}
-
-/// Test-only variant of `prepare_hmac_secret_input` that accepts a raw scalar.
-#[cfg(test)]
-fn prepare_hmac_secret_input_with_scalar(
-    cose_pairs: &[(ciborium::value::Value, ciborium::value::Value)],
-    challenge: &str,
-    platform_scalar: p256::NonZeroScalar,
-) -> Result<(ciborium::value::Value, [u8; 32])> {
-    use aes::cipher::{BlockModeEncrypt, KeyIvInit};
-    use hmac::{Hmac, KeyInit as _, Mac as _};
-
-    type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
-
-    let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
-
-    let (shared_secret, ephemeral_cose_key) =
-        ecdh_key_agreement_with_scalar(cose_pairs, platform_scalar)?;
-
-    let mut salt_enc = [0u8; 32];
-    {
-        let mut blocks = [aes::Block::default(); 2];
-        for (i, chunk) in salt.chunks_exact(16).enumerate() {
-            blocks[i] = (*chunk).try_into().unwrap();
-        }
-        Aes256CbcEnc::new(&shared_secret.into(), &CTAP2_AES_IV.into()).encrypt_blocks(&mut blocks);
-        for (i, block) in blocks.iter().enumerate() {
-            salt_enc[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-        }
-    }
-
-    let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice())
-        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
-    mac.update(&salt_enc);
-    let mac_result = mac.finalize().into_bytes();
-    let salt_auth = &mac_result[..16];
-
-    let hmac_secret_ext = int_map([
-        (1, ephemeral_cose_key),
-        (2, cbor_bytes(salt_enc.to_vec())),
-        (3, cbor_bytes(salt_auth.to_vec())),
-    ]);
-
-    Ok((hmac_secret_ext, shared_secret))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ctap2::cose_to_public_key;
     use ciborium::value::Value;
 
     /// Build a COSE key map (integer-keyed) from a `p256::PublicKey`.
@@ -629,11 +358,15 @@ mod tests {
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 
-        // Platform → device: platform computes DH with dev_pub
+        // Platform → device: platform computes DH with dev_pub, going through
+        // the COSE-key parse the production code performs on device responses.
         let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
-        let (platform_shared, _cose_key) =
-            ecdh_key_agreement_with_scalar(&dev_cose_pairs, platform_scalar)
-                .expect("ecdh_key_agreement_with_scalar failed");
+        let parsed_dev_pub = cose_to_public_key(&dev_cose_pairs).expect("COSE parse failed");
+        assert_eq!(
+            parsed_dev_pub, dev_pub,
+            "COSE round-trip must preserve the key"
+        );
+        let (platform_shared, _cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
 
         // Device → platform: device computes DH with platform_pub
         let dev_scalar = dev_secret.to_nonzero_scalar();
@@ -664,8 +397,8 @@ mod tests {
         let expected_y = expected_point.y().unwrap().to_vec();
 
         let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
-        let (_shared, cose_key) = ecdh_key_agreement_with_scalar(&dev_cose_pairs, platform_scalar)
-            .expect("ecdh_key_agreement_with_scalar failed");
+        let parsed_dev_pub = cose_to_public_key(&dev_cose_pairs).expect("COSE parse failed");
+        let (_shared, cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
 
         let cose_pairs = match cose_key {
             Value::Map(p) => p,
@@ -710,11 +443,8 @@ mod tests {
     /// - saltAuth equals HMAC-SHA-256(shared_secret, saltEnc)[0..16]
     #[test]
     fn prepare_hmac_secret_input_output_is_correct() {
-        use aes::cipher::{BlockModeDecrypt, KeyIvInit};
         use hmac::{Hmac, KeyInit as _, Mac as _};
         use rand::rngs::OsRng;
-
-        type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
 
         let challenge = "test-challenge";
         let expected_salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
@@ -724,9 +454,8 @@ mod tests {
         let platform_secret = p256::SecretKey::random(&mut OsRng);
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
-        let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
         let (hmac_ext, shared_secret) =
-            prepare_hmac_secret_input_with_scalar(&dev_cose_pairs, challenge, platform_scalar)
+            prepare_hmac_secret_input_with_scalar(&dev_pub, challenge, &platform_scalar)
                 .expect("prepare_hmac_secret_input_with_scalar failed");
 
         // The result must be a CBOR map
@@ -759,20 +488,10 @@ mod tests {
         assert_eq!(salt_auth.len(), 16, "saltAuth must be 16 bytes");
 
         // Decrypt saltEnc and verify it equals SHA-256(challenge)
-        let mut decrypted = [0u8; 32];
-        {
-            let mut blocks = [aes::Block::default(); 2];
-            for (i, chunk) in salt_enc.chunks_exact(16).enumerate() {
-                blocks[i] = (*chunk).try_into().unwrap();
-            }
-            Aes256CbcDec::new(&shared_secret.into(), &CTAP2_AES_IV.into())
-                .decrypt_blocks(&mut blocks);
-            for (i, block) in blocks.iter().enumerate() {
-                decrypted[i * 16..(i + 1) * 16].copy_from_slice(block.as_slice());
-            }
-        }
+        let decrypted = aes256_cbc_decrypt(&shared_secret, &salt_enc).expect("decrypt failed");
         assert_eq!(
-            decrypted, expected_salt,
+            decrypted.as_slice(),
+            expected_salt,
             "Decrypted saltEnc must equal SHA-256(challenge)"
         );
 
@@ -802,9 +521,8 @@ mod tests {
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 
-        let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
         let (_hmac_ext, platform_shared) =
-            prepare_hmac_secret_input_with_scalar(&dev_cose_pairs, challenge, platform_scalar)
+            prepare_hmac_secret_input_with_scalar(&dev_pub, challenge, &platform_scalar)
                 .expect("prepare_hmac_secret_input_with_scalar failed");
 
         // Device computes the same shared secret from the platform's public key

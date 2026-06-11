@@ -2,7 +2,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::device::{HidDevice, CMD_PROBE, CTAPHID_CBOR};
+use crate::device::{HidDevice, CMD_PROBE};
 use crate::error::{Result, SoloError};
 
 /// Run a hash probe on the device.
@@ -16,18 +16,12 @@ use crate::error::{Result, SoloError};
 /// File must be <= 6144 bytes.
 pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Result<()> {
     // Normalize hash type to the canonical form expected by the device
-    let hash_type_str = match hash_type.to_lowercase().as_str() {
-        "sha256" => "SHA256",
-        "sha512" => "SHA512",
-        "rsa2048" => "RSA2048",
-        "ed25519" => "Ed25519",
-        other => {
-            return Err(SoloError::DeviceError(format!(
-                "Unknown hash type: {}. Valid: SHA256, SHA512, RSA2048, Ed25519",
-                other
-            )))
-        }
-    };
+    let hash_type_str = normalize_hash_type(hash_type).ok_or_else(|| {
+        SoloError::DeviceError(format!(
+            "Unknown hash type: {}. Valid: SHA256, SHA512, RSA2048, Ed25519",
+            hash_type.to_lowercase()
+        ))
+    })?;
 
     let file_bytes = std::fs::read(filename)?;
     if file_bytes.len() > 6 * 1024 {
@@ -47,8 +41,7 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
         (Value::Text("data".into()), Value::Bytes(file_bytes)),
     ]);
     let mut cbor_bytes = Vec::new();
-    ciborium::ser::into_writer(&cbor_val, &mut cbor_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&cbor_val, &mut cbor_bytes)?;
 
     let response = hid.send_recv(CMD_PROBE, &cbor_bytes)?;
     let result_hex = hex::encode(&response);
@@ -58,12 +51,24 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
         // First 64 bytes = signature (128 hex chars), rest = content
         if response.len() > 64 {
             println!("content: {:?}", &response[64..]);
-            println!("content from hex: {:?}", &response[64..]);
             println!("signature: {}", &result_hex[..128.min(result_hex.len())]);
         }
     }
 
     Ok(())
+}
+
+/// Normalize a probe hash type to the canonical form expected by the device.
+///
+/// Matching is case-insensitive. Returns `None` for unknown hash types.
+fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
+    match hash_type.to_lowercase().as_str() {
+        "sha256" => Some("SHA256"),
+        "sha512" => Some("SHA512"),
+        "rsa2048" => Some("RSA2048"),
+        "ed25519" => Some("Ed25519"),
+        _ => None,
+    }
 }
 
 /// Sign a file using CTAP2 getAssertion with the file's SHA-256 as clientDataHash.
@@ -104,59 +109,19 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
         ),
     ]);
 
-    let mut ga_bytes = vec![0x02u8]; // CTAP2 getAssertion command byte
-    ciborium::ser::into_writer(&get_assertion_cbor, &mut ga_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-
-    let ga_response = hid.send_recv(CTAPHID_CBOR, &ga_bytes)?;
+    // CTAP2 getAssertion (0x02)
+    let ga_response = crate::ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
     check_ga_response(&ga_response, filename)
 }
 
 fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
-    use crate::ctap2::ctap2_status_message;
+    use crate::cbor::find_int_key;
     use ciborium::value::Value;
-    if ga_response.is_empty() {
-        return Err(SoloError::MalformedResponse(
-            "Empty response from getAssertion".into(),
-        ));
-    }
-    let ga_status = ga_response[0];
-    if ga_status != 0x00 {
-        let code = ga_status;
-        let message = ctap2_status_message(code);
-        return Err(SoloError::AuthenticatorError { code, message });
-    }
 
-    // Parse CBOR response map
-    let ga_val: Value = ciborium::de::from_reader(&ga_response[1..])
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-
-    let ga_pairs = match ga_val {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "getAssertion response is not a map".into(),
-            ))
-        }
-    };
-
-    let get_ga_key = |key: u64| -> Option<&Value> {
-        ga_pairs.iter().find_map(|(k, v)| {
-            if let Value::Integer(i) = k {
-                let ki: u64 = (*i).try_into().ok()?;
-                if ki == key {
-                    Some(v)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
-    };
+    let ga_pairs = crate::ctap2::parse_cbor_map_response(ga_response, "getAssertion")?;
 
     // 0x03: signature bytes
-    let signature = match get_ga_key(0x03) {
+    let signature = match find_int_key(&ga_pairs, 0x03) {
         Some(Value::Bytes(b)) => b.clone(),
         _ => {
             return Err(SoloError::MalformedResponse(
@@ -185,6 +150,58 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_normalize_hash_type_known_types() {
+        let cases: &[(&str, &str)] = &[
+            ("sha256", "SHA256"),
+            ("SHA256", "SHA256"),
+            ("Sha256", "SHA256"),
+            ("sha512", "SHA512"),
+            ("SHA512", "SHA512"),
+            ("rsa2048", "RSA2048"),
+            ("RSA2048", "RSA2048"),
+            ("ed25519", "Ed25519"),
+            ("Ed25519", "Ed25519"),
+            ("ED25519", "Ed25519"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                normalize_hash_type(input),
+                Some(*expected),
+                "hash type '{}' should normalize to '{}'",
+                input,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_normalize_hash_type_unknown_types() {
+        for input in ["md5", "sha1", "blake3", ""] {
+            assert_eq!(
+                normalize_hash_type(input),
+                None,
+                "hash type '{}' should be rejected",
+                input
+            );
+        }
+    }
+
+    /// cmd_probe must reject an unknown hash type before touching the file or device.
+    #[test]
+    fn test_cmd_probe_rejects_unknown_hash_type() {
+        use crate::device::mock::MockDevice;
+        // Empty queue: any device call would return Timeout, not DeviceError.
+        let device = MockDevice::new(vec![]);
+        let err = cmd_probe(&device, "md5", Path::new("/nonexistent")).unwrap_err();
+        assert!(
+            matches!(err, SoloError::DeviceError(_)),
+            "unexpected error: {}",
+            err
+        );
+        assert!(err.to_string().contains("Unknown hash type"));
+    }
 
     #[test]
     fn test_check_ga_response_ok() {
