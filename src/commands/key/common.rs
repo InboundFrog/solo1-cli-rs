@@ -10,5 +10,29 @@ pub fn confirm(prompt: &str) -> Result<bool> {
     std::io::stdin()
         .read_line(&mut input)
         .map_err(SoloError::IoError)?;
-    Ok(input.trim() == "yes")
+    Ok(is_confirmed(&input))
+}
+
+/// Returns true only if `input`, after trimming whitespace, is exactly "yes".
+fn is_confirmed(input: &str) -> bool {
+    input.trim() == "yes"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_confirmed;
+
+    #[test]
+    fn test_is_confirmed_accepts_trimmed_yes() {
+        for input in ["yes", "yes\n", "yes\r\n", " yes ", "\tyes\n"] {
+            assert!(is_confirmed(input), "{:?} should confirm", input);
+        }
+    }
+
+    #[test]
+    fn test_is_confirmed_rejects_everything_else() {
+        for input in ["Yes", "YES", "y", "no", "n", "", "yess", "yes please"] {
+            assert!(!is_confirmed(input), "{:?} should not confirm", input);
+        }
+    }
 }
