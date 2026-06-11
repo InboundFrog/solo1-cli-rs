@@ -453,18 +453,10 @@ pub fn merge_hex_files(
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
     // Validate that key and cert are either both provided or both None
-    match (attestation_key, attestation_cert) {
-        (Some(_), None) => {
-            return Err(SoloError::FirmwareError(
-                "Need to provide certificate with attestation_key".into(),
-            ))
-        }
-        (None, Some(_)) => {
-            return Err(SoloError::FirmwareError(
-                "Need to provide certificate with attestation_key".into(),
-            ))
-        }
-        _ => {}
+    if attestation_key.is_some() != attestation_cert.is_some() {
+        return Err(SoloError::FirmwareError(
+            "Need to provide certificate with attestation_key".into(),
+        ));
     }
 
     // Read attestation key bytes (32 bytes raw)
