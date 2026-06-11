@@ -115,8 +115,6 @@ fn run_key_command(
             credential_id,
             challenge,
             host,
-            user: _,
-            pin: _,
         } => {
             let hid = SoloHid::open(serial, timeout)?;
             key::cmd_challenge_response(&hid, &credential_id, &challenge, &host, json)?;
@@ -219,12 +217,7 @@ fn run_key_command(
                         user.as_deref(),
                     )?;
                 }
-                CredentialCommands::Create {
-                    host,
-                    user,
-                    pin: _,
-                    prompt,
-                } => {
+                CredentialCommands::Create { host, user, prompt } => {
                     key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
                 }
             }
@@ -240,7 +233,7 @@ fn run_program_command(
 ) -> error::Result<()> {
     match cmd {
         ProgramCommands::Bootloader { firmware } => {
-            let hid = SoloHid::open_bootloader(serial, timeout)?;
+            let hid = SoloHid::open(serial, timeout)?;
             program::cmd_program_bootloader(&hid, &firmware)?;
         }
 
