@@ -38,7 +38,8 @@ pub struct ListOutput {
 
 #[derive(Serialize)]
 pub struct VerifyOutput {
-    /// "genuine", "developer", or "unknown"
+    /// "genuine", "developer", "unknown", or "invalid" (attestation signature
+    /// verification failed — the device may be counterfeit).
     pub device_type: String,
     pub device_name: Option<String>,
     /// SHA-256 of the full certificate DER bytes.
@@ -49,6 +50,11 @@ pub struct VerifyOutput {
     /// A genuine device may still have an expired cert; expiry is reported as
     /// a warning rather than an authentication failure.
     pub cert_expired: bool,
+    /// Whether the packed attestation signature (attStmt.sig over
+    /// authData || clientDataHash) verified against the certificate's public
+    /// key.  `false` means the device did not prove possession of the
+    /// attestation key and the fingerprint result cannot be trusted.
+    pub signature_valid: bool,
 }
 
 #[derive(Serialize)]
@@ -138,12 +144,14 @@ mod tests {
             fingerprint: "aabbcc".into(),
             spki_fingerprint: "ddeeff".into(),
             cert_expired: false,
+            signature_valid: true,
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["device_type"], "genuine");
         assert_eq!(v["device_name"], "Solo v3");
         assert_eq!(v["cert_expired"], false);
+        assert_eq!(v["signature_valid"], true);
     }
 
     #[test]
@@ -154,10 +162,28 @@ mod tests {
             fingerprint: "aabbcc".into(),
             spki_fingerprint: "ddeeff".into(),
             cert_expired: true,
+            signature_valid: true,
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["cert_expired"], true);
+    }
+
+    #[test]
+    fn verify_output_invalid_signature_serializes() {
+        let out = VerifyOutput {
+            device_type: "invalid".into(),
+            device_name: None,
+            fingerprint: "aabbcc".into(),
+            spki_fingerprint: "ddeeff".into(),
+            cert_expired: false,
+            signature_valid: false,
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["device_type"], "invalid");
+        assert_eq!(v["device_name"], serde_json::Value::Null);
+        assert_eq!(v["signature_valid"], false);
     }
 
     #[test]
