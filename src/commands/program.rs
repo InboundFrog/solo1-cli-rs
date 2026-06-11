@@ -10,6 +10,65 @@ use crate::error::Result;
 use crate::firmware::{self, FirmwareJson};
 use crate::vlog;
 
+/// Size of each flash write sent to the bootloader.
+const CHUNK_SIZE: usize = 256;
+
+/// Write `firmware` to the device in 256-byte chunks starting at `base_addr`,
+/// then send CMD_DONE with `signature` so the bootloader verifies and reboots.
+///
+/// The device must already be in bootloader mode. `finalize_msg` is printed
+/// between the write loop and CMD_DONE (callers use different wording).
+pub fn write_firmware(
+    hid: &impl HidDevice,
+    base_addr: u32,
+    firmware: &[u8],
+    signature: &[u8],
+    finalize_msg: &str,
+) -> Result<()> {
+    vlog!(
+        "Writing {} chunks of {} bytes starting at 0x{:08X}",
+        firmware_chunk_count(firmware.len()),
+        CHUNK_SIZE,
+        base_addr
+    );
+
+    let pb = ProgressBar::new(firmware.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}")
+            .unwrap()
+            .progress_chars("##-"),
+    );
+
+    let mut offset = 0usize;
+    for (chunk_num, (addr, len)) in compute_chunk_addresses(base_addr, firmware.len())
+        .into_iter()
+        .enumerate()
+    {
+        let chunk = &firmware[offset..offset + len];
+        vlog!(
+            "chunk #{} addr=0x{:08X} len={}",
+            chunk_num,
+            addr,
+            chunk.len()
+        );
+        let resp = hid.send_bootloader_cmd(CMD_WRITE, addr, chunk)?;
+        if !resp.is_empty() {
+            vlog!("  write response: {}", hex::encode(&resp));
+        }
+        pb.inc(chunk.len() as u64);
+        offset += len;
+    }
+    pb.finish_with_message("written");
+
+    // CMD_DONE sends the ECDSA signature; bootloader verifies and reboots on success
+    println!("{}", finalize_msg);
+    vlog!("Sending CMD_DONE with {} byte signature", signature.len());
+    let done_resp = hid.send_bootloader_cmd(CMD_DONE, 0, signature)?;
+    vlog!("done response: {}", hex::encode(&done_resp));
+    Ok(())
+}
+
 /// Program via the Solo bootloader (firmware.json format).
 /// The device must already be in bootloader mode when this is called.
 pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Result<()> {
@@ -34,73 +93,30 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
         hex::encode(&signature)
     );
 
-    const CHUNK_SIZE: usize = 256;
-
-    vlog!(
-        "Writing {} chunks of {} bytes starting at 0x{:08X}",
-        firmware_bytes.len().div_ceil(CHUNK_SIZE),
-        CHUNK_SIZE,
-        flash_start
-    );
-
-    let total = firmware_bytes.len();
-    let pb = ProgressBar::new(total as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}")
-            .unwrap()
-            .progress_chars("##-"),
-    );
-
-    let mut offset = 0usize;
-    let mut addr = flash_start;
-    let mut chunk_num = 0u32;
-
-    while offset < firmware_bytes.len() {
-        let end = (offset + CHUNK_SIZE).min(firmware_bytes.len());
-        let chunk = &firmware_bytes[offset..end];
-        vlog!(
-            "chunk #{} addr=0x{:08X} len={}",
-            chunk_num,
-            addr,
-            chunk.len()
-        );
-        let resp = hid.send_bootloader_cmd(CMD_WRITE, addr, chunk)?;
-        if !resp.is_empty() {
-            vlog!("  write response: {}", hex::encode(&resp));
-        }
-        pb.inc(chunk.len() as u64);
-        offset = end;
-        addr += CHUNK_SIZE as u32;
-        chunk_num += 1;
-    }
-    pb.finish_with_message("written");
-
-    // CMD_DONE sends the ECDSA signature; bootloader verifies and reboots on success
-    println!("Finalizing firmware...");
-    vlog!("Sending CMD_DONE with {} byte signature", signature.len());
-    let done_resp = hid.send_bootloader_cmd(CMD_DONE, 0, &signature)?;
-    vlog!("done response: {}", hex::encode(&done_resp));
+    write_firmware(
+        hid,
+        flash_start,
+        &firmware_bytes,
+        &signature,
+        "Finalizing firmware...",
+    )?;
     println!("Done.");
     Ok(())
 }
 
 /// Compute the number of 256-byte chunks needed to cover `firmware_len` bytes.
 ///
-/// This mirrors the chunk-count calculation used in `cmd_program_bootloader`
-/// for the progress display and loop termination.
+/// Used by `write_firmware` for the verbose chunk-count display.
 pub fn firmware_chunk_count(firmware_len: usize) -> usize {
-    const CHUNK_SIZE: usize = 256;
     firmware_len.div_ceil(CHUNK_SIZE)
 }
 
-/// Simulate the address sequence produced by the write loop in
-/// `cmd_program_bootloader` without touching any device.
+/// Compute the address sequence for the firmware write loop.
 ///
 /// Returns a `Vec` of `(flash_address, chunk_length)` pairs in the order
-/// that the bootloader would receive them.
+/// that the bootloader receives them. `write_firmware` iterates this
+/// sequence directly, so the tests below exercise the shipped code path.
 pub fn compute_chunk_addresses(flash_start: u32, firmware_len: usize) -> Vec<(u32, usize)> {
-    const CHUNK_SIZE: usize = 256;
     let mut result = Vec::new();
     let mut offset = 0usize;
     let mut addr = flash_start;
@@ -138,10 +154,11 @@ pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
-    // cmd_program_bootloader and cmd_program_dfu require a live device or DFU
-    // interface and cannot be unit-tested. The logic they contain has been
-    // extracted into firmware_chunk_count and compute_chunk_addresses so it
-    // can be tested here without hardware.
+    // write_firmware and cmd_program_dfu require a live device or DFU
+    // interface and cannot be unit-tested end to end. The chunking and
+    // addressing logic lives in firmware_chunk_count and
+    // compute_chunk_addresses, which write_firmware itself iterates, so
+    // these tests exercise the exact sequence sent to the bootloader.
 
     // ── firmware_chunk_count ─────────────────────────────────────────────────
 

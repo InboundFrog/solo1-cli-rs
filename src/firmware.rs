@@ -728,13 +728,18 @@ impl GithubRelease {
     }
 }
 
+/// Build the blocking HTTP client used for GitHub requests.
+fn http_client() -> Result<reqwest::blocking::Client> {
+    reqwest::blocking::Client::builder()
+        .user_agent("solo1-cli-rs")
+        .build()
+        .map_err(|e| SoloError::NetworkError(e.to_string()))
+}
+
 /// Fetch the latest release info from GitHub.
 pub fn fetch_latest_release() -> Result<GithubRelease> {
     let url = "https://api.github.com/repos/solokeys/solo1/releases/latest";
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("solo1-cli-rs")
-        .build()
-        .map_err(|e| SoloError::NetworkError(e.to_string()))?;
+    let client = http_client()?;
     let resp = client
         .get(url)
         .send()
@@ -747,10 +752,7 @@ pub fn fetch_latest_release() -> Result<GithubRelease> {
 
 /// Download a URL to bytes.
 pub fn download_url(url: &str) -> Result<Vec<u8>> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("solo1-cli-rs")
-        .build()
-        .map_err(|e| SoloError::NetworkError(e.to_string()))?;
+    let client = http_client()?;
     let resp = client
         .get(url)
         .send()

@@ -7,10 +7,10 @@ use crate::vlog;
 
 /// Update the device firmware.
 pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<()> {
+    use crate::commands::program::write_firmware;
     use crate::crypto::sha256_hex;
-    use crate::device::{CMD_DONE, CMD_ENTER_BOOT, CMD_WRITE};
+    use crate::device::CMD_ENTER_BOOT;
     use crate::firmware::{download_url, fetch_latest_release, FirmwareJson};
-    use indicatif::{ProgressBar, ProgressStyle};
 
     let fw_json = if let Some(path) = firmware_file {
         println!("Loading firmware from {:?}", path);
@@ -54,32 +54,14 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
         hex::encode(&signature)
     );
 
-    // Write firmware in 256-byte chunks
-    const CHUNK_SIZE: usize = 256;
-
-    let pb = ProgressBar::new(firmware_bytes.len() as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes}")
-            .unwrap()
-            .progress_chars("##-"),
-    );
-
-    let mut offset = 0usize;
-    let mut addr = flash_start;
-    while offset < firmware_bytes.len() {
-        let end = (offset + CHUNK_SIZE).min(firmware_bytes.len());
-        let chunk = &firmware_bytes[offset..end];
-        bl_hid.send_bootloader_cmd(CMD_WRITE, addr, chunk)?;
-        pb.inc(chunk.len() as u64);
-        offset = end;
-        addr += CHUNK_SIZE as u32;
-    }
-    pb.finish_with_message("Written");
-
-    // CMD_DONE sends the ECDSA signature; bootloader verifies it and reboots on success
-    println!("Verifying and finalizing...");
-    bl_hid.send_bootloader_cmd(CMD_DONE, 0, &signature)?;
+    // Write firmware in 256-byte chunks, then verify via CMD_DONE
+    write_firmware(
+        &bl_hid,
+        flash_start,
+        &firmware_bytes,
+        &signature,
+        "Verifying and finalizing...",
+    )?;
 
     println!("Firmware update complete!");
     Ok(())
