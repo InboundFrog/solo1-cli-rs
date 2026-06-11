@@ -4,7 +4,7 @@ use std::path::Path;
 
 use p256::{
     ecdsa::{SigningKey, VerifyingKey},
-    pkcs8::{DecodePrivateKey, EncodePrivateKey, EncodePublicKey},
+    pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
     SecretKey,
 };
 use sha2::{Digest, Sha256};
@@ -235,6 +235,51 @@ pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Verify a packed-attestation ECDSA signature (WebAuthn §8.2, ES256 only).
+///
+/// Checks that `sig_der` is a valid DER-encoded ECDSA P-256 signature, made by
+/// the key certified in `cert_der`, over the message
+/// `auth_data || client_data_hash` (SHA-256 hashed, per ES256).
+///
+/// This is the proof-of-possession step that a bare certificate fingerprint
+/// comparison cannot provide: a counterfeit device can replay a copied genuine
+/// certificate, but it cannot produce a valid signature without the private
+/// attestation key.
+///
+/// Returns `Ok(())` only if the signature verifies.  Any parse failure
+/// (certificate, public key, or signature DER) or signature mismatch returns
+/// `Err(SoloError::CryptoError(...))`.
+pub fn verify_attestation_signature(
+    cert_der: &[u8],
+    auth_data: &[u8],
+    client_data_hash: &[u8],
+    sig_der: &[u8],
+) -> Result<()> {
+    use p256::ecdsa::{signature::Verifier, DerSignature};
+
+    let cert = Certificate::from_der(cert_der)
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+    let spki_der = cert
+        .tbs_certificate
+        .subject_public_key_info
+        .to_der()
+        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {}", e)))?;
+    let verifying_key = VerifyingKey::from_public_key_der(&spki_der).map_err(|e| {
+        SoloError::CryptoError(format!("Attestation public key is not ECDSA P-256: {}", e))
+    })?;
+
+    let sig = DerSignature::try_from(sig_der)
+        .map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {}", e)))?;
+
+    let mut message = Vec::with_capacity(auth_data.len() + client_data_hash.len());
+    message.extend_from_slice(auth_data);
+    message.extend_from_slice(client_data_hash);
+
+    verifying_key
+        .verify(&message, &sig)
+        .map_err(|_| SoloError::CryptoError("Attestation signature verification failed".into()))
 }
 
 /// Websafe base64 encoding (RFC 4648 URL-safe, no padding).
@@ -491,5 +536,122 @@ mod tests {
     fn check_cert_validity_rejects_garbage() {
         let result = check_cert_validity(b"not a certificate at all");
         assert!(result.is_err(), "Garbage input should return Err");
+    }
+
+    // -----------------------------------------------------------------------
+    // verify_attestation_signature tests
+    // -----------------------------------------------------------------------
+
+    /// Build a synthetic packed-attestation fixture: a self-signed P-256 cert,
+    /// authenticator data, a client data hash, and a valid DER signature over
+    /// `auth_data || client_data_hash` made with the certified key.
+    ///
+    /// Returns `(cert_der, auth_data, client_data_hash, sig_der)`.
+    fn make_attestation_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
+        use p256::ecdsa::{signature::Signer, DerSignature};
+
+        let now = time::OffsetDateTime::now_utc();
+        let (cert_der, key_pem) = make_test_cert_with_key(
+            now - time::Duration::days(1),
+            now + time::Duration::days(365),
+        );
+        let signing_key =
+            SigningKey::from_pkcs8_pem(&key_pem).expect("rcgen PEM should load as p256 key");
+
+        let auth_data: Vec<u8> = (0u8..37).collect();
+        let client_data_hash = Sha256::digest(b"attestation fixture client data").to_vec();
+
+        let mut message = auth_data.clone();
+        message.extend_from_slice(&client_data_hash);
+        let sig: DerSignature = signing_key.sign(&message);
+
+        (
+            cert_der,
+            auth_data,
+            client_data_hash,
+            sig.as_bytes().to_vec(),
+        )
+    }
+
+    #[test]
+    fn verify_attestation_signature_accepts_valid() {
+        let (cert_der, auth_data, client_data_hash, sig_der) = make_attestation_fixture();
+        verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der)
+            .expect("valid attestation signature should verify");
+    }
+
+    #[test]
+    fn verify_attestation_signature_rejects_tampered_sig() {
+        let (cert_der, auth_data, client_data_hash, mut sig_der) = make_attestation_fixture();
+        // Flip one bit in the last byte (signature value, not DER structure).
+        *sig_der.last_mut().unwrap() ^= 0x01;
+        assert!(
+            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der)
+                .is_err(),
+            "tampered signature must be rejected"
+        );
+    }
+
+    #[test]
+    fn verify_attestation_signature_rejects_tampered_auth_data() {
+        let (cert_der, mut auth_data, client_data_hash, sig_der) = make_attestation_fixture();
+        auth_data[0] ^= 0x01;
+        assert!(
+            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der)
+                .is_err(),
+            "tampered authData must be rejected"
+        );
+    }
+
+    #[test]
+    fn verify_attestation_signature_rejects_tampered_client_data_hash() {
+        let (cert_der, auth_data, mut client_data_hash, sig_der) = make_attestation_fixture();
+        client_data_hash[0] ^= 0x01;
+        assert!(
+            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der)
+                .is_err(),
+            "tampered clientDataHash must be rejected"
+        );
+    }
+
+    #[test]
+    fn verify_attestation_signature_rejects_wrong_key_cert() {
+        // Signature made with the fixture key, but presented with a cert for a
+        // DIFFERENT key — models a counterfeit device replaying a genuine cert.
+        let (_, auth_data, client_data_hash, sig_der) = make_attestation_fixture();
+        let now = time::OffsetDateTime::now_utc();
+        let (other_cert_der, _) = make_test_cert_with_key(
+            now - time::Duration::days(1),
+            now + time::Duration::days(365),
+        );
+        assert!(
+            verify_attestation_signature(&other_cert_der, &auth_data, &client_data_hash, &sig_der)
+                .is_err(),
+            "signature must not verify against a different key's cert"
+        );
+    }
+
+    #[test]
+    fn verify_attestation_signature_rejects_garbage_cert() {
+        let (_, auth_data, client_data_hash, sig_der) = make_attestation_fixture();
+        assert!(verify_attestation_signature(
+            b"not a certificate",
+            &auth_data,
+            &client_data_hash,
+            &sig_der
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn verify_attestation_signature_rejects_garbage_sig() {
+        let (cert_der, auth_data, client_data_hash, _) = make_attestation_fixture();
+        assert!(verify_attestation_signature(
+            &cert_der,
+            &auth_data,
+            &client_data_hash,
+            b"not a der signature"
+        )
+        .is_err());
     }
 }
