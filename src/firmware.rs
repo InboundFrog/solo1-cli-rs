@@ -199,17 +199,54 @@ pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
     hex_records_to_binary(&records)
 }
 
-/// Convert Intel HEX records to a flat binary.
-/// Returns (base_address, bytes).
-pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
+/// Maximum allowed address span (highest end address minus lowest start
+/// address) of parsed Intel HEX content.
+///
+/// HEX content can arrive from the network (the firmware JSON downloaded by
+/// `update`), and the span determines the allocation size when flattening to
+/// a binary. Solo flash is only 256 KiB, so 16 MiB is generous while still
+/// preventing a crafted ExtendedLinearAddress record from forcing a multi-GB
+/// allocation.
+const MAX_FIRMWARE_SPAN: u32 = 16 * 1024 * 1024;
+
+/// Walk Intel HEX records and accumulate `(absolute_address, data)` segments.
+///
+/// Handles `Data`, `ExtendedLinearAddress` and `ExtendedSegmentAddress`
+/// records and stops at the first `EndOfFile` record. Start-address records
+/// are ignored. Segments are returned in record order (not sorted).
+///
+/// Rejects records whose absolute address arithmetic overflows `u32`, and
+/// content whose total address span exceeds [`MAX_FIRMWARE_SPAN`], so that
+/// untrusted HEX input cannot trigger huge allocations or address wrap-around.
+fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
     let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
     let mut base_addr: u32 = 0;
     let mut upper_linear: u32 = 0;
+    let mut min_addr: u32 = u32::MAX;
+    let mut max_end: u32 = 0;
 
     for record in records {
         match record {
             Record::Data { offset, value } => {
-                let addr = upper_linear + (*offset as u32) + base_addr;
+                let addr = upper_linear
+                    .checked_add(*offset as u32)
+                    .and_then(|a| a.checked_add(base_addr))
+                    .ok_or_else(|| {
+                        SoloError::FirmwareError(format!(
+                            "HEX record address overflows 32 bits: \
+                             upper=0x{:08X} offset=0x{:04X} base=0x{:08X}",
+                            upper_linear, offset, base_addr
+                        ))
+                    })?;
+                let end = addr.checked_add(value.len() as u32).ok_or_else(|| {
+                    SoloError::FirmwareError(format!(
+                        "HEX record at 0x{:08X} ({} bytes) overflows the 32-bit address space",
+                        addr,
+                        value.len()
+                    ))
+                })?;
+                min_addr = min_addr.min(addr);
+                max_end = max_end.max(end);
                 segments.push((addr, value.clone()));
             }
             Record::ExtendedLinearAddress(upper) => {
@@ -225,6 +262,22 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
         }
     }
 
+    // max_end >= min_addr whenever there is at least one segment.
+    if !segments.is_empty() && max_end - min_addr > MAX_FIRMWARE_SPAN {
+        return Err(SoloError::FirmwareError(format!(
+            "HEX address span too large: 0x{:08X}..0x{:08X} exceeds {} bytes",
+            min_addr, max_end, MAX_FIRMWARE_SPAN
+        )));
+    }
+
+    Ok(segments)
+}
+
+/// Convert Intel HEX records to a flat binary.
+/// Returns (base_address, bytes).
+pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
+    let mut segments = hex_records_to_segments(records)?;
+
     if segments.is_empty() {
         return Err(SoloError::FirmwareError(
             "No data records in HEX file".into(),
@@ -235,12 +288,21 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
     segments.sort_by_key(|(addr, _)| *addr);
 
     let min_addr = segments[0].0;
-    let max_addr = segments
-        .iter()
-        .map(|(addr, data)| addr + data.len() as u32)
-        .max()
-        .unwrap();
+    // Per-record overflow and the MAX_FIRMWARE_SPAN cap were already enforced
+    // by hex_records_to_segments; keep checked arithmetic as defense in depth.
+    let mut max_addr = min_addr;
+    for (addr, data) in &segments {
+        let end = addr.checked_add(data.len() as u32).ok_or_else(|| {
+            SoloError::FirmwareError(format!(
+                "HEX record at 0x{:08X} overflows the 32-bit address space",
+                addr
+            ))
+        })?;
+        max_addr = max_addr.max(end);
+    }
 
+    // max_addr >= min_addr by construction, and the span is capped, so this
+    // allocation is bounded by MAX_FIRMWARE_SPAN.
     let size = (max_addr - min_addr) as usize;
     let mut binary = vec![0xFFu8; size];
 
@@ -448,25 +510,15 @@ pub fn merge_hex_files(
 
     for input_path in inputs {
         let content = std::fs::read_to_string(input_path)?;
-        let reader = ihex::Reader::new(&content);
-        let mut upper_linear: u32 = 0;
-
-        for record in reader {
-            let r = record.map_err(|e| {
+        let records: Vec<Record> = ihex::Reader::new(&content)
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| {
                 SoloError::FirmwareError(format!("HEX parse error in {:?}: {:?}", input_path, e))
             })?;
-            match r {
-                Record::Data { offset, value } => {
-                    let base = upper_linear + (offset as u32);
-                    for (i, &b) in value.iter().enumerate() {
-                        byte_map.insert(base + i as u32, b);
-                    }
-                }
-                Record::ExtendedLinearAddress(upper) => {
-                    upper_linear = (upper as u32) << 16;
-                }
-                Record::EndOfFile => break,
-                _ => {}
+
+        for (addr, data) in hex_records_to_segments(&records)? {
+            for (i, &b) in data.iter().enumerate() {
+                byte_map.insert(addr + i as u32, b);
             }
         }
     }
@@ -572,25 +624,10 @@ pub fn flash_addr(page: u32) -> u32 {
 ///   app_end_page=20: for bootloaders >2.5.3  (APPLICATION_END_PAGE_COUNT=20)
 pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) -> Result<Vec<u8>> {
     let content = std::fs::read_to_string(hex_path)?;
-    let reader = ihex::Reader::new(&content);
-    let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
-    let mut upper_linear: u32 = 0;
-
-    for record in reader {
-        let r = record
-            .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e)))?;
-        match r {
-            Record::Data { offset, value } => {
-                let addr = upper_linear + (offset as u32);
-                segments.push((addr, value));
-            }
-            Record::ExtendedLinearAddress(upper) => {
-                upper_linear = (upper as u32) << 16;
-            }
-            Record::EndOfFile => break,
-            _ => {}
-        }
-    }
+    let records: Vec<Record> = ihex::Reader::new(&content)
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e)))?;
+    let mut segments = hex_records_to_segments(&records)?;
 
     if segments.is_empty() {
         return Err(SoloError::FirmwareError("No data in HEX file".into()));
@@ -825,6 +862,53 @@ mod tests {
         let (base, bytes) = hex_records_to_binary(&records).unwrap();
         assert_eq!(base, 0x08000000);
         assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+    }
+
+    #[test]
+    fn test_hex_records_address_overflow_rejected() {
+        // upper_linear = 0xFFFF0000, offset = 0xFFF8 => addr = 0xFFFFFFF8;
+        // addr + 16 bytes overflows u32 and must be rejected, not wrap.
+        let records = vec![
+            Record::ExtendedLinearAddress(0xFFFF),
+            Record::Data {
+                offset: 0xFFF8,
+                value: vec![0xAA; 16],
+            },
+            Record::EndOfFile,
+        ];
+        let result = hex_records_to_binary(&records);
+        assert!(matches!(result, Err(SoloError::FirmwareError(_))));
+        assert!(result.unwrap_err().to_string().contains("overflows"));
+    }
+
+    #[test]
+    fn test_hex_records_span_cap_rejected() {
+        // Records at 0x00000000 and 0x08000000 span 128 MiB, far above
+        // MAX_FIRMWARE_SPAN (16 MiB); reject instead of allocating the span.
+        let records = vec![
+            Record::Data {
+                offset: 0x0000,
+                value: vec![0x01, 0x02],
+            },
+            Record::ExtendedLinearAddress(0x0800),
+            Record::Data {
+                offset: 0x0000,
+                value: vec![0x03, 0x04],
+            },
+            Record::EndOfFile,
+        ];
+        let result = hex_records_to_binary(&records);
+        assert!(matches!(result, Err(SoloError::FirmwareError(_))));
+        assert!(result.unwrap_err().to_string().contains("span too large"));
+    }
+
+    #[test]
+    fn test_hex_small_file_still_parses() {
+        // A normal small HEX file is unaffected by the overflow/span checks.
+        let hex = ":020000040800F2\n:0400000001020304F2\n:00000001FF\n";
+        let (base, bytes) = parse_hex_string(hex).unwrap();
+        assert_eq!(base, 0x08000000);
+        assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04]);
     }
 
     #[test]
