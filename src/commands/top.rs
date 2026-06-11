@@ -46,7 +46,7 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
     }
 
     if let Some(out_path) = output {
-        std::fs::write(out_path, &priv_pem)?;
+        write_private_key(out_path, &priv_pem)?;
         eprintln!("Private key written to {:?}", out_path);
     } else {
         print!("{}", priv_pem);
@@ -54,6 +54,32 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
 
     eprintln!("Public key:\n{}", pub_pem);
     Ok(())
+}
+
+/// Write the signing private key to `path`, restricting access to the owner.
+///
+/// On Unix the file is created with mode 0o600 so the key is not readable
+/// by other local users. An existing file is truncated and overwritten,
+/// matching the behavior of `std::fs::write` (note: a pre-existing file
+/// keeps its original permissions; the mode applies on creation).
+#[cfg(unix)]
+fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents.as_bytes())
+}
+
+/// Write the signing private key to `path` (non-Unix fallback).
+#[cfg(not(unix))]
+fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
+    std::fs::write(path, contents)
 }
 
 /// Sign a firmware hex file with the given key.
@@ -132,4 +158,38 @@ pub fn cmd_ls(json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::write_private_key;
+    use std::os::unix::fs::PermissionsExt;
+
+    const KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n";
+
+    /// The private key file must be created with mode 0o600 so it is not
+    /// readable by other local users.
+    #[test]
+    fn test_write_private_key_sets_owner_only_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+
+        write_private_key(&path, KEY_PEM).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
+    }
+
+    /// Overwriting an existing key file truncates it, matching `fs::write`.
+    #[test]
+    fn test_write_private_key_overwrites_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+
+        write_private_key(&path, "a much longer first key body").unwrap();
+        write_private_key(&path, KEY_PEM).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
+    }
 }

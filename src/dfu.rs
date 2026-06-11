@@ -6,18 +6,13 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use rusb::{Context, DeviceHandle, UsbContext};
 
-use crate::device::{DFU_CHUNK_SIZE, FLASH_BASE, SOLO_DFU_PID, SOLO_VID};
+use crate::device::{DFU_CHUNK_SIZE, SOLO_DFU_PID, SOLO_VID};
 use crate::error::{Result, SoloError};
 use crate::vlog;
 
 // DFU request codes
-pub const DFU_DETACH: u8 = 0x00;
 pub const DFU_DNLOAD: u8 = 0x01;
-pub const DFU_UPLOAD: u8 = 0x02;
 pub const DFU_GETSTATUS: u8 = 0x03;
-pub const DFU_CLRSTATUS: u8 = 0x04;
-pub const DFU_GETSTATE: u8 = 0x05;
-pub const DFU_ABORT: u8 = 0x06;
 
 // DFU states
 pub const DFU_STATE_IDLE: u8 = 0x02;
@@ -139,16 +134,6 @@ impl DfuDevice {
         Ok(status)
     }
 
-    pub fn clear_status(&self) -> Result<()> {
-        self.control_out(DFU_CLRSTATUS, 0, &[])?;
-        Ok(())
-    }
-
-    pub fn abort(&self) -> Result<()> {
-        self.control_out(DFU_ABORT, 0, &[])?;
-        Ok(())
-    }
-
     /// Wait while device is in DNBUSY state.
     pub fn wait_while_busy(&self) -> Result<DfuStatus> {
         loop {
@@ -225,12 +210,6 @@ impl DfuDevice {
     }
 }
 
-/// Calculate the DFU block index for a given flash address.
-/// Exported here for use in tests and commands.
-pub fn block_index_for_address(address: u32) -> u32 {
-    (address - FLASH_BASE) / DFU_CHUNK_SIZE + 2
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,19 +230,6 @@ mod tests {
         let status = DfuStatus::parse(&bytes).unwrap();
         assert!(!status.is_ok());
         assert_eq!(status.state, DFU_STATE_ERROR);
-    }
-
-    #[test]
-    fn test_dfu_block_index() {
-        // Base address -> block 2
-        assert_eq!(block_index_for_address(0x08000000), 2);
-        // + 2048 -> block 3
-        assert_eq!(block_index_for_address(0x08000800), 3);
-        // + 4096 -> block 4
-        assert_eq!(block_index_for_address(0x08001000), 4);
-        // Page 113 = 113 * 2048 = 0x38800 offset
-        let page113_addr = 0x08000000 + 113 * 2048;
-        assert_eq!(block_index_for_address(page113_addr), 113 + 2);
     }
 
     #[test]
