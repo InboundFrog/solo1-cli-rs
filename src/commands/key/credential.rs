@@ -1,8 +1,9 @@
-use crate::cbor::{cbor_bytes, cbor_int, int_map};
+use crate::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
 use crate::commands::key::common;
 use crate::ctap2::{
-    extract_cbor_text_responses, find_cbor_response_by_key, get_info_client_pin_set,
-    parse_cbor_map_response, prompt_and_get_pin_token,
+    check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set,
+    parse_cbor_map_response, parse_cbor_map_response_allow_empty, pin_uv_auth,
+    prompt_and_get_pin_token,
 };
 use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
@@ -20,7 +21,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     let pairs = parse_cbor_map_response(&response, "authenticatorGetInfo")?;
 
     let mut versions = Vec::new();
-    if let Some(Value::Array(v)) = find_cbor_response_by_key(&pairs, 0x01) {
+    if let Some(Value::Array(v)) = find_int_key(&pairs, 0x01) {
         versions = extract_cbor_text_responses(v)
             .into_iter()
             .map(|s| s.to_string())
@@ -28,7 +29,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
 
     let mut extensions = Vec::new();
-    if let Some(Value::Array(e)) = find_cbor_response_by_key(&pairs, 0x02) {
+    if let Some(Value::Array(e)) = find_int_key(&pairs, 0x02) {
         extensions = extract_cbor_text_responses(e)
             .into_iter()
             .map(|s| s.to_string())
@@ -36,12 +37,12 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
 
     let mut aaguid = String::new();
-    if let Some(Value::Bytes(b)) = find_cbor_response_by_key(&pairs, 0x03) {
+    if let Some(Value::Bytes(b)) = find_int_key(&pairs, 0x03) {
         aaguid = hex::encode(b);
     }
 
     let mut options = HashMap::new();
-    if let Some(Value::Map(m)) = find_cbor_response_by_key(&pairs, 0x04) {
+    if let Some(Value::Map(m)) = find_int_key(&pairs, 0x04) {
         for (k, v) in m {
             if let (Value::Text(name), Value::Bool(b)) = (k, v) {
                 options.insert(name.to_string(), *b);
@@ -49,16 +50,10 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         }
     }
 
-    let max_msg_size = find_cbor_response_by_key(&pairs, 0x05).and_then(|v| {
-        if let Value::Integer(n) = v {
-            (*n).try_into().ok()
-        } else {
-            None
-        }
-    });
+    let max_msg_size = find_uint(&pairs, 0x05);
 
     let mut pin_uv_auth_protocols = Vec::new();
-    if let Some(Value::Array(protos)) = find_cbor_response_by_key(&pairs, 0x06) {
+    if let Some(Value::Array(protos)) = find_int_key(&pairs, 0x06) {
         for v in protos {
             if let Value::Integer(i) = v {
                 if let Ok(n) = (*i).try_into() {
@@ -68,30 +63,11 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         }
     }
 
-    let max_credential_count_in_list = find_cbor_response_by_key(&pairs, 0x07).and_then(|v| {
-        if let Value::Integer(n) = v {
-            (*n).try_into().ok()
-        } else {
-            None
-        }
-    });
+    let max_credential_count_in_list = find_uint(&pairs, 0x07);
 
-    let max_credential_id_length = find_cbor_response_by_key(&pairs, 0x08).and_then(|v| {
-        if let Value::Integer(n) = v {
-            (*n).try_into().ok()
-        } else {
-            None
-        }
-    });
+    let max_credential_id_length = find_uint(&pairs, 0x08);
 
-    let remaining_discoverable_credentials =
-        find_cbor_response_by_key(&pairs, 0x0A).and_then(|v| {
-            if let Value::Integer(n) = v {
-                (*n).try_into().ok()
-            } else {
-                None
-            }
-        });
+    let remaining_discoverable_credentials = find_uint(&pairs, 0x0A);
 
     if json {
         return print_json(&CredentialInfoOutput {
@@ -147,17 +123,6 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Compute `pinUvAuthParam = HMAC-SHA-256(pin_token, msg)[0..16]`.
-fn pin_uv_auth(pin_token: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
-    use hmac::{Hmac, KeyInit as _, Mac as _};
-    use sha2::Sha256;
-    let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
-        .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
-    mac.update(msg);
-    let result = mac.finalize().into_bytes();
-    Ok(result[..16].to_vec())
-}
-
 /// Send a credMgmt (0x0A) subcommand with optional params and pinUvAuthParam.
 ///
 /// Encodes the request as a CBOR map with keys: subCommand (0x01),
@@ -179,10 +144,7 @@ fn send_cred_mgmt(
     entries.push((0x04, cbor_bytes(pin_uv))); // pinUvAuthParam
 
     let cm_cbor = int_map(entries);
-    let mut req = vec![0x0Au8]; // authenticatorCredentialManagement
-    ciborium::ser::into_writer(&cm_cbor, &mut req)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-    hid.send_recv(CTAPHID_CBOR, &req)
+    ctap2_call(hid, 0x0A, &cm_cbor) // authenticatorCredentialManagement
 }
 
 /// Send a credMgmt (0x0A) subcommand with no authentication parameters.
@@ -191,49 +153,7 @@ fn send_cred_mgmt(
 /// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
 fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
     let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
-    let mut req = vec![0x0Au8];
-    ciborium::ser::into_writer(&cm_cbor, &mut req)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-    hid.send_recv(CTAPHID_CBOR, &req)
-}
-
-/// Parse a raw credMgmt HID response into a CBOR map, checking the status byte.
-///
-/// Returns an empty vec if the response contains only a success status byte
-/// with no CBOR payload. Returns `Err` for any non-zero status byte or
-/// malformed CBOR.
-fn parse_cm_response(
-    resp: Vec<u8>,
-    ctx: &str,
-) -> Result<Vec<(ciborium::value::Value, ciborium::value::Value)>> {
-    use crate::ctap2::ctap2_status_message;
-    use ciborium::value::Value;
-    if resp.is_empty() {
-        return Err(SoloError::MalformedResponse(format!(
-            "Empty response from {}",
-            ctx
-        )));
-    }
-    let status = resp[0];
-    if status != 0x00 {
-        let message = ctap2_status_message(status);
-        return Err(SoloError::AuthenticatorError {
-            code: status,
-            message,
-        });
-    }
-    if resp.len() == 1 {
-        return Ok(vec![]);
-    }
-    let val: Value =
-        ciborium::de::from_reader(&resp[1..]).map_err(|e| SoloError::CborError(e.to_string()))?;
-    match val {
-        Value::Map(p) => Ok(p),
-        _ => Err(SoloError::MalformedResponse(format!(
-            "{} response is not a CBOR map",
-            ctx
-        ))),
-    }
+    ctap2_call(hid, 0x0A, &cm_cbor) // authenticatorCredentialManagement
 }
 
 /// Send enumerateRPsBegin (subcommand 0x02) then enumerateRPsGetNextRP
@@ -245,51 +165,34 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
     // enumerateRPsBegin — pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
     let rp_begin_auth = pin_uv_auth(pin_token, &[0x02u8])?;
     let rp_begin_resp = send_cred_mgmt(hid, 0x02, None, rp_begin_auth)?;
-    let rp_begin_pairs = parse_cm_response(rp_begin_resp, "enumerateRPsBegin")?;
+    let rp_begin_pairs = parse_cbor_map_response_allow_empty(&rp_begin_resp, "enumerateRPsBegin")?;
 
     if rp_begin_pairs.is_empty() {
         return Ok(vec![]);
     }
 
     // totalRPs (key 0x05); may be absent when there is only one RP
-    let total_rps: usize = find_cbor_response_by_key(&rp_begin_pairs, 0x05)
-        .and_then(|v| {
-            if let Value::Integer(i) = v {
-                (*i).try_into().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(1usize);
+    let total_rps: usize = find_uint(&rp_begin_pairs, 0x05)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(1);
 
     let mut rp_responses: Vec<Vec<(Value, Value)>> = vec![rp_begin_pairs];
     for _ in 1..total_rps {
         let next_resp = send_cred_mgmt_next(hid, 0x03)?;
-        let next_pairs = parse_cm_response(next_resp, "enumerateRPsGetNextRP")?;
+        let next_pairs = parse_cbor_map_response_allow_empty(&next_resp, "enumerateRPsGetNextRP")?;
         rp_responses.push(next_pairs);
     }
 
     let mut result = Vec::new();
     for rp_pairs in rp_responses {
         // rp map at key 0x03 — extract the "id" text field
-        let rp_id: String = find_cbor_response_by_key(&rp_pairs, 0x03)
+        let rp_id: String = find_int_key(&rp_pairs, 0x03)
             .and_then(|v| {
                 if let Value::Map(m) = v {
-                    m.iter().find_map(|(k, val)| {
-                        if let Value::Text(s) = k {
-                            if s == "id" {
-                                if let Value::Text(id) = val {
-                                    Some(id.clone())
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
+                    match find_text_key(m, "id") {
+                        Some(Value::Text(id)) => Some(id.clone()),
+                        _ => None,
+                    }
                 } else {
                     None
                 }
@@ -297,7 +200,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
             .unwrap_or_else(|| "<unknown>".into());
 
         // rpIdHash at key 0x04 (32 bytes)
-        let rp_id_hash: Vec<u8> = find_cbor_response_by_key(&rp_pairs, 0x04)
+        let rp_id_hash: Vec<u8> = find_int_key(&rp_pairs, 0x04)
             .and_then(|v| {
                 if let Value::Bytes(b) = v {
                     Some(b.clone())
@@ -341,76 +244,51 @@ fn enumerate_credentials_for_rp(
     // pinUvAuthParam   = HMAC-SHA-256(pinToken, [0x04] || subCommandParamsCbor)[0..16]
     let rk_begin_params = int_map([(0x01i64, cbor_bytes(rp_id_hash.to_vec()))]);
     let mut rk_params_cbor: Vec<u8> = Vec::new();
-    ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&rk_begin_params, &mut rk_params_cbor)?;
 
     let mut rk_auth_msg = vec![0x04u8];
     rk_auth_msg.extend_from_slice(&rk_params_cbor);
     let rk_begin_auth = pin_uv_auth(pin_token, &rk_auth_msg)?;
 
     let rk_begin_resp = send_cred_mgmt(hid, 0x04, Some(rk_begin_params), rk_begin_auth)?;
-    let rk_begin_pairs = parse_cm_response(rk_begin_resp, "enumerateCredentialsBegin")?;
+    let rk_begin_pairs =
+        parse_cbor_map_response_allow_empty(&rk_begin_resp, "enumerateCredentialsBegin")?;
 
     if rk_begin_pairs.is_empty() {
         return Ok(vec![]);
     }
 
-    let total_creds: usize = find_cbor_response_by_key(&rk_begin_pairs, 0x09)
-        .and_then(|v| {
-            if let Value::Integer(i) = v {
-                (*i).try_into().ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or(1usize);
+    let total_creds: usize = find_uint(&rk_begin_pairs, 0x09)
+        .and_then(|n| usize::try_from(n).ok())
+        .unwrap_or(1);
 
     let mut cred_responses = vec![rk_begin_pairs];
     for _ in 1..total_creds {
         let next_resp = send_cred_mgmt_next(hid, 0x05)?;
-        let next_pairs = parse_cm_response(next_resp, "enumerateCredentialsGetNextCredential")?;
+        let next_pairs = parse_cbor_map_response_allow_empty(
+            &next_resp,
+            "enumerateCredentialsGetNextCredential",
+        )?;
         cred_responses.push(next_pairs);
     }
 
     let mut result = Vec::new();
     for cred_pairs in cred_responses {
         // user: key 0x06 → map with "name" or "displayName"
-        let username: String = find_cbor_response_by_key(&cred_pairs, 0x06)
+        let username: String = find_int_key(&cred_pairs, 0x06)
             .and_then(|v| {
                 if let Value::Map(m) = v {
                     // prefer "name", fall back to "displayName", then "id" as hex
-                    m.iter()
-                        .find_map(|(k, val)| {
-                            if let Value::Text(s) = k {
-                                if s == "name" || s == "displayName" {
-                                    if let Value::Text(n) = val {
-                                        Some(n.clone())
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                        .or_else(|| {
-                            m.iter().find_map(|(k, val)| {
-                                if let Value::Text(s) = k {
-                                    if s == "id" {
-                                        match val {
-                                            Value::Text(t) => Some(t.clone()),
-                                            Value::Bytes(b) => Some(hex::encode(b)),
-                                            _ => None,
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                } else {
-                                    None
-                                }
-                            })
+                    let text_field = |key: &str| match find_text_key(m, key) {
+                        Some(Value::Text(n)) => Some(n.clone()),
+                        _ => None,
+                    };
+                    text_field("name")
+                        .or_else(|| text_field("displayName"))
+                        .or_else(|| match find_text_key(m, "id") {
+                            Some(Value::Text(t)) => Some(t.clone()),
+                            Some(Value::Bytes(b)) => Some(hex::encode(b)),
+                            _ => None,
                         })
                 } else {
                     None
@@ -418,25 +296,14 @@ fn enumerate_credentials_for_rp(
             })
             .unwrap_or_else(|| "<unknown>".into());
 
-        // credentialId: key 0x07 → map with "id" (bytes)
-        let cred_id: Vec<u8> = find_cbor_response_by_key(&cred_pairs, 0x07)
+        // credentialId: key 0x07 → map with "id" (bytes); store as base64
+        let cred_id: Vec<u8> = find_int_key(&cred_pairs, 0x07)
             .and_then(|v| {
                 if let Value::Map(m) = v {
-                    m.iter().find_map(|(k, val)| {
-                        if let Value::Text(s) = k {
-                            if s == "id" {
-                                if let Value::Bytes(b) = val {
-                                    Some(b.clone())
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
-                    })
+                    match find_text_key(m, "id") {
+                        Some(Value::Bytes(b)) => Some(b.clone()),
+                        _ => None,
+                    }
                 } else {
                     None
                 }
@@ -541,8 +408,6 @@ pub fn cmd_credential_rm(
     user: Option<&str>,
 ) -> Result<()> {
     use base64::Engine as _;
-    use hmac::{Hmac, KeyInit as _, Mac as _};
-    use sha2::Sha256;
 
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
@@ -624,19 +489,12 @@ pub fn cmd_credential_rm(
     ]);
     let del_params = int_map([(0x02i64, cred_descriptor)]);
     let mut del_params_cbor: Vec<u8> = Vec::new();
-    ciborium::ser::into_writer(&del_params, &mut del_params_cbor)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
+    ciborium::ser::into_writer(&del_params, &mut del_params_cbor)?;
 
     // pinUvAuthParam = HMAC-SHA-256(pinToken, [0x06] || subCommandParamsCbor)[0..16]
     let mut del_auth_msg = vec![0x06u8];
     del_auth_msg.extend_from_slice(&del_params_cbor);
-    let del_pin_uv_auth: Vec<u8> = {
-        let mut mac = Hmac::<Sha256>::new_from_slice(pin_token)
-            .map_err(|e| SoloError::CryptoError(format!("HMAC init error: {}", e)))?;
-        mac.update(&del_auth_msg);
-        let result = mac.finalize().into_bytes();
-        result[..16].to_vec()
-    };
+    let del_pin_uv_auth = pin_uv_auth(pin_token, &del_auth_msg)?;
 
     // Send: authenticatorCredentialManagement CBOR =
     //   {0x01: 6, 0x02: {0x01: cred_id_bytes}, 0x03: 1, 0x04: pinUvAuthParam}
@@ -646,24 +504,9 @@ pub fn cmd_credential_rm(
         (0x03, cbor_int(1)),                 // pinUvAuthProtocol = 1
         (0x04, cbor_bytes(del_pin_uv_auth)), // pinUvAuthParam
     ]);
-    let mut del_req = vec![0x0Au8]; // authenticatorCredentialManagement
-    ciborium::ser::into_writer(&del_cbor, &mut del_req)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-
-    let del_resp = hid.send_recv(CTAPHID_CBOR, &del_req)?;
-    if del_resp.is_empty() {
-        return Err(SoloError::MalformedResponse(
-            "Empty response from deleteCredential".into(),
-        ));
-    }
-    let status = del_resp[0];
-    if status != 0x00 {
-        let message = crate::ctap2::ctap2_status_message(status);
-        return Err(SoloError::AuthenticatorError {
-            code: status,
-            message,
-        });
-    }
+    // authenticatorCredentialManagement (0x0A)
+    let del_resp = ctap2_call(hid, 0x0A, &del_cbor)?;
+    check_ctap_status(&del_resp, "deleteCredential")?;
 
     println!("Credential deleted.");
     Ok(())

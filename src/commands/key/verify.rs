@@ -1,6 +1,6 @@
-use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, int_map};
-use crate::ctap2::{parse_cbor_map_response, prompt_and_get_pin_token};
-use crate::device::{HidDevice, CTAPHID_CBOR};
+use crate::cbor::{find_int_key, find_text_key};
+use crate::ctap2::parse_cbor_map_response;
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
 
@@ -19,22 +19,6 @@ struct AttestationData {
     auth_data: Option<Vec<u8>>,
     /// DER-encoded ECDSA signature (`attStmt.sig`), if present.
     sig: Option<Vec<u8>>,
-}
-
-/// Find a value by text key inside a CBOR map's pairs.
-fn find_text_key<'a>(
-    pairs: &'a [(ciborium::value::Value, ciborium::value::Value)],
-    key: &str,
-) -> Option<&'a ciborium::value::Value> {
-    use ciborium::value::Value;
-    pairs.iter().find_map(|(k, v)| {
-        if let Value::Text(s) = k {
-            if s == key {
-                return Some(v);
-            }
-        }
-        None
-    })
 }
 
 /// Parse a raw makeCredential CTAP2 response and extract the packed
@@ -145,72 +129,26 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
 /// fingerprint.
 pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
-    use ciborium::value::Value;
-    use hmac::{Hmac, KeyInit as _, Mac as _};
 
     // clientDataHash: fixed 32-byte value (Solo does not verify it for attestation)
     let client_data_hash: Vec<u8> = Sha256::digest(b"solokeys_verify_test").to_vec();
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
-    let pin_uv_auth: Option<Vec<u8>> = if crate::ctap2::get_info_client_pin_set(hid)? {
-        let pin_token = prompt_and_get_pin_token(hid)?;
-
-        // pinUvAuthParam = HMAC-SHA-256(pinToken, clientDataHash)[0..16]
-        let mut mac = Hmac::<Sha256>::new_from_slice(&pin_token)
-            .map_err(|e| SoloError::CryptoError(format!("HMAC key error: {}", e)))?;
-        mac.update(&client_data_hash);
-        let hmac_result = mac.finalize().into_bytes();
-        Some(hmac_result[..16].to_vec())
-    } else {
-        None
-    };
+    let pin_uv_auth = crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash)?;
 
     eprintln!("Please press the button on your Solo key");
 
-    // Build CTAP2 makeCredential CBOR request map (integer keys per CTAP2 spec):
-    //   0x01: clientDataHash
-    //   0x02: rp  {"id": "solokeys.com", "name": "solokeys.com"}
-    //   0x03: user {"id": b"verify", "name": "verify", "displayName": "verify"}
-    //   0x04: pubKeyCredParams [{"alg": -7, "type": "public-key"}]
-    //   0x08: pinUvAuthParam (if PIN is set)
-    //   0x09: pinUvAuthProtocol = 1 (if PIN is set)
-    let mut cbor_entries: Vec<(i64, Value)> = vec![
-        (0x01, cbor_bytes(client_data_hash.clone())),
-        (
-            0x02,
-            Value::Map(vec![
-                (cbor_text("id"), cbor_text("solokeys.com")),
-                (cbor_text("name"), cbor_text("solokeys.com")),
-            ]),
-        ),
-        (
-            0x03,
-            Value::Map(vec![
-                (cbor_text("id"), cbor_bytes(b"verify".to_vec())),
-                (cbor_text("name"), cbor_text("verify")),
-                (cbor_text("displayName"), cbor_text("verify")),
-            ]),
-        ),
-        (
-            0x04,
-            Value::Array(vec![Value::Map(vec![
-                (cbor_text("alg"), cbor_int(-7)),
-                (cbor_text("type"), cbor_text("public-key")),
-            ])]),
-        ),
-    ];
-    if let Some(auth_param) = pin_uv_auth {
-        cbor_entries.push((0x08, cbor_bytes(auth_param)));
-        cbor_entries.push((0x09, cbor_int(1)));
-    }
-    let cbor_request = int_map(cbor_entries);
+    // makeCredential request with rp "solokeys.com" and user "verify"
+    let cbor_request = crate::ctap2::build_make_credential(
+        "solokeys.com",
+        "verify",
+        &client_data_hash,
+        pin_uv_auth,
+        [],
+    );
 
-    // Prepend CTAP2 command byte 0x01 (makeCredential) before the CBOR payload
-    let mut request_bytes = vec![0x01u8];
-    ciborium::ser::into_writer(&cbor_request, &mut request_bytes)
-        .map_err(|e| SoloError::CborError(e.to_string()))?;
-
-    let response = hid.send_recv(CTAPHID_CBOR, &request_bytes)?;
+    // CTAP2 makeCredential (0x01)
+    let response = crate::ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
 
     // Extract the attestation: certificate, authData, and signature
     let att = extract_attestation(&response)?;
@@ -295,6 +233,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cbor::{cbor_bytes, cbor_int, cbor_text, int_map};
     use crate::device::mock::MockDevice;
     use ciborium::value::Value;
 

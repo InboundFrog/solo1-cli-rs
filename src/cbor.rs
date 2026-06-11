@@ -29,6 +29,29 @@ pub fn find_int_key(pairs: &[(Value, Value)], key: i64) -> Option<&Value> {
     })
 }
 
+/// Find an unsigned integer in a CTAP2 integer-keyed map by key number.
+///
+/// Returns `None` if the key is absent, the value is not an integer, or the
+/// integer does not fit in `u64`.
+pub fn find_uint(pairs: &[(Value, Value)], key: i64) -> Option<u64> {
+    match find_int_key(pairs, key)? {
+        Value::Integer(i) => (*i).try_into().ok(),
+        _ => None,
+    }
+}
+
+/// Find a value in a text-keyed CBOR map by key name.
+pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
+    pairs.iter().find_map(|(k, v)| {
+        if let Value::Text(s) = k {
+            if s == key {
+                return Some(v);
+            }
+        }
+        None
+    })
+}
+
 /// Require a value by integer key; error with context if missing.
 pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> Result<&'a Value> {
     find_int_key(pairs, key).ok_or_else(|| {
@@ -84,6 +107,36 @@ mod tests {
             (Value::Integer(2i64.into()), Value::Bytes(vec![0xAB])),
             (Value::Integer((-1i64).into()), Value::Integer(42i64.into())),
         ]
+    }
+
+    #[test]
+    fn test_find_uint() {
+        let pairs = sample_pairs();
+        assert_eq!(find_uint(&pairs, -1), Some(42));
+        // key 1 exists but is not an integer
+        assert_eq!(find_uint(&pairs, 1), None);
+        // negative values do not fit in u64
+        let neg = vec![(Value::Integer(5i64.into()), Value::Integer((-3i64).into()))];
+        assert_eq!(find_uint(&neg, 5), None);
+        assert_eq!(find_uint(&pairs, 99), None);
+    }
+
+    #[test]
+    fn test_find_text_key() {
+        let pairs = vec![
+            (Value::Text("id".into()), Value::Text("abc".into())),
+            (Value::Text("name".into()), Value::Bytes(vec![0x01])),
+            (Value::Integer(1i64.into()), Value::Text("ignored".into())),
+        ];
+        assert_eq!(
+            find_text_key(&pairs, "id"),
+            Some(&Value::Text("abc".into()))
+        );
+        assert_eq!(
+            find_text_key(&pairs, "name"),
+            Some(&Value::Bytes(vec![0x01]))
+        );
+        assert_eq!(find_text_key(&pairs, "missing"), None);
     }
 
     #[test]
