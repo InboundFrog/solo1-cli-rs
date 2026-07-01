@@ -63,21 +63,21 @@ solo1 ls [--json]                        # List connected Solo devices
 ### Key commands (`solo1 key [--serial <SN>] [--udp]`)
 
 ```sh
-solo1 key version                        # Get firmware version
-solo1 key wink                           # Blink LED
-solo1 key ping [--count N] [--data HEX] # Ping and measure RTT
-solo1 key rng hexbytes <N>               # Print N random bytes as hex
-solo1 key rng raw                        # Stream raw entropy to stdout
-solo1 key rng feedkernel                 # Feed entropy to /dev/random (Linux)
-solo1 key verify                         # Verify key authenticity via attestation
-solo1 key reset                          # Factory reset (destructive)
-solo1 key set-pin                        # Set PIN on unpinned key
-solo1 key change-pin                     # Change existing PIN
-solo1 key disable-updates                # Permanently disable firmware updates
-solo1 key keyboard <DATA>                # Program keyboard sequence (max 64 bytes)
-solo1 key probe <HASH_TYPE> <FILE>       # Calculate hash on device (sha256|sha512|rsa2048|ed25519, file <=6144 bytes)
+solo1 key version                           # Get firmware version
+solo1 key wink                              # Blink LED
+solo1 key ping [--count N] [--data HEX]     # Ping and measure RTT
+solo1 key rng hexbytes <N>                  # Print N random bytes as hex
+solo1 key rng raw                           # Stream raw entropy to stdout
+solo1 key rng feedkernel                    # Feed entropy to /dev/random (Linux)
+solo1 key verify                            # Verify key authenticity via attestation
+solo1 key reset                             # Factory reset (destructive)
+solo1 key set-pin                           # Set PIN on unpinned key
+solo1 key change-pin                        # Change existing PIN
+solo1 key disable-updates                   # Permanently disable firmware updates
+solo1 key keyboard <DATA>                   # Program keyboard sequence (max 64 bytes)
+solo1 key probe <HASH_TYPE> <FILE>          # Calculate hash on device (sha256|sha512|rsa2048|ed25519, file <=6144 bytes)
 solo1 key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential
-solo1 key update [--firmware FILE]       # Update firmware (downloads latest if omitted)
+solo1 key update [--firmware FILE]          # Update firmware (downloads latest if omitted)
 ```
 
 #### Credential management
