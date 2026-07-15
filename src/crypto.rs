@@ -195,8 +195,8 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
     let cert = Certificate::from_der(cert_der)
         .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
     let spki_der = cert
-        .tbs_certificate
-        .subject_public_key_info
+        .tbs_certificate()
+        .subject_public_key_info()
         .to_der()
         .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {}", e)))?;
     Ok(sha256_hex(&spki_der))
@@ -217,7 +217,7 @@ pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
     let cert = Certificate::from_der(cert_der)
         .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
 
-    let validity = cert.tbs_certificate.validity;
+    let validity = cert.tbs_certificate().validity();
     let now = std::time::SystemTime::now();
     let not_before = validity.not_before.to_system_time();
     let not_after = validity.not_after.to_system_time();
@@ -262,8 +262,8 @@ pub fn verify_attestation_signature(
     let cert = Certificate::from_der(cert_der)
         .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
     let spki_der = cert
-        .tbs_certificate
-        .subject_public_key_info
+        .tbs_certificate()
+        .subject_public_key_info()
         .to_der()
         .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {}", e)))?;
     let verifying_key = VerifyingKey::from_public_key_der(&spki_der).map_err(|e| {
