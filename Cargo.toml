@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 aes = "0.9"
-base64 = "0.22"
+base64 = "0.23"
 cbc = { version = "0.2", features = ["alloc"] }
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
