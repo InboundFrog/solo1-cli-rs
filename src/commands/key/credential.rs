@@ -20,26 +20,29 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     let pairs = parse_cbor_map_response(&response, "authenticatorGetInfo")?;
 
-    let mut versions = Vec::new();
-    if let Some(Value::Array(v)) = find_int_key(&pairs, 0x01) {
-        versions = extract_cbor_text_responses(v)
+    let versions: Vec<String> = if let Some(Value::Array(v)) = find_int_key(&pairs, 0x01) {
+        extract_cbor_text_responses(v)
             .into_iter()
             .map(std::string::ToString::to_string)
-            .collect();
-    }
+            .collect()
+    } else {
+        Vec::new()
+    };
 
-    let mut extensions = Vec::new();
-    if let Some(Value::Array(e)) = find_int_key(&pairs, 0x02) {
-        extensions = extract_cbor_text_responses(e)
+    let extensions: Vec<String> = if let Some(Value::Array(e)) = find_int_key(&pairs, 0x02) {
+        extract_cbor_text_responses(e)
             .into_iter()
             .map(std::string::ToString::to_string)
-            .collect();
-    }
+            .collect()
+    } else {
+        Vec::new()
+    };
 
-    let mut aaguid = String::new();
-    if let Some(Value::Bytes(b)) = find_int_key(&pairs, 0x03) {
-        aaguid = hex::encode(b);
-    }
+    let aaguid = if let Some(Value::Bytes(b)) = find_int_key(&pairs, 0x03) {
+        hex::encode(b)
+    } else {
+        String::new()
+    };
 
     let mut options = HashMap::new();
     if let Some(Value::Map(m)) = find_int_key(&pairs, 0x04) {
@@ -418,14 +421,11 @@ pub fn cmd_credential_rm(
     let pin_token = pin_token.as_slice();
 
     // ── Resolve credential ID bytes ──────────────────────────────────────
-    let cred_id_bytes: Vec<u8>;
-    let display_label: String;
-
-    if let Some(id) = credential_id {
-        cred_id_bytes = base64::engine::general_purpose::STANDARD
+    let (cred_id_bytes, display_label): (Vec<u8>, String) = if let Some(id) = credential_id {
+        let bytes = base64::engine::general_purpose::STANDARD
             .decode(id)
             .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {e}")))?;
-        display_label = id.to_string();
+        (bytes, id.to_string())
     } else {
         let host = host.expect("host required when credential_id is absent");
         let user = user.expect("user required when credential_id is absent");
@@ -452,9 +452,8 @@ pub fn cmd_credential_rm(
                 "Multiple credentials found for host '{host}' and user '{user}'; delete by credential ID instead"
             )));
         }
-        cred_id_bytes = matches.remove(0);
-        display_label = format!("{host} / {user}");
-    }
+        (matches.remove(0), format!("{host} / {user}"))
+    };
 
     // Confirmation prompt
     if !common::confirm(&format!(
