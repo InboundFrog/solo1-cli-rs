@@ -44,7 +44,7 @@ pub fn cmd_reboot(hid: &impl HidDevice) -> Result<()> {
 pub fn cmd_bootloader_version(hid: &impl HidDevice) -> Result<()> {
     let response = hid.send_bootloader_cmd(CMD_VERSION, 0, &[])?;
     let version_str = format_bootloader_version(&response);
-    println!("Bootloader version: {}", version_str);
+    println!("Bootloader version: {version_str}");
     Ok(())
 }
 
