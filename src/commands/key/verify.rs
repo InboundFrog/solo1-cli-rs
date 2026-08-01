@@ -189,8 +189,8 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
         return print_json(&VerifyOutput {
             device_type: device_type.to_string(),
             device_name,
-            fingerprint: fingerprint,
-            spki_fingerprint: spki_fingerprint,
+            fingerprint,
+            spki_fingerprint,
             cert_expired,
             signature_valid,
         });
