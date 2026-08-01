@@ -93,7 +93,7 @@ pub fn sha256_file(path: &Path) -> Result<Vec<u8>> {
 /// The result of checking an attestation certificate fingerprint.
 ///
 /// Variants carry the device name as a `&'static str`.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AttestationResult {
     /// The certificate fingerprint matched a known genuine consumer device.
     GenuineConsumer(&'static str),
