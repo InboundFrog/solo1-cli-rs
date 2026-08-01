@@ -45,8 +45,8 @@ pub fn cmd_rng_raw(hid: &impl HidDevice) -> Result<()> {
 ///
 /// Uses the RNDADDENTROPY ioctl (0x40085203) to properly inform the kernel
 /// of the entropy being added, rather than just writing bytes. The struct
-/// sent to the ioctl is: entropy_count (i32) | buf_size (i32) | data (bytes).
-/// entropy_count = count * 2 (2 bits per byte, pessimistic estimate).
+/// sent to the ioctl is: `entropy_count` (i32) | `buf_size` (i32) | `data` (bytes).
+/// `entropy_count` = count * 2 (2 bits per byte, pessimistic estimate).
 ///
 /// # Errors
 /// Returns an error if the device request fails, if the entropy byte counts
