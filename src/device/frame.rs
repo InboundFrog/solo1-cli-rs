@@ -196,7 +196,7 @@ mod tests {
             payload: FramePayload::Init {
                 cmd: 0x06, // CTAPHID_INIT without high bit
                 bcnt: 3,
-                data: data.clone(),
+                data: data,
             },
         };
         let encoded = frame.encode();
@@ -228,7 +228,7 @@ mod tests {
             channel_id: cid,
             payload: FramePayload::Cont {
                 seq: 2,
-                data: data.clone(),
+                data: data,
             },
         };
         let encoded = frame.encode();

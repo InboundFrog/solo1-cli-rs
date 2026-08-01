@@ -535,7 +535,7 @@ mod tests {
         let cred_id_bytes = vec![0u8; 70];
         let cred_descriptor = Value::Map(vec![
             (Value::Text("type".into()), Value::Text("public-key".into())),
-            (Value::Text("id".into()), cbor_bytes(cred_id_bytes.clone())),
+            (Value::Text("id".into()), cbor_bytes(cred_id_bytes)),
         ]);
         let del_params = int_map([(0x02i64, cred_descriptor)]);
 
