@@ -90,13 +90,25 @@ impl FirmwareJson {
 pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
     match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
-            let v =
-                FirmwareVersion::new(u32::from(resp[0]), u32::from(resp[1]), u32::from(resp[2]));
+            let short = || SoloError::FirmwareError("bootloader version response too short".into());
+            let v = FirmwareVersion::new(
+                u32::from(*resp.first().ok_or_else(short)?),
+                u32::from(*resp.get(1).ok_or_else(short)?),
+                u32::from(*resp.get(2).ok_or_else(short)?),
+            );
             println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
         Ok(resp) if !resp.is_empty() => {
-            let v = FirmwareVersion::new(0, 0, u32::from(resp[0]));
+            let v = FirmwareVersion::new(
+                0,
+                0,
+                u32::from(
+                    *resp
+                        .first()
+                        .ok_or_else(|| SoloError::FirmwareError("empty version response".into()))?,
+                ),
+            );
             println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
@@ -132,15 +144,24 @@ impl FirmwareVersion {
                 "Invalid version string: {s}"
             )));
         }
-        let major = parts[0]
+        let major_str: &str = parts
+            .first()
+            .ok_or_else(|| SoloError::FirmwareError(format!("Invalid version string: {s}")))?;
+        let minor_str: &str = parts
+            .get(1)
+            .ok_or_else(|| SoloError::FirmwareError(format!("Invalid version string: {s}")))?;
+        let patch_str: &str = parts
+            .get(2)
+            .ok_or_else(|| SoloError::FirmwareError(format!("Invalid version string: {s}")))?;
+        let major = major_str
             .parse()
-            .map_err(|_| SoloError::FirmwareError(format!("Invalid major: {}", parts[0])))?;
-        let minor = parts[1]
+            .map_err(|_| SoloError::FirmwareError(format!("Invalid major: {major_str}")))?;
+        let minor = minor_str
             .parse()
-            .map_err(|_| SoloError::FirmwareError(format!("Invalid minor: {}", parts[1])))?;
-        let patch = parts[2]
+            .map_err(|_| SoloError::FirmwareError(format!("Invalid minor: {minor_str}")))?;
+        let patch = patch_str
             .parse()
-            .map_err(|_| SoloError::FirmwareError(format!("Invalid patch: {}", parts[2])))?;
+            .map_err(|_| SoloError::FirmwareError(format!("Invalid patch: {patch_str}")))?;
         Ok(Self {
             major,
             minor,
@@ -236,7 +257,12 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
                              upper=0x{upper_linear:08X} offset=0x{offset:04X} base=0x{base_addr:08X}"
                         ))
                     })?;
-                let end = addr.checked_add(value.len() as u32).ok_or_else(|| {
+                let value_len = u32::try_from(value.len()).map_err(|_| {
+                    SoloError::FirmwareError(format!(
+                        "HEX record at 0x{addr:08X} has too many bytes for a 32-bit address space"
+                    ))
+                })?;
+                let end = addr.checked_add(value_len).ok_or_else(|| {
                     SoloError::FirmwareError(format!(
                         "HEX record at 0x{:08X} ({} bytes) overflows the 32-bit address space",
                         addr,
@@ -261,7 +287,12 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
     }
 
     // max_end >= min_addr whenever there is at least one segment.
-    if !segments.is_empty() && max_end - min_addr > MAX_FIRMWARE_SPAN {
+    if !segments.is_empty()
+        && max_end
+            .checked_sub(min_addr)
+            .ok_or_else(|| SoloError::FirmwareError("HEX address span underflow".into()))?
+            > MAX_FIRMWARE_SPAN
+    {
         return Err(SoloError::FirmwareError(format!(
             "HEX address span too large: 0x{min_addr:08X}..0x{max_end:08X} exceeds {MAX_FIRMWARE_SPAN} bytes"
         )));
@@ -284,12 +315,20 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
     // Sort by address
     segments.sort_by_key(|(addr, _)| *addr);
 
-    let min_addr = segments[0].0;
+    let min_addr = segments
+        .first()
+        .ok_or_else(|| SoloError::FirmwareError("No data records in HEX file".into()))?
+        .0;
     // Per-record overflow and the MAX_FIRMWARE_SPAN cap were already enforced
     // by hex_records_to_segments; keep checked arithmetic as defense in depth.
     let mut max_addr = min_addr;
     for (addr, data) in &segments {
-        let end = addr.checked_add(data.len() as u32).ok_or_else(|| {
+        let data_len = u32::try_from(data.len()).map_err(|_| {
+            SoloError::FirmwareError(format!(
+                "HEX record at 0x{addr:08X} has too many bytes for a 32-bit address space"
+            ))
+        })?;
+        let end = addr.checked_add(data_len).ok_or_else(|| {
             SoloError::FirmwareError(format!(
                 "HEX record at 0x{addr:08X} overflows the 32-bit address space"
             ))
@@ -299,12 +338,27 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
 
     // max_addr >= min_addr by construction, and the span is capped, so this
     // allocation is bounded by MAX_FIRMWARE_SPAN.
-    let size = (max_addr - min_addr) as usize;
+    let size = usize::try_from(
+        max_addr
+            .checked_sub(min_addr)
+            .ok_or_else(|| SoloError::FirmwareError("HEX address span underflow".into()))?,
+    )
+    .map_err(|_| SoloError::FirmwareError("HEX binary size too large".into()))?;
     let mut binary = vec![0xFFu8; size];
 
     for (addr, data) in &segments {
-        let offset = (addr - min_addr) as usize;
-        binary[offset..offset + data.len()].copy_from_slice(data);
+        let offset = usize::try_from(
+            addr.checked_sub(min_addr)
+                .ok_or_else(|| SoloError::FirmwareError("HEX address underflow".into()))?,
+        )
+        .map_err(|_| SoloError::FirmwareError("HEX offset too large".into()))?;
+        let end = offset
+            .checked_add(data.len())
+            .ok_or_else(|| SoloError::FirmwareError("HEX offset overflow".into()))?;
+        binary
+            .get_mut(offset..end)
+            .ok_or_else(|| SoloError::FirmwareError("HEX data out of range".into()))?
+            .copy_from_slice(data);
     }
 
     Ok((min_addr, binary))
@@ -373,19 +427,26 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
 /// `0x41 0x41` ('A' 'A'), then writes the 8-byte `AUTH_WORD` at `auth_word_addr`:
 /// bytes 0–3 are `0x00` (authorise boot) and bytes 4–7 are `0xFF` (enable
 /// bootloader).
-fn patch_auth_word(byte_map: &mut HashMap<u32, u8>, app_end_page_start: u32, auth_word_addr: u32) {
+fn patch_auth_word(
+    byte_map: &mut HashMap<u32, u8>,
+    app_end_page_start: u32,
+    auth_word_addr: u32,
+) -> Result<()> {
+    let overflow = || SoloError::FirmwareError("auth word address overflow".into());
+
     // Boot marker: flash_addr(APPLICATION_END_PAGE - 1) = 'A' 'A'
     byte_map.insert(app_end_page_start, 0x41);
-    byte_map.insert(app_end_page_start + 1, 0x41);
+    byte_map.insert(app_end_page_start.checked_add(1).ok_or_else(overflow)?, 0x41);
 
     // AUTH_WORD[0..3] = 0 (authorise boot)
     for i in 0..4u32 {
-        byte_map.insert(auth_word_addr + i, 0x00);
+        byte_map.insert(auth_word_addr.checked_add(i).ok_or_else(overflow)?, 0x00);
     }
     // AUTH_WORD[4..7] = 0xFF (enable bootloader)
     for i in 4..8u32 {
-        byte_map.insert(auth_word_addr + i, 0xFF);
+        byte_map.insert(auth_word_addr.checked_add(i).ok_or_else(overflow)?, 0xFF);
     }
+    Ok(())
 }
 
 /// Write the attestation region into the byte map starting at `attest_addr`.
@@ -395,10 +456,19 @@ fn patch_auth_word(byte_map: &mut HashMap<u32, u8>, app_end_page_start: u32, aut
 ///   [+32]:  8 bytes device settings (little-endian u64: `0xAA551E7900000000`)
 ///   [+40]:  8 bytes cert size (little-endian u64)
 ///   [+48]:  N bytes certificate
-fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u8], cert: &[u8]) {
+fn patch_attestation(
+    byte_map: &mut HashMap<u32, u8>,
+    attest_addr: u32,
+    key: &[u8],
+    cert: &[u8],
+) -> Result<()> {
+    let idx_err = || SoloError::FirmwareError("attestation index too large".into());
+    let overflow = || SoloError::FirmwareError("attestation address overflow".into());
+
     // Attestation key at ATTEST_ADDR+0 (32 bytes)
     for (i, &b) in key.iter().take(32).enumerate() {
-        byte_map.insert(attest_addr + i as u32, b);
+        let iu = u32::try_from(i).map_err(|_| idx_err())?;
+        byte_map.insert(attest_addr.checked_add(iu).ok_or_else(overflow)?, b);
     }
 
     // Device settings at ATTEST_ADDR+32 (8 bytes little-endian u64)
@@ -406,20 +476,43 @@ fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u
     let device_settings: u64 = 0xAA55_1E79_0000_0000_u64;
     let ds_bytes = device_settings.to_le_bytes();
     for (i, &b) in ds_bytes.iter().enumerate() {
-        byte_map.insert(attest_addr + 32 + i as u32, b);
+        let iu = u32::try_from(i).map_err(|_| idx_err())?;
+        byte_map.insert(
+            attest_addr
+                .checked_add(32)
+                .and_then(|a| a.checked_add(iu))
+                .ok_or_else(overflow)?,
+            b,
+        );
     }
 
     // Cert size at ATTEST_ADDR+40 (8 bytes little-endian u64)
-    let cert_size: u64 = cert.len() as u64;
+    let cert_size: u64 =
+        u64::try_from(cert.len()).map_err(|_| SoloError::FirmwareError("cert too large".into()))?;
     let cs_bytes = cert_size.to_le_bytes();
     for (i, &b) in cs_bytes.iter().enumerate() {
-        byte_map.insert(attest_addr + 40 + i as u32, b);
+        let iu = u32::try_from(i).map_err(|_| idx_err())?;
+        byte_map.insert(
+            attest_addr
+                .checked_add(40)
+                .and_then(|a| a.checked_add(iu))
+                .ok_or_else(overflow)?,
+            b,
+        );
     }
 
     // Certificate at ATTEST_ADDR+48
     for (i, &b) in cert.iter().enumerate() {
-        byte_map.insert(attest_addr + 48 + i as u32, b);
+        let iu = u32::try_from(i).map_err(|_| idx_err())?;
+        byte_map.insert(
+            attest_addr
+                .checked_add(48)
+                .and_then(|a| a.checked_add(iu))
+                .ok_or_else(overflow)?,
+            b,
+        );
     }
+    Ok(())
 }
 
 /// Merge multiple Intel HEX files into one output HEX file.
@@ -489,7 +582,9 @@ pub fn merge_hex_files(
 
     eprintln!("app end page: {application_end_page}");
 
-    let auth_word_addr = flash_addr(application_end_page) - 8;
+    let auth_word_addr = flash_addr(application_end_page)
+        .checked_sub(8)
+        .ok_or_else(|| SoloError::FirmwareError("auth word address underflow".into()))?;
     // ATTEST_ADDR = flash_addr(PAGES - 15) = flash_addr(113)
     let attest_addr = flash_addr(FLASH_PAGES - 15);
 
@@ -510,31 +605,53 @@ pub fn merge_hex_files(
 
         for (addr, data) in hex_records_to_segments(&records)? {
             for (i, &b) in data.iter().enumerate() {
-                byte_map.insert(addr + i as u32, b);
+                let iu = u32::try_from(i)
+                    .map_err(|_| SoloError::FirmwareError("HEX segment index too large".into()))?;
+                byte_map.insert(
+                    addr.checked_add(iu)
+                        .ok_or_else(|| SoloError::FirmwareError("HEX address overflow".into()))?,
+                    b,
+                );
             }
         }
     }
 
     // Patch boot authorization bytes and attestation region
     let app_end_page_start = flash_addr(application_end_page - 1);
-    patch_auth_word(&mut byte_map, app_end_page_start, auth_word_addr);
-    patch_attestation(&mut byte_map, attest_addr, &key_bytes, &cert_bytes);
+    patch_auth_word(&mut byte_map, app_end_page_start, auth_word_addr)?;
+    patch_attestation(&mut byte_map, attest_addr, &key_bytes, &cert_bytes)?;
 
     // Convert byte_map back to sorted segments for HEX output
     let mut addrs: Vec<u32> = byte_map.keys().copied().collect();
     addrs.sort_unstable();
 
+    let missing = || SoloError::FirmwareError("byte map missing address".into());
+    let idx_overflow = || SoloError::FirmwareError("address index overflow".into());
+
     let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
-    let mut i = 0;
-    while i < addrs.len() {
-        let start = addrs[i];
-        let mut data = vec![byte_map[&start]];
-        while i + 1 < addrs.len() && addrs[i + 1] == addrs[i] + 1 {
-            i += 1;
-            data.push(byte_map[&addrs[i]]);
+    let mut i: usize = 0;
+    // Coalesce runs of consecutive addresses into single segments (identical
+    // grouping to the original index-based loop).
+    while let Some(&start) = addrs.get(i) {
+        let mut data = vec![*byte_map.get(&start).ok_or_else(missing)?];
+        let mut cur = start;
+        loop {
+            let next_i = i.checked_add(1).ok_or_else(idx_overflow)?;
+            let Some(&next_addr) = addrs.get(next_i) else {
+                break;
+            };
+            let expected = cur
+                .checked_add(1)
+                .ok_or_else(|| SoloError::FirmwareError("address overflow".into()))?;
+            if next_addr != expected {
+                break;
+            }
+            i = next_i;
+            cur = next_addr;
+            data.push(*byte_map.get(&next_addr).ok_or_else(missing)?);
         }
         segments.push((start, data));
-        i += 1;
+        i = i.checked_add(1).ok_or_else(idx_overflow)?;
     }
 
     write_hex_file(output, &segments)
@@ -550,27 +667,46 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
         let upper = addr >> 16;
         if upper != current_upper {
             // Emit Extended Linear Address record
-            let upper16 = upper as u16;
-            let record_data = [(upper16 >> 8) as u8, upper16 as u8];
-            let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data);
+            let upper16 = u16::try_from(upper)
+                .map_err(|_| SoloError::FirmwareError("upper address overflow".into()))?;
+            // Big-endian 2-byte encoding of the upper 16 address bits.
+            let record_data = upper16.to_be_bytes();
+            let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data)?;
             writeln!(output, ":02000004{upper16:04X}{checksum:02X}").unwrap();
             current_upper = upper;
         }
 
         // Write data in chunks of 16 bytes
-        let offset_base = (*addr & 0xFFFF) as u16;
-        let mut pos = 0;
+        let offset_base = u16::try_from(*addr & 0xFFFF)
+            .map_err(|_| SoloError::FirmwareError("segment offset overflow".into()))?;
+        let mut pos: usize = 0;
         while pos < data.len() {
-            let chunk_size = (data.len() - pos).min(16);
-            let chunk = &data[pos..pos + chunk_size];
-            let offset = offset_base + pos as u16;
-            let checksum = ihex_checksum(chunk_size as u8, offset, 0x00, chunk);
+            let chunk_size = data
+                .len()
+                .checked_sub(pos)
+                .ok_or_else(|| SoloError::FirmwareError("chunk size underflow".into()))?
+                .min(16);
+            let chunk_end = pos
+                .checked_add(chunk_size)
+                .ok_or_else(|| SoloError::FirmwareError("chunk range overflow".into()))?;
+            let chunk = data
+                .get(pos..chunk_end)
+                .ok_or_else(|| SoloError::FirmwareError("chunk out of range".into()))?;
+            // Preserve the original 16-bit offset wrap: (offset_base + pos) mod 2^16.
+            let pos_low = u16::try_from(pos & 0xFFFF)
+                .map_err(|_| SoloError::FirmwareError("offset overflow".into()))?;
+            let offset = offset_base.wrapping_add(pos_low);
+            let chunk_len = u8::try_from(chunk_size)
+                .map_err(|_| SoloError::FirmwareError("chunk length overflow".into()))?;
+            let checksum = ihex_checksum(chunk_len, offset, 0x00, chunk)?;
             write!(output, ":{chunk_size:02X}{offset:04X}00").unwrap();
             for b in chunk {
                 write!(output, "{b:02X}").unwrap();
             }
             writeln!(output, "{checksum:02X}").unwrap();
-            pos += chunk_size;
+            pos = pos
+                .checked_add(chunk_size)
+                .ok_or_else(|| SoloError::FirmwareError("position overflow".into()))?;
         }
     }
 
@@ -580,16 +716,22 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
     Ok(())
 }
 
-fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> u8 {
+fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> Result<u8> {
+    let overflow = || SoloError::FirmwareError("checksum accumulator overflow".into());
     let mut sum: u32 = 0;
-    sum += u32::from(byte_count);
-    sum += u32::from(offset >> 8);
-    sum += u32::from(offset & 0xFF);
-    sum += u32::from(record_type);
+    sum = sum.checked_add(u32::from(byte_count)).ok_or_else(overflow)?;
+    sum = sum.checked_add(u32::from(offset >> 8)).ok_or_else(overflow)?;
+    sum = sum.checked_add(u32::from(offset & 0xFF)).ok_or_else(overflow)?;
+    sum = sum.checked_add(u32::from(record_type)).ok_or_else(overflow)?;
     for b in data {
-        sum += u32::from(*b);
+        sum = sum.checked_add(u32::from(*b)).ok_or_else(overflow)?;
     }
-    (0x100 - (sum & 0xFF)) as u8
+    // Two's-complement checksum: (0x100 - (sum & 0xFF)) mod 0x100.
+    // (256 - low) mod 256 == low.wrapping_neg(), including the low == 0 -> 0 case,
+    // which the old `(0x100 - (sum & 0xFF)) as u8` relied on wrapping to produce.
+    Ok(u8::try_from(sum & 0xFF)
+        .map_err(|_| SoloError::FirmwareError("checksum overflow".into()))?
+        .wrapping_neg())
 }
 
 /// Flash base address for STM32L4.
@@ -602,7 +744,9 @@ pub const FLASH_PAGE_SIZE: u32 = 2048;
 /// Compute the flash address for a given page number.
 #[must_use]
 pub const fn flash_addr(page: u32) -> u32 {
-    FLASH_BASE + page * FLASH_PAGE_SIZE
+    // saturating_add / saturating_mul are const-stable and never saturate for
+    // valid page numbers, so the result is identical to `FLASH_BASE + page * FLASH_PAGE_SIZE`.
+    FLASH_BASE.saturating_add(page.saturating_mul(FLASH_PAGE_SIZE))
 }
 
 /// Extract the firmware bytes to sign for a specific `APPLICATION_END_PAGE` value.
@@ -627,10 +771,18 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
     }
 
     segments.sort_by_key(|(addr, _)| *addr);
-    let start = segments[0].0;
+    let start = segments
+        .first()
+        .ok_or_else(|| SoloError::FirmwareError("No data in HEX file".into()))?
+        .0;
 
     // END = flash_addr(PAGES - app_end_page) - 8
-    let end = flash_addr(FLASH_PAGES - app_end_page) - 8;
+    let pages = FLASH_PAGES
+        .checked_sub(app_end_page)
+        .ok_or_else(|| SoloError::FirmwareError("application end page too large".into()))?;
+    let end = flash_addr(pages)
+        .checked_sub(8)
+        .ok_or_else(|| SoloError::FirmwareError("signing region end underflow".into()))?;
 
     if end <= start {
         return Err(SoloError::FirmwareError(format!(
@@ -638,17 +790,35 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
         )));
     }
 
-    let size = (end - start) as usize;
+    let size = usize::try_from(
+        end.checked_sub(start)
+            .ok_or_else(|| SoloError::FirmwareError("signing region size underflow".into()))?,
+    )
+    .map_err(|_| SoloError::FirmwareError("signing region too large".into()))?;
     let mut binary = vec![0xFFu8; size];
 
     for (addr, data) in &segments {
         if *addr >= end {
             continue;
         }
-        let offset = (addr - start) as usize;
+        let offset = usize::try_from(
+            addr.checked_sub(start)
+                .ok_or_else(|| SoloError::FirmwareError("signing region offset underflow".into()))?,
+        )
+        .map_err(|_| SoloError::FirmwareError("signing region offset too large".into()))?;
         let copy_len = data.len().min(size.saturating_sub(offset));
         if copy_len > 0 {
-            binary[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
+            let copy_end = offset
+                .checked_add(copy_len)
+                .ok_or_else(|| SoloError::FirmwareError("signing region copy overflow".into()))?;
+            binary
+                .get_mut(offset..copy_end)
+                .ok_or_else(|| SoloError::FirmwareError("signing region out of range".into()))?
+                .copy_from_slice(
+                    data.get(..copy_len).ok_or_else(|| {
+                        SoloError::FirmwareError("signing region source out of range".into())
+                    })?,
+                );
         }
     }
 
