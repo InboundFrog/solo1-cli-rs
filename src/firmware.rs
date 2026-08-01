@@ -734,7 +734,7 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
             // Big-endian 2-byte encoding of the upper 16 address bits.
             let record_data = upper16.to_be_bytes();
             let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data)?;
-            writeln!(output, ":02000004{upper16:04X}{checksum:02X}").unwrap();
+            writeln!(output, ":02000004{upper16:04X}{checksum:02X}").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             current_upper = upper;
         }
 
@@ -761,11 +761,11 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
             let chunk_len = u8::try_from(chunk_size)
                 .map_err(|_| SoloError::FirmwareError("chunk length overflow".into()))?;
             let checksum = ihex_checksum(chunk_len, offset, 0x00, chunk)?;
-            write!(output, ":{chunk_size:02X}{offset:04X}00").unwrap();
+            write!(output, ":{chunk_size:02X}{offset:04X}00").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             for b in chunk {
-                write!(output, "{b:02X}").unwrap();
+                write!(output, "{b:02X}").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             }
-            writeln!(output, "{checksum:02X}").unwrap();
+            writeln!(output, "{checksum:02X}").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             pos = pos
                 .checked_add(chunk_size)
                 .ok_or_else(|| SoloError::FirmwareError("position overflow".into()))?;
@@ -773,7 +773,7 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
     }
 
     // EOF record
-    writeln!(output, ":00000001FF").unwrap();
+    writeln!(output, ":00000001FF").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
     std::fs::write(path, output)?;
     Ok(())
 }
