@@ -132,7 +132,7 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     }
     let (cmd, bcnt, first_data) = match &frames[0].payload {
         FramePayload::Init { cmd, bcnt, data } => (*cmd, *bcnt as usize, data.clone()),
-        _ => {
+        FramePayload::Cont { .. } => {
             return Err(SoloError::ProtocolError(
                 "First frame is not an init frame".into(),
             ))
@@ -217,7 +217,7 @@ mod tests {
                 assert_eq!(bcnt, 3);
                 assert_eq!(&d[..3], &[0xAA, 0xBB, 0xCC]);
             }
-            _ => panic!("Expected init frame"),
+            FramePayload::Cont { .. } => panic!("Expected init frame"),
         }
     }
 
@@ -239,7 +239,7 @@ mod tests {
                 assert_eq!(seq, 2);
                 assert_eq!(&d[..3], &[0x01, 0x02, 0x03]);
             }
-            _ => panic!("Expected cont frame"),
+            FramePayload::Init { .. } => panic!("Expected cont frame"),
         }
     }
 
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(frames.len(), 1);
         match &frames[0].payload {
             FramePayload::Init { bcnt, .. } => assert_eq!(*bcnt, 10),
-            _ => panic!(),
+            FramePayload::Cont { .. } => panic!(),
         }
     }
 
@@ -266,21 +266,21 @@ mod tests {
                 assert_eq!(*bcnt, 120);
                 assert_eq!(d.len(), 57);
             }
-            _ => panic!(),
+            FramePayload::Cont { .. } => panic!(),
         }
         match &frames[1].payload {
             FramePayload::Cont { seq, data: d } => {
                 assert_eq!(*seq, 0);
                 assert_eq!(d.len(), 59);
             }
-            _ => panic!(),
+            FramePayload::Init { .. } => panic!(),
         }
         match &frames[2].payload {
             FramePayload::Cont { seq, data: d } => {
                 assert_eq!(*seq, 1);
                 assert_eq!(d.len(), 4);
             }
-            _ => panic!(),
+            FramePayload::Init { .. } => panic!(),
         }
     }
 
@@ -317,14 +317,14 @@ mod tests {
                 assert_eq!(*bcnt, CTAPHID_MAX_PAYLOAD as u16);
                 assert_eq!(d.len(), 57);
             }
-            _ => panic!("Expected init frame"),
+            FramePayload::Cont { .. } => panic!("Expected init frame"),
         }
         match &frames[128].payload {
             FramePayload::Cont { seq, data: d } => {
                 assert_eq!(*seq, 127);
                 assert_eq!(d.len(), 59);
             }
-            _ => panic!("Expected cont frame"),
+            FramePayload::Init { .. } => panic!("Expected cont frame"),
         }
     }
 
