@@ -305,6 +305,7 @@ pub fn cmd_challenge_response(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
     use super::*;
     use crate::ctap2::cose_to_public_key;
     use ciborium::value::Value;

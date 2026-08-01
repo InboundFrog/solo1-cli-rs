@@ -1,3 +1,4 @@
+#![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
 /// Integration tests for solo1-cli-rs.
 ///
 /// Tests marked `#[ignore]` require actual hardware (a Solo 1 device plugged in).

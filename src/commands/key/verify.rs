@@ -227,6 +227,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
     use super::*;
     use crate::cbor::{cbor_bytes, cbor_int, cbor_text, int_map};
     use crate::device::mock::MockDevice;

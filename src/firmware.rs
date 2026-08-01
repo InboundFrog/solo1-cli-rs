@@ -760,6 +760,7 @@ pub fn download_url(url: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
     use super::*;
 
     #[test]

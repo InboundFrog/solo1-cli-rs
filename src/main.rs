@@ -261,6 +261,7 @@ fn run_monitor(port: &str) -> error::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
     use super::*;
 
     #[test]

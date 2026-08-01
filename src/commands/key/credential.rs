@@ -505,6 +505,7 @@ pub fn cmd_credential_rm(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
     use base64::Engine as _;
 
     /// Credential IDs are displayed and accepted as standard base64, not hex.
