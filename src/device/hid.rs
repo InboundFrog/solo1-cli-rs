@@ -66,7 +66,7 @@ impl SoloHid {
             devices
                 .iter()
                 .find(|d| d.serial_number() == Some(sn))
-                .ok_or_else(|| SoloError::DeviceError(format!("No device with serial {}", sn)))?
+                .ok_or_else(|| SoloError::DeviceError(format!("No device with serial {sn}")))?
         } else {
             if devices.len() > 1 {
                 return Err(SoloError::NonUniqueDevice);
@@ -155,7 +155,7 @@ impl SoloHid {
             let n = self
                 .device
                 .read_timeout(&mut buf, 500)
-                .map_err(|e| SoloError::DeviceError(format!("HID read error: {}", e)))?;
+                .map_err(|e| SoloError::DeviceError(format!("HID read error: {e}")))?;
 
             if n == 0 {
                 continue;
@@ -195,8 +195,7 @@ impl SoloHid {
                         let code = data.first().copied().unwrap_or(0);
                         vlog!("HID recv: CTAPHID_ERROR code=0x{:02X}", code);
                         return Err(SoloError::ProtocolError(format!(
-                            "CTAPHID error: {:02x}",
-                            code
+                            "CTAPHID error: {code:02x}"
                         )));
                     }
                     vlog!(
@@ -278,8 +277,7 @@ impl SoloHid {
         let status = resp[0];
         if status != 0x00 {
             return Err(SoloError::ProtocolError(format!(
-                "Bootloader error status: 0x{:02X}",
-                status
+                "Bootloader error status: 0x{status:02X}"
             )));
         }
         Ok(resp[1..].to_vec())

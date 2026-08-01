@@ -18,7 +18,7 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
             firmware_version: version.to_string(),
         });
     }
-    println!("Firmware version: {}", version);
+    println!("Firmware version: {version}");
     Ok(())
 }
 
@@ -143,8 +143,7 @@ mod tests {
         let msg = result.unwrap_err().to_string();
         assert!(
             msg.contains("mismatch") || msg.contains("Protocol error"),
-            "unexpected error: {}",
-            msg
+            "unexpected error: {msg}"
         );
     }
 

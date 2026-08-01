@@ -28,9 +28,8 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
     // Optionally seed additional entropy (informational; ring/p256 use OS RNG)
     if let Some(entropy_path) = entropy_file {
         eprintln!(
-            "Note: additional entropy from {:?} is not directly injectable into the OS RNG; \
-             the OS RNG is used regardless.",
-            entropy_path
+            "Note: additional entropy from {entropy_path:?} is not directly injectable into the OS RNG; \
+             the OS RNG is used regardless."
         );
     }
 
@@ -47,12 +46,12 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
 
     if let Some(out_path) = output {
         write_private_key(out_path, &priv_pem)?;
-        eprintln!("Private key written to {:?}", out_path);
+        eprintln!("Private key written to {out_path:?}");
     } else {
-        print!("{}", priv_pem);
+        print!("{priv_pem}");
     }
 
-    eprintln!("Public key:\n{}", pub_pem);
+    eprintln!("Public key:\n{pub_pem}");
     Ok(())
 }
 

@@ -5,7 +5,7 @@ use crate::error::{Result, SoloError};
 /// Returns `Ok(true)` if the user typed "yes" (trimmed), `Ok(false)` for any
 /// other input, and `Err` only on I/O failure.
 pub fn confirm(prompt: &str) -> Result<bool> {
-    println!("{}", prompt);
+    println!("{prompt}");
     let mut input = String::new();
     std::io::stdin()
         .read_line(&mut input)
@@ -25,14 +25,14 @@ mod tests {
     #[test]
     fn test_is_confirmed_accepts_trimmed_yes() {
         for input in ["yes", "yes\n", "yes\r\n", " yes ", "\tyes\n"] {
-            assert!(is_confirmed(input), "{:?} should confirm", input);
+            assert!(is_confirmed(input), "{input:?} should confirm");
         }
     }
 
     #[test]
     fn test_is_confirmed_rejects_everything_else() {
         for input in ["Yes", "YES", "y", "no", "n", "", "yess", "yes please"] {
-            assert!(!is_confirmed(input), "{:?} should not confirm", input);
+            assert!(!is_confirmed(input), "{input:?} should not confirm");
         }
     }
 }

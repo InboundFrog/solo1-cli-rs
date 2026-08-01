@@ -48,7 +48,7 @@ impl FirmwareJson {
         // Intel HEX files always start with ':'
         if bytes.first() == Some(&b':') {
             let hex_str = String::from_utf8(bytes).map_err(|e| {
-                SoloError::FirmwareError(format!("Firmware HEX UTF-8 error: {}", e))
+                SoloError::FirmwareError(format!("Firmware HEX UTF-8 error: {e}"))
             })?;
             parse_hex_string(&hex_str)
         } else {
@@ -92,12 +92,12 @@ pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u
     match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
             let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
-            println!("Bootloader version: {}", v);
+            println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
         Ok(resp) if !resp.is_empty() => {
             let v = FirmwareVersion::new(0, 0, resp[0] as u32);
-            println!("Bootloader version: {}", v);
+            println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
         _ => {
@@ -128,8 +128,7 @@ impl FirmwareVersion {
         let parts: Vec<&str> = s.trim_start_matches('v').split('.').collect();
         if parts.len() != 3 {
             return Err(SoloError::FirmwareError(format!(
-                "Invalid version string: {}",
-                s
+                "Invalid version string: {s}"
             )));
         }
         let major = parts[0]
@@ -174,8 +173,7 @@ pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -
         Ok(*version == bound)
     } else {
         Err(SoloError::FirmwareError(format!(
-            "Unknown version constraint: {}",
-            constraint
+            "Unknown version constraint: {constraint}"
         )))
     }
 }
@@ -193,7 +191,7 @@ pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
     let mut records: Vec<Record> = Vec::new();
     for record in reader {
         let r = record
-            .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e)))?;
+            .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {e:?}")))?;
         records.push(r);
     }
     hex_records_to_binary(&records)
@@ -234,8 +232,7 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
                     .ok_or_else(|| {
                         SoloError::FirmwareError(format!(
                             "HEX record address overflows 32 bits: \
-                             upper=0x{:08X} offset=0x{:04X} base=0x{:08X}",
-                            upper_linear, offset, base_addr
+                             upper=0x{upper_linear:08X} offset=0x{offset:04X} base=0x{base_addr:08X}"
                         ))
                     })?;
                 let end = addr.checked_add(value.len() as u32).ok_or_else(|| {
@@ -265,8 +262,7 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
     // max_end >= min_addr whenever there is at least one segment.
     if !segments.is_empty() && max_end - min_addr > MAX_FIRMWARE_SPAN {
         return Err(SoloError::FirmwareError(format!(
-            "HEX address span too large: 0x{:08X}..0x{:08X} exceeds {} bytes",
-            min_addr, max_end, MAX_FIRMWARE_SPAN
+            "HEX address span too large: 0x{min_addr:08X}..0x{max_end:08X} exceeds {MAX_FIRMWARE_SPAN} bytes"
         )));
     }
 
@@ -294,8 +290,7 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
     for (addr, data) in &segments {
         let end = addr.checked_add(data.len() as u32).ok_or_else(|| {
             SoloError::FirmwareError(format!(
-                "HEX record at 0x{:08X} overflows the 32-bit address space",
-                addr
+                "HEX record at 0x{addr:08X} overflows the 32-bit address space"
             ))
         })?;
         max_addr = max_addr.max(end);
@@ -465,7 +460,7 @@ pub fn merge_hex_files(
         if raw.len() == 64 || raw.len() == 65 {
             // Hex-encoded key file
             hex::decode(std::str::from_utf8(&raw).unwrap_or("").trim()).map_err(|e| {
-                SoloError::FirmwareError(format!("Invalid attestation key hex: {}", e))
+                SoloError::FirmwareError(format!("Invalid attestation key hex: {e}"))
             })?
         } else {
             raw
@@ -490,7 +485,7 @@ pub fn merge_hex_files(
     const APPLICATION_END_PAGE_COUNT: u32 = 20;
     let application_end_page = FLASH_PAGES - APPLICATION_END_PAGE_COUNT; // = 108
 
-    eprintln!("app end page: {}", application_end_page);
+    eprintln!("app end page: {application_end_page}");
 
     let auth_word_addr = flash_addr(application_end_page) - 8;
     // ATTEST_ADDR = flash_addr(PAGES - 15) = flash_addr(113)
@@ -505,7 +500,7 @@ pub fn merge_hex_files(
         let records: Vec<Record> = ihex::Reader::new(&content)
             .collect::<std::result::Result<_, _>>()
             .map_err(|e| {
-                SoloError::FirmwareError(format!("HEX parse error in {:?}: {:?}", input_path, e))
+                SoloError::FirmwareError(format!("HEX parse error in {input_path:?}: {e:?}"))
             })?;
 
         for (addr, data) in hex_records_to_segments(&records)? {
@@ -553,7 +548,7 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
             let upper16 = upper as u16;
             let record_data = [(upper16 >> 8) as u8, upper16 as u8];
             let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data);
-            writeln!(output, ":02000004{:04X}{:02X}", upper16, checksum).unwrap();
+            writeln!(output, ":02000004{upper16:04X}{checksum:02X}").unwrap();
             current_upper = upper;
         }
 
@@ -565,11 +560,11 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
             let chunk = &data[pos..pos + chunk_size];
             let offset = offset_base + pos as u16;
             let checksum = ihex_checksum(chunk_size as u8, offset, 0x00, chunk);
-            write!(output, ":{:02X}{:04X}00", chunk_size, offset).unwrap();
+            write!(output, ":{chunk_size:02X}{offset:04X}00").unwrap();
             for b in chunk {
-                write!(output, "{:02X}", b).unwrap();
+                write!(output, "{b:02X}").unwrap();
             }
-            writeln!(output, "{:02X}", checksum).unwrap();
+            writeln!(output, "{checksum:02X}").unwrap();
             pos += chunk_size;
         }
     }
@@ -618,7 +613,7 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
     let content = std::fs::read_to_string(hex_path)?;
     let records: Vec<Record> = ihex::Reader::new(&content)
         .collect::<std::result::Result<_, _>>()
-        .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e)))?;
+        .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {e:?}")))?;
     let mut segments = hex_records_to_segments(&records)?;
 
     if segments.is_empty() {
@@ -633,8 +628,7 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
 
     if end <= start {
         return Err(SoloError::FirmwareError(format!(
-            "Signing region is empty: start=0x{:08X} end=0x{:08X}",
-            start, end
+            "Signing region is empty: start=0x{start:08X} end=0x{end:08X}"
         )));
     }
 
@@ -738,7 +732,7 @@ pub fn fetch_latest_release() -> Result<GithubRelease> {
         .map_err(|e| SoloError::NetworkError(e.to_string()))?;
     let release: GithubRelease = resp
         .json()
-        .map_err(|e| SoloError::NetworkError(format!("Failed to parse release JSON: {}", e)))?;
+        .map_err(|e| SoloError::NetworkError(format!("Failed to parse release JSON: {e}")))?;
     Ok(release)
 }
 

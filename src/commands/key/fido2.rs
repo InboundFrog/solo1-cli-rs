@@ -55,7 +55,7 @@ pub fn cmd_make_credential(
     );
 
     if !prompt.is_empty() {
-        eprintln!("{}", prompt);
+        eprintln!("{prompt}");
     }
 
     // CTAP2 makeCredential (0x01)

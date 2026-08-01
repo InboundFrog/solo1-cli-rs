@@ -159,8 +159,7 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
 pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
     if response.is_empty() {
         return Err(SoloError::MalformedResponse(format!(
-            "Empty response from {}",
-            context
+            "Empty response from {context}"
         )));
     }
     if response[0] != 0x00 {
@@ -198,8 +197,7 @@ fn parse_map_payload(payload: &[u8], context: &str) -> Result<Vec<(Value, Value)
     match val {
         Value::Map(p) => Ok(p),
         _ => Err(SoloError::MalformedResponse(format!(
-            "{} response is not a CBOR map",
-            context
+            "{context} response is not a CBOR map"
         ))),
     }
 }
@@ -234,7 +232,7 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
     uncompressed.extend_from_slice(&dev_x);
     uncompressed.extend_from_slice(&dev_y);
     p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))
+        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {e}")))
 }
 
 /// Perform ECDH against `dev_pub_key` with the given platform scalar.
@@ -476,8 +474,7 @@ mod tests {
         let err = check_ctap_status(&[0x01, 0x01, 0x02], "test").unwrap_err();
         assert!(
             matches!(err, SoloError::AuthenticatorError { code: 0x01, .. }),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
         let err_empty = check_ctap_status(&[], "test").unwrap_err();
         assert!(err_empty.to_string().contains("Empty response"));

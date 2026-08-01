@@ -51,11 +51,11 @@ pub fn generate_keypair() -> Result<(String, String)> {
     let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
     let private_pem = secret_key
         .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
-        .map_err(|e| SoloError::CryptoError(format!("PEM encode error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("PEM encode error: {e}")))?;
     let verifying_key = VerifyingKey::from(&signing_key);
     let public_pem = verifying_key
         .to_public_key_pem(p256::pkcs8::LineEnding::LF)
-        .map_err(|e| SoloError::CryptoError(format!("Public key PEM encode error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Public key PEM encode error: {e}")))?;
     Ok((private_pem.to_string(), public_pem))
 }
 
@@ -63,7 +63,7 @@ pub fn generate_keypair() -> Result<(String, String)> {
 pub fn load_signing_key(path: &Path) -> Result<SigningKey> {
     let pem = std::fs::read_to_string(path)?;
     SigningKey::from_pkcs8_pem(&pem)
-        .map_err(|e| SoloError::CryptoError(format!("Failed to load key: {}", e)))
+        .map_err(|e| SoloError::CryptoError(format!("Failed to load key: {e}")))
 }
 
 /// Sign the firmware bytes with the given key.
@@ -194,12 +194,12 @@ pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate fr
 /// This is the building block for future SPKI pinning (see TODO(0003) above).
 pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
     let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
     let spki_der = cert
         .tbs_certificate()
         .subject_public_key_info()
         .to_der()
-        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {e}")))?;
     Ok(sha256_hex(&spki_der))
 }
 
@@ -216,7 +216,7 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
 /// time service.  Clock skew on the host may produce false positives.
 pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
     let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
 
     let validity = cert.tbs_certificate().validity();
     let now = std::time::SystemTime::now();
@@ -261,18 +261,18 @@ pub fn verify_attestation_signature(
     use p256::ecdsa::{signature::Verifier, DerSignature};
 
     let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
     let spki_der = cert
         .tbs_certificate()
         .subject_public_key_info()
         .to_der()
-        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {e}")))?;
     let verifying_key = VerifyingKey::from_public_key_der(&spki_der).map_err(|e| {
-        SoloError::CryptoError(format!("Attestation public key is not ECDSA P-256: {}", e))
+        SoloError::CryptoError(format!("Attestation public key is not ECDSA P-256: {e}"))
     })?;
 
     let sig = DerSignature::try_from(sig_der)
-        .map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {e}")))?;
 
     let mut message = Vec::with_capacity(auth_data.len() + client_data_hash.len());
     message.extend_from_slice(auth_data);
@@ -296,7 +296,7 @@ pub fn websafe_b64_decode(s: &str) -> Result<Vec<u8>> {
     use base64::Engine;
     URL_SAFE_NO_PAD
         .decode(s)
-        .map_err(|e| SoloError::FirmwareError(format!("Base64 decode error: {}", e)))
+        .map_err(|e| SoloError::FirmwareError(format!("Base64 decode error: {e}")))
 }
 
 #[cfg(test)]
@@ -380,7 +380,7 @@ mod tests {
         // Verify all fingerprint constants are valid 32-byte hex strings
         for (fp, _name) in KNOWN_FINGERPRINTS {
             let bytes = hex::decode(fp).expect("fingerprint should be valid hex");
-            assert_eq!(bytes.len(), 32, "fingerprint should be 32 bytes: {}", fp);
+            assert_eq!(bytes.len(), 32, "fingerprint should be 32 bytes: {fp}");
         }
     }
 
@@ -491,8 +491,7 @@ mod tests {
         let msg = err.to_string();
         assert!(
             msg.contains("expired") || msg.contains("Expired"),
-            "Error should mention expiry, got: {}",
-            msg
+            "Error should mention expiry, got: {msg}"
         );
     }
 
@@ -507,8 +506,7 @@ mod tests {
         let msg = err.to_string();
         assert!(
             msg.contains("not yet valid") || msg.contains("Not yet valid"),
-            "Error should mention not-yet-valid, got: {}",
-            msg
+            "Error should mention not-yet-valid, got: {msg}"
         );
     }
 

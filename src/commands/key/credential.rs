@@ -89,17 +89,17 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     if !extensions.is_empty() {
         println!("Extensions:                     {}", extensions.join(", "));
     }
-    println!("AAGUID:                         {}", aaguid);
+    println!("AAGUID:                         {aaguid}");
     if !options.is_empty() {
         let mut opt_strs: Vec<String> = options
             .iter()
-            .map(|(k, v)| format!("{}: {}", k, v))
+            .map(|(k, v)| format!("{k}: {v}"))
             .collect();
         opt_strs.sort();
         println!("Options:                        {}", opt_strs.join(", "));
     }
     if let Some(size) = max_msg_size {
-        println!("Max message size:               {}", size);
+        println!("Max message size:               {size}");
     }
     if !pin_uv_auth_protocols.is_empty() {
         let proto_strs: Vec<String> = pin_uv_auth_protocols
@@ -109,13 +109,13 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         println!("PIN/UV auth protocols:          {}", proto_strs.join(", "));
     }
     if let Some(c) = max_credential_count_in_list {
-        println!("Max credential count in list:   {}", c);
+        println!("Max credential count in list:   {c}");
     }
     if let Some(l) = max_credential_id_length {
-        println!("Max credential ID length:       {}", l);
+        println!("Max credential ID length:       {l}");
     }
     if let Some(r) = remaining_discoverable_credentials {
-        println!("Remaining discoverable creds:   {}", r);
+        println!("Remaining discoverable creds:   {r}");
     } else {
         println!("Remaining discoverable creds:   (not reported by device)");
     }
@@ -209,7 +209,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
                 }
             })
             .ok_or_else(|| {
-                SoloError::MalformedResponse(format!("rpIdHash (0x04) missing for RP '{}'", rp_id))
+                SoloError::MalformedResponse(format!("rpIdHash (0x04) missing for RP '{rp_id}'"))
             })?;
 
         if rp_id_hash.len() != 32 {
@@ -428,7 +428,7 @@ pub fn cmd_credential_rm(
         cred_id_bytes = base64::engine::general_purpose::STANDARD
             .decode(id)
             .map_err(|e| {
-                SoloError::ProtocolError(format!("Invalid base64 credential ID: {}", e))
+                SoloError::ProtocolError(format!("Invalid base64 credential ID: {e}"))
             })?;
         display_label = id.to_string();
     } else {
@@ -438,7 +438,7 @@ pub fn cmd_credential_rm(
         let rps = enumerate_rps(hid, pin_token)?;
         let matching_rp = rps.iter().find(|(rp_id, _)| rp_id == host);
         let (_, rp_id_hash) = matching_rp.ok_or_else(|| {
-            SoloError::ProtocolError(format!("No credentials found for host '{}'", host))
+            SoloError::ProtocolError(format!("No credentials found for host '{host}'"))
         })?;
 
         let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
@@ -449,24 +449,21 @@ pub fn cmd_credential_rm(
 
         if matches.is_empty() {
             return Err(SoloError::ProtocolError(format!(
-                "No credential found for host '{}' and user '{}'",
-                host, user
+                "No credential found for host '{host}' and user '{user}'"
             )));
         }
         if matches.len() > 1 {
             return Err(SoloError::ProtocolError(format!(
-                "Multiple credentials found for host '{}' and user '{}'; delete by credential ID instead",
-                host, user
+                "Multiple credentials found for host '{host}' and user '{user}'; delete by credential ID instead"
             )));
         }
         cred_id_bytes = matches.remove(0);
-        display_label = format!("{} / {}", host, user);
+        display_label = format!("{host} / {user}");
     }
 
     // Confirmation prompt
     if !common::confirm(&format!(
-        "Delete credential {}?\nType 'yes' to confirm:",
-        display_label
+        "Delete credential {display_label}?\nType 'yes' to confirm:"
     ))? {
         println!("Aborted.");
         return Ok(());

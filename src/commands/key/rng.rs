@@ -7,8 +7,7 @@ use crate::error::{Result, SoloError};
 pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
     if n > 255 {
         return Err(SoloError::ProtocolError(format!(
-            "Number of bytes must be between 0 and 255, you passed {}",
-            n
+            "Number of bytes must be between 0 and 255, you passed {n}"
         )));
     }
     let request = [n as u8];
@@ -132,8 +131,7 @@ mod tests {
         let msg = err.to_string();
         assert!(
             msg.contains("256"),
-            "error should mention the bad value: {}",
-            msg
+            "error should mention the bad value: {msg}"
         );
     }
 

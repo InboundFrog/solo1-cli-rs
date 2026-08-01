@@ -62,7 +62,7 @@ pub fn write_firmware(
     pb.finish_with_message("written");
 
     // CMD_DONE sends the ECDSA signature; bootloader verifies and reboots on success
-    println!("{}", finalize_msg);
+    println!("{finalize_msg}");
     vlog!("Sending CMD_DONE with {} byte signature", signature.len());
     let done_resp = hid.send_bootloader_cmd(CMD_DONE, 0, signature)?;
     vlog!("done response: {}", hex::encode(&done_resp));
@@ -77,7 +77,7 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
     let (flash_start, firmware_bytes) = fw.firmware_binary()?;
 
     println!("Firmware size: {} bytes", firmware_bytes.len());
-    println!("Flash start:   0x{:08X}", flash_start);
+    println!("Flash start:   0x{flash_start:08X}");
     vlog!(
         "Firmware SHA256: {}",
         hex::encode(Sha256::digest(&firmware_bytes))
@@ -133,7 +133,7 @@ pub fn compute_chunk_addresses(flash_start: u32, firmware_len: usize) -> Vec<(u3
 pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
     use crate::firmware::parse_hex_file;
 
-    println!("Parsing firmware HEX file: {:?}", firmware_hex);
+    println!("Parsing firmware HEX file: {firmware_hex:?}");
     let (base_addr, firmware_bytes) = parse_hex_file(firmware_hex)?;
     println!(
         "Base address: 0x{:08X}, size: {} bytes",

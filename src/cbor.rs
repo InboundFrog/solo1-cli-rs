@@ -7,8 +7,7 @@ pub fn expect_map(v: Value, ctx: &str) -> Result<Vec<(Value, Value)>> {
     match v {
         Value::Map(pairs) => Ok(pairs),
         _ => Err(SoloError::ProtocolError(format!(
-            "{}: expected a CBOR map",
-            ctx
+            "{ctx}: expected a CBOR map"
         ))),
     }
 }
@@ -55,7 +54,7 @@ pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a V
 /// Require a value by integer key; error with context if missing.
 pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> Result<&'a Value> {
     find_int_key(pairs, key).ok_or_else(|| {
-        SoloError::ProtocolError(format!("{}: key {} missing in CBOR map", ctx, key))
+        SoloError::ProtocolError(format!("{ctx}: key {key} missing in CBOR map"))
     })
 }
 
@@ -66,8 +65,7 @@ pub fn require_bytes(pairs: &[(Value, Value)], key: i64, ctx: &str) -> Result<Ve
     match require_int_key(pairs, key, ctx)? {
         Value::Bytes(b) => Ok(b.clone()),
         _ => Err(SoloError::ProtocolError(format!(
-            "{}: key {} is not bytes",
-            ctx, key
+            "{ctx}: key {key} is not bytes"
         ))),
     }
 }

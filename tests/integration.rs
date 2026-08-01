@@ -14,8 +14,7 @@ fn test_list_devices_no_hardware() {
     // We just verify it doesn't error out.
     assert!(
         result.is_ok(),
-        "list_solo_devices should not fail: {:?}",
-        result
+        "list_solo_devices should not fail: {result:?}"
     );
 }
 
@@ -79,7 +78,7 @@ fn test_firmware_sign_versioned_regions_differ() {
         ":10{:04X}00{}  {:02X}\n",
         offset,
         data.iter()
-            .map(|b| format!("{:02X}", b))
+            .map(|b| format!("{b:02X}"))
             .collect::<String>(),
         checksum
     ));
@@ -97,18 +96,14 @@ fn test_firmware_sign_versioned_regions_differ() {
     // v1 region is larger (higher end page count)
     assert!(
         end_v1 > end_v2,
-        "v1 signing region should be larger than v2 (end_v1=0x{:08X} end_v2=0x{:08X})",
-        end_v1,
-        end_v2
+        "v1 signing region should be larger than v2 (end_v1=0x{end_v1:08X} end_v2=0x{end_v2:08X})"
     );
 
     let expected_v1_size = (end_v1 - app_start) as usize;
     let expected_v2_size = (end_v2 - app_start) as usize;
     assert!(
         expected_v1_size > expected_v2_size,
-        "v1 size {} should be larger than v2 size {}",
-        expected_v1_size,
-        expected_v2_size
+        "v1 size {expected_v1_size} should be larger than v2 size {expected_v2_size}"
     );
 
     // The size difference should be exactly one page (2048 bytes)
@@ -238,8 +233,7 @@ fn test_mergehex_default_attestation() {
     let result = merge_hex_files(&[tmp_hex.path()], tmp_out.path(), None, None);
     assert!(
         result.is_ok(),
-        "mergehex with default attestation should succeed: {:?}",
-        result
+        "mergehex with default attestation should succeed: {result:?}"
     );
 
     // Output should be a valid HEX file (non-empty, starts with ':')
@@ -344,12 +338,11 @@ fn test_known_fingerprints_validity() {
 
     for (fp, name) in KNOWN_FINGERPRINTS {
         let bytes = hex::decode(fp)
-            .unwrap_or_else(|_| panic!("fingerprint for '{}' should be valid hex", name));
+            .unwrap_or_else(|_| panic!("fingerprint for '{name}' should be valid hex"));
         assert_eq!(
             bytes.len(),
             32,
-            "fingerprint for '{}' should be 32 bytes",
-            name
+            "fingerprint for '{name}' should be 32 bytes"
         );
     }
 

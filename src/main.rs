@@ -20,7 +20,7 @@ fn main() {
 
     let result = run(cli);
     if let Err(e) = result {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         std::process::exit(1);
     }
 }
@@ -98,7 +98,7 @@ fn run_key_command(
                 if json {
                     output::print_json(&output::RngOutput { bytes: hex })?;
                 } else {
-                    println!("{}", hex);
+                    println!("{hex}");
                 }
             }
             RngCommands::Raw => {
@@ -234,24 +234,24 @@ fn run_program_command(
 fn run_monitor(port: &str) -> error::Result<()> {
     use std::io::{BufRead, BufReader};
 
-    println!("Monitoring serial port {} at 115200 baud...", port);
+    println!("Monitoring serial port {port} at 115200 baud...");
     println!("Press Ctrl+C to stop.");
 
     let port = serialport::new(port, 115200)
         .timeout(std::time::Duration::from_millis(100))
         .open()
-        .map_err(|e| error::SoloError::DeviceError(format!("Serial port error: {}", e)))?;
+        .map_err(|e| error::SoloError::DeviceError(format!("Serial port error: {e}")))?;
 
     let reader = BufReader::new(port);
     for line in reader.lines() {
         match line {
-            Ok(l) => println!("{}", l),
+            Ok(l) => println!("{l}"),
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                 // Timeout is normal for serial; keep reading
                 continue;
             }
             Err(e) => {
-                eprintln!("Read error: {}", e);
+                eprintln!("Read error: {e}");
                 break;
             }
         }

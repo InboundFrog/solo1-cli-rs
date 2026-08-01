@@ -60,8 +60,7 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
             .map_err(|_| SoloError::MalformedResponse("attStmt alg out of i64 range".into()))?;
         if alg != -7 {
             return Err(SoloError::MalformedResponse(format!(
-                "unsupported attestation algorithm {} (expected -7 / ES256)",
-                alg
+                "unsupported attestation algorithm {alg} (expected -7 / ES256)"
             )));
         }
     } else {
@@ -194,8 +193,8 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
         });
     }
 
-    println!("Attestation certificate SHA-256: {}", fingerprint);
-    println!("Attestation certificate SPKI:    {}", spki_fingerprint);
+    println!("Attestation certificate SHA-256: {fingerprint}");
+    println!("Attestation certificate SPKI:    {spki_fingerprint}");
     if cert_expired {
         println!(
             "WARNING: Attestation certificate has expired. \
@@ -212,12 +211,11 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
     match result {
         AttestationResult::GenuineConsumer(name) => {
-            println!("OK: Genuine SoloKeys device: {}", name);
+            println!("OK: Genuine SoloKeys device: {name}");
         }
         AttestationResult::DeveloperDevice(name) => {
             println!(
-                "WARNING: Developer/non-production device: {}. Not a genuine consumer key.",
-                name
+                "WARNING: Developer/non-production device: {name}. Not a genuine consumer key."
             );
         }
         AttestationResult::Unknown => {
@@ -324,8 +322,7 @@ mod tests {
         let err = extract_attestation(&resp).unwrap_err();
         assert!(
             err.to_string().contains("-257"),
-            "error should name the unsupported algorithm: {}",
-            err
+            "error should name the unsupported algorithm: {err}"
         );
     }
 

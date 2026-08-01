@@ -45,7 +45,7 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
 
     let response = hid.send_recv(CMD_PROBE, &cbor_bytes)?;
     let result_hex = hex::encode(&response);
-    println!("{}", result_hex);
+    println!("{result_hex}");
 
     if hash_type_str == "Ed25519" {
         // First 64 bytes = signature (128 hex chars), rest = content
@@ -169,9 +169,7 @@ mod tests {
             assert_eq!(
                 normalize_hash_type(input),
                 Some(*expected),
-                "hash type '{}' should normalize to '{}'",
-                input,
-                expected
+                "hash type '{input}' should normalize to '{expected}'"
             );
         }
     }
@@ -182,8 +180,7 @@ mod tests {
             assert_eq!(
                 normalize_hash_type(input),
                 None,
-                "hash type '{}' should be rejected",
-                input
+                "hash type '{input}' should be rejected"
             );
         }
     }
@@ -197,8 +194,7 @@ mod tests {
         let err = cmd_probe(&device, "md5", Path::new("/nonexistent")).unwrap_err();
         assert!(
             matches!(err, SoloError::DeviceError(_)),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
         assert!(err.to_string().contains("Unknown hash type"));
     }
@@ -241,8 +237,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             matches!(err, SoloError::AuthenticatorError { code: 0x01, .. }),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 }
