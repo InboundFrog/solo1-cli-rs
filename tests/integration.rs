@@ -69,9 +69,9 @@ fn test_firmware_sign_versioned_regions_differ() {
     // One data record at offset 0x5000
     let offset: u16 = 0x5000;
     let data = vec![0xAAu8; 16];
-    let mut sum: u32 = 0x10 + (offset >> 8) as u32 + (offset & 0xFF) as u32;
+    let mut sum: u32 = 0x10 + u32::from(offset >> 8) + u32::from(offset & 0xFF);
     for &b in &data {
-        sum += b as u32;
+        sum += u32::from(b);
     }
     let checksum = (0x100u32 - (sum & 0xFF)) as u8;
     hex_content.push_str(&format!(

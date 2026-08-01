@@ -30,9 +30,9 @@ pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion
         ));
     }
     Ok(FirmwareVersion::new(
-        response[0] as u32,
-        response[1] as u32,
-        response[2] as u32,
+        u32::from(response[0]),
+        u32::from(response[1]),
+        u32::from(response[2]),
     ))
 }
 

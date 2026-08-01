@@ -135,7 +135,7 @@ fn send_cred_mgmt(
     pin_uv: Vec<u8>,
 ) -> Result<Vec<u8>> {
     let mut entries: Vec<(i64, ciborium::value::Value)> = vec![
-        (0x01, cbor_int(subcommand as i64)), // subCommand
+        (0x01, cbor_int(i64::from(subcommand))), // subCommand
     ];
     if let Some(p) = params {
         entries.push((0x02, p)); // subCommandParams
@@ -152,7 +152,7 @@ fn send_cred_mgmt(
 /// Used for the *`GetNext`* subcommands (0x03 enumerateRPsGetNextRP,
 /// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
 fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
-    let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
+    let cm_cbor = int_map([(0x01i64, cbor_int(i64::from(subcommand)))]);
     ctap2_call(hid, 0x0A, &cm_cbor) // authenticatorCredentialManagement
 }
 

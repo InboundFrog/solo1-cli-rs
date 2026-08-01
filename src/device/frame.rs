@@ -49,7 +49,7 @@ impl CtapHidFrame {
         if byte4 & 0x80 != 0 {
             // Init frame
             let cmd = byte4 & 0x7F;
-            let bcnt = ((raw[5] as u16) << 8) | raw[6] as u16;
+            let bcnt = (u16::from(raw[5]) << 8) | u16::from(raw[6]);
             let data = raw[7..].to_vec();
             Ok(CtapHidFrame {
                 channel_id,

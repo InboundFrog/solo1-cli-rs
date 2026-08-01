@@ -44,9 +44,9 @@ impl DfuStatus {
         }
         Ok(DfuStatus {
             status: bytes[0],
-            poll_timeout_ms: (bytes[1] as u32)
-                | ((bytes[2] as u32) << 8)
-                | ((bytes[3] as u32) << 16),
+            poll_timeout_ms: u32::from(bytes[1])
+                | (u32::from(bytes[2]) << 8)
+                | (u32::from(bytes[3]) << 16),
             state: bytes[4],
             istring: bytes[5],
         })
@@ -98,7 +98,7 @@ impl DfuDevice {
                 0x21, // bmRequestType: host->device, class, interface
                 request,
                 value,
-                DFU_INTERFACE as u16,
+                u16::from(DFU_INTERFACE),
                 data,
                 Duration::from_secs(5),
             )
@@ -113,7 +113,7 @@ impl DfuDevice {
                 0xA1, // bmRequestType: device->host, class, interface
                 request,
                 value,
-                DFU_INTERFACE as u16,
+                u16::from(DFU_INTERFACE),
                 buf,
                 Duration::from_secs(5),
             )
@@ -147,7 +147,7 @@ impl DfuDevice {
             if status.state == DFU_STATE_BUSY {
                 let ms = status.poll_timeout_ms;
                 if ms > 0 {
-                    std::thread::sleep(Duration::from_millis(ms as u64));
+                    std::thread::sleep(Duration::from_millis(u64::from(ms)));
                 }
                 continue;
             }

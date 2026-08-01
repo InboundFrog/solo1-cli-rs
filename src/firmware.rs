@@ -91,12 +91,12 @@ impl FirmwareJson {
 pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
     match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
-            let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
+            let v = FirmwareVersion::new(u32::from(resp[0]), u32::from(resp[1]), u32::from(resp[2]));
             println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
         Ok(resp) if !resp.is_empty() => {
-            let v = FirmwareVersion::new(0, 0, resp[0] as u32);
+            let v = FirmwareVersion::new(0, 0, u32::from(resp[0]));
             println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
@@ -227,7 +227,7 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
         match record {
             Record::Data { offset, value } => {
                 let addr = upper_linear
-                    .checked_add(*offset as u32)
+                    .checked_add(u32::from(*offset))
                     .and_then(|a| a.checked_add(base_addr))
                     .ok_or_else(|| {
                         SoloError::FirmwareError(format!(
@@ -247,11 +247,11 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
                 segments.push((addr, value.clone()));
             }
             Record::ExtendedLinearAddress(upper) => {
-                upper_linear = (*upper as u32) << 16;
+                upper_linear = u32::from(*upper) << 16;
                 base_addr = 0;
             }
             Record::ExtendedSegmentAddress(seg) => {
-                base_addr = (*seg as u32) << 4;
+                base_addr = u32::from(*seg) << 4;
                 upper_linear = 0;
             }
             Record::StartLinearAddress(_) | Record::StartSegmentAddress { .. } => {}
@@ -577,12 +577,12 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
 
 fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> u8 {
     let mut sum: u32 = 0;
-    sum += byte_count as u32;
-    sum += (offset >> 8) as u32;
-    sum += (offset & 0xFF) as u32;
-    sum += record_type as u32;
+    sum += u32::from(byte_count);
+    sum += u32::from(offset >> 8);
+    sum += u32::from(offset & 0xFF);
+    sum += u32::from(record_type);
     for b in data {
-        sum += *b as u32;
+        sum += u32::from(*b);
     }
     (0x100 - (sum & 0xFF)) as u8
 }
