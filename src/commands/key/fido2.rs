@@ -65,13 +65,10 @@ pub fn cmd_make_credential(
     let pairs = parse_cbor_map_response(&response, "makeCredential")?;
 
     // 0x02: authData bytes — contains rpIdHash, flags, signCount, AAGUID, credentialId
-    let auth_data = match find_int_key(&pairs, 0x02) {
-        Some(Value::Bytes(b)) => b,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "makeCredential response missing authData (key 0x02)".into(),
-            ))
-        }
+    let Some(Value::Bytes(auth_data)) = find_int_key(&pairs, 0x02) else {
+        return Err(SoloError::MalformedResponse(
+            "makeCredential response missing authData (key 0x02)".into(),
+        ));
     };
 
     // authData layout (CTAP2 spec):
@@ -251,13 +248,10 @@ pub fn cmd_challenge_response(
     let ga_pairs = parse_cbor_map_response(&ga_response, "getAssertion")?;
 
     // authData is at key 0x02 in the getAssertion response
-    let auth_data = match find_int_key(&ga_pairs, 0x02) {
-        Some(Value::Bytes(b)) => b,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "getAssertion response missing authData (key 0x02)".into(),
-            ))
-        }
+    let Some(Value::Bytes(auth_data)) = find_int_key(&ga_pairs, 0x02) else {
+        return Err(SoloError::MalformedResponse(
+            "getAssertion response missing authData (key 0x02)".into(),
+        ));
     };
 
     // authData layout:
@@ -397,9 +391,8 @@ mod tests {
         let parsed_dev_pub = cose_to_public_key(&dev_cose_pairs).expect("COSE parse failed");
         let (_shared, cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
 
-        let cose_pairs = match cose_key {
-            Value::Map(p) => p,
-            _ => panic!("COSE key is not a CBOR map"),
+        let Value::Map(cose_pairs) = cose_key else {
+            panic!("COSE key is not a CBOR map")
         };
 
         // kty = 2 (EC2)
@@ -455,9 +448,8 @@ mod tests {
                 .expect("prepare_hmac_secret_input_with_scalar failed");
 
         // The result must be a CBOR map
-        let ext_pairs = match hmac_ext {
-            Value::Map(p) => p,
-            _ => panic!("hmac-secret extension is not a CBOR map"),
+        let Value::Map(ext_pairs) = hmac_ext else {
+            panic!("hmac-secret extension is not a CBOR map")
         };
 
         // Keys 1, 2, 3 must be present

@@ -539,9 +539,8 @@ mod tests {
         ciborium::ser::into_writer(&del_params, &mut buf).unwrap();
         let roundtrip: Value = ciborium::de::from_reader(buf.as_slice()).unwrap();
 
-        let pairs = match roundtrip {
-            Value::Map(p) => p,
-            _ => panic!("expected map"),
+        let Value::Map(pairs) = roundtrip else {
+            panic!("expected map")
         };
         assert_eq!(pairs.len(), 1);
         assert_eq!(
@@ -551,9 +550,8 @@ mod tests {
         );
 
         // The value must be a descriptor map, not raw bytes.
-        let descriptor = match &pairs[0].1 {
-            Value::Map(m) => m,
-            _ => panic!("value must be a map (PublicKeyCredentialDescriptor), not raw bytes"),
+        let Value::Map(descriptor) = &pairs[0].1 else {
+            panic!("value must be a map (PublicKeyCredentialDescriptor), not raw bytes")
         };
         let keys: Vec<&str> = descriptor
             .iter()

@@ -44,13 +44,10 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
     };
 
     // 0x03: attStmt map — contains "alg", "sig", and "x5c" array of DER certs
-    let att_stmt = match find_int_key(&pairs, 0x03) {
-        Some(Value::Map(m)) => m,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "makeCredential response missing attStmt (key 0x03)".into(),
-            ))
-        }
+    let Some(Value::Map(att_stmt)) = find_int_key(&pairs, 0x03) else {
+        return Err(SoloError::MalformedResponse(
+            "makeCredential response missing attStmt (key 0x03)".into(),
+        ));
     };
 
     // "alg" must be -7 (ES256) if present; reject anything else outright.

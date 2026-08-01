@@ -285,13 +285,10 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
 
     let key_agreement = find_key_agreement_response(&resp_pairs)?;
-    let cose_pairs = match key_agreement {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "keyAgreement is not a CBOR map".into(),
-            ))
-        }
+    let Value::Map(cose_pairs) = key_agreement else {
+        return Err(SoloError::MalformedResponse(
+            "keyAgreement is not a CBOR map".into(),
+        ));
     };
 
     cose_to_public_key(cose_pairs)
