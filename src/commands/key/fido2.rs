@@ -26,11 +26,11 @@ pub fn cmd_make_credential(
     json: bool,
 ) -> Result<()> {
     use ciborium::value::Value;
-    use rand::RngCore;
+    use rand::Rng;
 
     // Generate random challenge and hash it as clientDataHash
     let mut challenge = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut challenge);
+    rand::rng().fill_bytes(&mut challenge);
     let client_data_hash: Vec<u8> = Sha256::digest(challenge).to_vec();
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
@@ -158,8 +158,7 @@ fn prepare_hmac_secret_input(
     dev_pub_key: &p256::PublicKey,
     challenge: &str,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
-    use rand::rngs::OsRng;
-    let platform_scalar = p256::NonZeroScalar::random(&mut OsRng);
+    let platform_scalar = p256::NonZeroScalar::random(&mut rand::rng());
     prepare_hmac_secret_input_with_scalar(dev_pub_key, challenge, &platform_scalar)
 }
 
@@ -349,12 +348,11 @@ mod tests {
     /// and SHA-256 it; the test asserts that the resulting 32-byte secrets match.
     #[test]
     fn ecdh_key_agreement_both_sides_agree() {
-        use rand::rngs::OsRng;
 
         // Generate deterministic-within-test keys using p256::SecretKey::random
-        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_secret = p256::SecretKey::random(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_secret = p256::SecretKey::random(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 
@@ -384,11 +382,10 @@ mod tests {
     #[test]
     fn ecdh_key_agreement_cose_key_is_correct() {
         use p256::EncodedPoint;
-        use rand::rngs::OsRng;
 
-        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_secret = p256::SecretKey::random(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_secret = p256::SecretKey::random(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
         let expected_platform_pub = platform_secret.public_key();
@@ -444,14 +441,13 @@ mod tests {
     #[test]
     fn prepare_hmac_secret_input_output_is_correct() {
         use hmac::{Hmac, KeyInit as _, Mac as _};
-        use rand::rngs::OsRng;
 
         let challenge = "test-challenge";
         let expected_salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
-        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_secret = p256::SecretKey::random(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_secret = p256::SecretKey::random(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
         let (hmac_ext, shared_secret) =
@@ -512,12 +508,11 @@ mod tests {
     /// matches the shared secret the device side would compute.
     #[test]
     fn prepare_hmac_secret_input_shared_secret_matches_device() {
-        use rand::rngs::OsRng;
 
         let challenge = "another-test-challenge";
-        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_secret = p256::SecretKey::random(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_secret = p256::SecretKey::random(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 

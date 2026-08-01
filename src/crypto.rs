@@ -46,7 +46,7 @@ pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
 /// Generate a new ECDSA P-256 key pair.
 /// Returns (private_key_pem, public_key_pem).
 pub fn generate_keypair() -> Result<(String, String)> {
-    let signing_key = SigningKey::random(&mut rand::thread_rng());
+    let signing_key = SigningKey::random(&mut rand::rng());
     let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
     let private_pem = secret_key
         .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_sign_and_verify_firmware() {
-        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let signing_key = SigningKey::random(&mut rand::rng());
         let firmware = b"fake firmware data for testing";
         let sig_der = sign_firmware(&signing_key, firmware).unwrap();
         assert!(!sig_der.is_empty());
