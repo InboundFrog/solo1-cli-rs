@@ -1,6 +1,8 @@
 #![allow(
     clippy::indexing_slicing,
     clippy::unwrap_used,
+    clippy::format_push_string,
+    clippy::format_collect,
     clippy::expect_used,
     clippy::panic,
     clippy::arithmetic_side_effects,
@@ -29,7 +31,7 @@ fn test_list_devices_no_hardware() {
 
 /// Ping the device (requires hardware).
 #[test]
-#[ignore]
+#[ignore = "requires connected hardware"]
 fn test_ping_hardware() {
     let hid = SoloHid::open(None, std::time::Duration::from_secs(30))
         .expect("Failed to open Solo device");
@@ -42,7 +44,7 @@ fn test_ping_hardware() {
 
 /// Get the firmware version (requires hardware).
 #[test]
-#[ignore]
+#[ignore = "requires connected hardware"]
 fn test_version_hardware() {
     let hid = SoloHid::open(None, std::time::Duration::from_secs(30))
         .expect("Failed to open Solo device");

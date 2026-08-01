@@ -8,11 +8,12 @@ use solo1::error;
 use solo1::output;
 
 fn main() {
-    ctrlc::set_handler(|| {
+    if let Err(e) = ctrlc::set_handler(|| {
         eprintln!("\nInterrupted.");
         std::process::exit(130);
-    })
-    .expect("failed to set Ctrl-C handler");
+    }) {
+        eprintln!("Warning: failed to set Ctrl-C handler: {e}");
+    }
 
     let cli = Cli::parse();
 
@@ -248,7 +249,6 @@ fn run_monitor(port: &str) -> error::Result<()> {
             Ok(l) => println!("{l}"),
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                 // Timeout is normal for serial; keep reading
-                continue;
             }
             Err(e) => {
                 eprintln!("Read error: {e}");
