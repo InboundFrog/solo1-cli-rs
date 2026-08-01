@@ -714,7 +714,11 @@ impl GithubRelease {
     /// Find the firmware JSON asset.
     #[must_use]
     pub fn find_firmware_asset(&self) -> Option<&GithubAsset> {
-        self.assets.iter().find(|a| a.name.ends_with(".json"))
+        self.assets.iter().find(|a| {
+            std::path::Path::new(&a.name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        })
     }
 }
 
