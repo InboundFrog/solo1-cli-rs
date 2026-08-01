@@ -169,7 +169,7 @@ fn prepare_hmac_secret_input_with_scalar(
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
-    let (shared_secret, ephemeral_cose_key) = ecdh_shared_secret(dev_pub_key, platform_scalar);
+    let (shared_secret, ephemeral_cose_key) = ecdh_shared_secret(dev_pub_key, platform_scalar)?;
 
     // saltEnc = AES-256-CBC(shared_secret, IV=0, salt) — 32 bytes (2 AES blocks)
     let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
@@ -305,7 +305,15 @@ pub fn cmd_challenge_response(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
     use crate::ctap2::cose_to_public_key;
     use ciborium::value::Value;
@@ -359,7 +367,8 @@ mod tests {
             parsed_dev_pub, dev_pub,
             "COSE round-trip must preserve the key"
         );
-        let (platform_shared, _cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
+        let (platform_shared, _cose_key) =
+            ecdh_shared_secret(&parsed_dev_pub, &platform_scalar).unwrap();
 
         // Device → platform: device computes DH with platform_pub
         let dev_scalar = dev_secret.to_nonzero_scalar();
@@ -390,7 +399,7 @@ mod tests {
 
         let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
         let parsed_dev_pub = cose_to_public_key(&dev_cose_pairs).expect("COSE parse failed");
-        let (_shared, cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
+        let (_shared, cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar).unwrap();
 
         let Value::Map(cose_pairs) = cose_key else {
             panic!("COSE key is not a CBOR map")

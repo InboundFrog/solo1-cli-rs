@@ -93,10 +93,12 @@ fn to_aes_blocks(data: &[u8]) -> Result<Vec<aes::Block>> {
             data.len()
         )));
     }
-    Ok(data
-        .chunks_exact(16)
-        .map(|chunk| aes::Block::try_from(chunk).expect("chunks_exact yields 16-byte chunks"))
-        .collect())
+    data.chunks_exact(16)
+        .map(|chunk| {
+            aes::Block::try_from(chunk)
+                .map_err(|_| SoloError::CryptoError("AES block must be 16 bytes".into()))
+        })
+        .collect()
 }
 
 fn from_aes_blocks(blocks: &[aes::Block]) -> Vec<u8> {
@@ -247,11 +249,10 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
 /// Production callers must use a freshly generated random scalar (see
 /// [`ClientPinSession::new`]); tests may pass a fixed scalar to make the
 /// key-agreement math deterministic.
-#[must_use]
 pub fn ecdh_shared_secret(
     dev_pub_key: &p256::PublicKey,
     platform_scalar: &p256::NonZeroScalar,
-) -> ([u8; 32], Value) {
+) -> Result<([u8; 32], Value)> {
     let shared_point = p256::ecdh::diffie_hellman(platform_scalar, dev_pub_key.as_affine());
     let shared_secret: [u8; 32] = Sha256::digest(shared_point.raw_secret_bytes()).into();
 
@@ -259,11 +260,11 @@ pub fn ecdh_shared_secret(
     let platform_point = EncodedPoint::from(&platform_pub);
     let x = platform_point
         .x()
-        .expect("uncompressed SEC1 point always has x")
+        .ok_or_else(|| SoloError::CryptoError("SEC1 point missing x coordinate".into()))?
         .to_vec();
     let y = platform_point
         .y()
-        .expect("uncompressed SEC1 point always has y")
+        .ok_or_else(|| SoloError::CryptoError("SEC1 point missing y coordinate".into()))?
         .to_vec();
 
     let cose_key = int_map([
@@ -274,7 +275,7 @@ pub fn ecdh_shared_secret(
         (-3, cbor_bytes(y)), // y
     ]);
 
-    (shared_secret, cose_key)
+    Ok((shared_secret, cose_key))
 }
 
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
@@ -314,7 +315,7 @@ pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
 ///   4. getPINToken (subcommand 0x05) → decrypt response → pin token bytes
 pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     let dev_pub_key = get_key_agreement(hid)?;
-    let session = ClientPinSession::new(&dev_pub_key);
+    let session = ClientPinSession::new(&dev_pub_key)?;
     let pin_hash_enc = session.encrypt_pin_hash(pin)?;
 
     let get_pin_token_cbor = int_map([
@@ -417,14 +418,13 @@ pub struct ClientPinSession {
 impl ClientPinSession {
     /// Establish a session by performing ECDH with the device's public key
     /// using a freshly generated ephemeral scalar.
-    #[must_use]
-    pub fn new(dev_pub_key: &p256::PublicKey) -> Self {
+    pub fn new(dev_pub_key: &p256::PublicKey) -> Result<Self> {
         let platform_scalar = p256::NonZeroScalar::generate_from_rng(&mut rand::rng());
-        let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar);
-        Self {
+        let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar)?;
+        Ok(Self {
             shared_secret,
             ephemeral_pub_key,
-        }
+        })
     }
 
     /// Encrypt a PIN for setPin or changePin.
@@ -467,7 +467,15 @@ impl ClientPinSession {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
     use ciborium::value::Value;
 
@@ -500,7 +508,7 @@ mod tests {
         // P-256 public key is 65 bytes (0x04 || X || Y)
         let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
 
-        let session = ClientPinSession::new(&pub_key);
+        let session = ClientPinSession::new(&pub_key).unwrap();
 
         // Test encryption/decryption of a token (multi-block)
         let _encrypted = session.encrypt_pin_hash("123456").unwrap(); // 16 bytes

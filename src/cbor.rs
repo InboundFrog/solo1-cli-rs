@@ -100,7 +100,15 @@ pub fn cbor_text(s: impl Into<String>) -> Value {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     fn sample_pairs() -> Vec<(Value, Value)> {

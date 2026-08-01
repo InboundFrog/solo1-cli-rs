@@ -502,7 +502,10 @@ pub fn merge_hex_files(
         let records: Vec<Record> = ihex::Reader::new(&content)
             .collect::<std::result::Result<_, _>>()
             .map_err(|e| {
-                SoloError::FirmwareError(format!("HEX parse error in {}: {e:?}", input_path.display()))
+                SoloError::FirmwareError(format!(
+                    "HEX parse error in {}: {e:?}",
+                    input_path.display()
+                ))
             })?;
 
         for (addr, data) in hex_records_to_segments(&records)? {
@@ -760,7 +763,15 @@ pub fn download_url(url: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     #[test]

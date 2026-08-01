@@ -427,8 +427,12 @@ pub fn cmd_credential_rm(
             .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {e}")))?;
         (bytes, id.to_string())
     } else {
-        let host = host.expect("host required when credential_id is absent");
-        let user = user.expect("user required when credential_id is absent");
+        let host = host.ok_or_else(|| {
+            SoloError::ProtocolError("host required when credential_id is absent".into())
+        })?;
+        let user = user.ok_or_else(|| {
+            SoloError::ProtocolError("user required when credential_id is absent".into())
+        })?;
 
         let rps = enumerate_rps(hid, pin_token)?;
         let matching_rp = rps.iter().find(|(rp_id, _)| rp_id == host);
@@ -505,7 +509,15 @@ pub fn cmd_credential_rm(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::arithmetic_side_effects, clippy::as_conversions, clippy::cast_possible_truncation)]
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use base64::Engine as _;
 
     /// Credential IDs are displayed and accepted as standard base64, not hex.
