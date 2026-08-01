@@ -135,7 +135,7 @@ pub fn compute_chunk_addresses(flash_start: u32, firmware_len: usize) -> Vec<(u3
 pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
     use crate::firmware::parse_hex_file;
 
-    println!("Parsing firmware HEX file: {firmware_hex:?}");
+    println!("Parsing firmware HEX file: {}", firmware_hex.display());
     let (base_addr, firmware_bytes) = parse_hex_file(firmware_hex)?;
     println!(
         "Base address: 0x{:08X}, size: {} bytes",

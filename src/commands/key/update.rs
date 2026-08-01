@@ -13,7 +13,7 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
     use crate::firmware::{download_url, fetch_latest_release, FirmwareJson};
 
     let fw_json = if let Some(path) = firmware_file {
-        println!("Loading firmware from {path:?}");
+        println!("Loading firmware from {}", path.display());
         FirmwareJson::from_file(path)?
     } else {
         println!("Fetching latest firmware from GitHub...");

@@ -28,8 +28,9 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
     // Optionally seed additional entropy (informational; ring/p256 use OS RNG)
     if let Some(entropy_path) = entropy_file {
         eprintln!(
-            "Note: additional entropy from {entropy_path:?} is not directly injectable into the OS RNG; \
-             the OS RNG is used regardless."
+            "Note: additional entropy from {} is not directly injectable into the OS RNG; \
+             the OS RNG is used regardless.",
+            entropy_path.display()
         );
     }
 
@@ -46,7 +47,7 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
 
     if let Some(out_path) = output {
         write_private_key(out_path, &priv_pem)?;
-        eprintln!("Private key written to {out_path:?}");
+        eprintln!("Private key written to {}", out_path.display());
     } else {
         print!("{priv_pem}");
     }
@@ -118,7 +119,7 @@ pub fn cmd_mergehex(
 ) -> Result<()> {
     let input_refs: Vec<&Path> = inputs.iter().map(std::path::PathBuf::as_path).collect();
     merge_hex_files(&input_refs, output, attestation_key, attestation_cert)?;
-    println!("Merged {} files into {:?}", inputs.len(), output);
+    println!("Merged {} files into {}", inputs.len(), output.display());
     Ok(())
 }
 

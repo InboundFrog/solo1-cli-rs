@@ -501,7 +501,7 @@ pub fn merge_hex_files(
         let records: Vec<Record> = ihex::Reader::new(&content)
             .collect::<std::result::Result<_, _>>()
             .map_err(|e| {
-                SoloError::FirmwareError(format!("HEX parse error in {input_path:?}: {e:?}"))
+                SoloError::FirmwareError(format!("HEX parse error in {}: {e:?}", input_path.display()))
             })?;
 
         for (addr, data) in hex_records_to_segments(&records)? {
