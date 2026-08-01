@@ -4,11 +4,12 @@ use crate::ctap2::{
 };
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+use p256::elliptic_curve::Generate;
 use sha2::{Digest, Sha256};
 
 /// Create a FIDO2 credential with hmac-secret extension.
 ///
-/// Sends a CTAP2 makeCredential (0x01) request via CTAPHID_CBOR with:
+/// Sends a CTAP2 makeCredential (0x01) request via `CTAPHID_CBOR` with:
 ///   - clientDataHash: SHA-256 of 32 random bytes
 ///   - rp: {"id": host, "name": host}
 ///   - user: {"id": user bytes, "name": user, "displayName": user}
@@ -18,6 +19,12 @@ use sha2::{Digest, Sha256};
 ///
 /// Parses the authData from the response to extract the credential ID,
 /// then prints it as hex for use with `challenge-response` and `sign-file`.
+///
+/// # Errors
+/// Returns an error if acquiring a PIN token fails, if the makeCredential
+/// request fails, or if the response is malformed (missing authData, the
+/// attested-credential-data flag is unset, or the authData is too short to
+/// contain the credential ID).
 pub fn cmd_make_credential(
     hid: &impl HidDevice,
     host: &str,
@@ -26,11 +33,11 @@ pub fn cmd_make_credential(
     json: bool,
 ) -> Result<()> {
     use ciborium::value::Value;
-    use rand::RngCore;
+    use rand::Rng;
 
     // Generate random challenge and hash it as clientDataHash
     let mut challenge = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut challenge);
+    rand::rng().fill_bytes(&mut challenge);
     let client_data_hash: Vec<u8> = Sha256::digest(challenge).to_vec();
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
@@ -54,7 +61,7 @@ pub fn cmd_make_credential(
     );
 
     if !prompt.is_empty() {
-        eprintln!("{}", prompt);
+        eprintln!("{prompt}");
     }
 
     // CTAP2 makeCredential (0x01)
@@ -64,13 +71,10 @@ pub fn cmd_make_credential(
     let pairs = parse_cbor_map_response(&response, "makeCredential")?;
 
     // 0x02: authData bytes — contains rpIdHash, flags, signCount, AAGUID, credentialId
-    let auth_data = match find_int_key(&pairs, 0x02) {
-        Some(Value::Bytes(b)) => b,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "makeCredential response missing authData (key 0x02)".into(),
-            ))
-        }
+    let Some(Value::Bytes(auth_data)) = find_int_key(&pairs, 0x02) else {
+        return Err(SoloError::MalformedResponse(
+            "makeCredential response missing authData (key 0x02)".into(),
+        ));
     };
 
     // authData layout (CTAP2 spec):
@@ -86,7 +90,9 @@ pub fn cmd_make_credential(
         ));
     }
 
-    let flags = auth_data[32];
+    let flags = *auth_data
+        .get(32)
+        .ok_or_else(|| SoloError::MalformedResponse("authData missing flags byte".into()))?;
     let at_flag = (flags & 0x40) != 0; // bit 6 = attested credential data present
 
     if !at_flag {
@@ -101,9 +107,18 @@ pub fn cmd_make_credential(
         ));
     }
 
-    let cred_id_len = u16::from_be_bytes([auth_data[53], auth_data[54]]) as usize;
-    let cred_id_start = 55;
-    let cred_id_end = cred_id_start + cred_id_len;
+    let cred_id_len_bytes: [u8; 2] = auth_data
+        .get(53..55)
+        .ok_or_else(|| {
+            SoloError::MalformedResponse("authData too short to read credentialIdLength".into())
+        })?
+        .try_into()
+        .map_err(|_| SoloError::MalformedResponse("invalid credentialIdLength field".into()))?;
+    let cred_id_len = usize::from(u16::from_be_bytes(cred_id_len_bytes));
+    let cred_id_start: usize = 55;
+    let cred_id_end = cred_id_start
+        .checked_add(cred_id_len)
+        .ok_or_else(|| SoloError::ProtocolError("credentialId length overflow".into()))?;
 
     if auth_data.len() < cred_id_end {
         return Err(SoloError::MalformedResponse(format!(
@@ -113,7 +128,9 @@ pub fn cmd_make_credential(
         )));
     }
 
-    let credential_id = &auth_data[cred_id_start..cred_id_end];
+    let credential_id = auth_data.get(cred_id_start..cred_id_end).ok_or_else(|| {
+        SoloError::MalformedResponse("authData too short for credential ID".into())
+    })?;
 
     if json {
         use crate::output::{print_json, MakeCredentialOutput};
@@ -148,18 +165,17 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
 ///
 /// Performs steps 1–6 of the hmac-secret protocol:
 ///   1. Compute salt = SHA-256(challenge)
-///   2–4. ECDH with device key → shared_secret + ephemeral COSE public key
+///   2–4. ECDH with device key → `shared_secret` + ephemeral COSE public key
 ///   5. saltEnc = AES-256-CBC(key=shared_secret, IV=0x00×16, data=salt)
 ///   6. saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
 ///
 /// Returns the hmac-secret extension map `{1: keyAgreement, 2: saltEnc, 3: saltAuth}`
-/// and the shared_secret needed to decrypt the authenticator's response.
+/// and the `shared_secret` needed to decrypt the authenticator's response.
 fn prepare_hmac_secret_input(
     dev_pub_key: &p256::PublicKey,
     challenge: &str,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
-    use rand::rngs::OsRng;
-    let platform_scalar = p256::NonZeroScalar::random(&mut OsRng);
+    let platform_scalar = p256::NonZeroScalar::generate_from_rng(&mut rand::rng());
     prepare_hmac_secret_input_with_scalar(dev_pub_key, challenge, &platform_scalar)
 }
 
@@ -172,7 +188,7 @@ fn prepare_hmac_secret_input_with_scalar(
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
     let salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
-    let (shared_secret, ephemeral_cose_key) = ecdh_shared_secret(dev_pub_key, platform_scalar);
+    let (shared_secret, ephemeral_cose_key) = ecdh_shared_secret(dev_pub_key, platform_scalar)?;
 
     // saltEnc = AES-256-CBC(shared_secret, IV=0, salt) — 32 bytes (2 AES blocks)
     let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
@@ -198,8 +214,15 @@ fn prepare_hmac_secret_input_with_scalar(
 ///        rpId, clientDataHash, allowList[credentialId],
 ///        extensions: {"hmac-secret": {1: ephemeralPub, 2: saltEnc, 3: saltAuth}}
 ///   8. Parse authData from response; if ED flag set, decrypt the hmac-secret output:
-///        output = AES-256-CBC-decrypt(shared_secret, IV=0x00*16, encrypted_output)
+///        output = AES-256-CBC-decrypt(shared_secret, IV=0x00*16, `encrypted_output`)
 ///   9. Print output as hex
+///
+/// # Errors
+/// Returns an error if `credential_id` is not valid hex, if key agreement or
+/// the getAssertion request fails, if the response is malformed (missing or
+/// short authData, the extensions-data flag is unset, or the hmac-secret
+/// output is missing or too short), or if decrypting the hmac-secret output
+/// fails.
 pub fn cmd_challenge_response(
     hid: &impl HidDevice,
     credential_id: &str,
@@ -251,13 +274,10 @@ pub fn cmd_challenge_response(
     let ga_pairs = parse_cbor_map_response(&ga_response, "getAssertion")?;
 
     // authData is at key 0x02 in the getAssertion response
-    let auth_data = match find_int_key(&ga_pairs, 0x02) {
-        Some(Value::Bytes(b)) => b,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "getAssertion response missing authData (key 0x02)".into(),
-            ))
-        }
+    let Some(Value::Bytes(auth_data)) = find_int_key(&ga_pairs, 0x02) else {
+        return Err(SoloError::MalformedResponse(
+            "getAssertion response missing authData (key 0x02)".into(),
+        ));
     };
 
     // authData layout:
@@ -269,7 +289,9 @@ pub fn cmd_challenge_response(
         return Err(SoloError::MalformedResponse("authData too short".into()));
     }
 
-    let flags = auth_data[32];
+    let flags = *auth_data
+        .get(32)
+        .ok_or_else(|| SoloError::MalformedResponse("authData missing flags byte".into()))?;
     let ed_flag = (flags & 0x80) != 0; // bit 7 = extensions data present
 
     if !ed_flag {
@@ -279,7 +301,9 @@ pub fn cmd_challenge_response(
     }
 
     // Parse extensions CBOR starting at byte 37
-    let ext_cbor_bytes = &auth_data[37..];
+    let ext_cbor_bytes = auth_data
+        .get(37..)
+        .ok_or_else(|| SoloError::MalformedResponse("authData missing extensions data".into()))?;
     let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)?;
 
     let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
@@ -298,26 +322,40 @@ pub fn cmd_challenge_response(
     let hmac_output = decrypt_hmac_secret(&shared_secret, &hmac_secret_enc)?;
 
     // ── Step 9: Print the HMAC output as hex ────────────────────────────────
+    let hmac_output_hex = hex::encode(
+        hmac_output
+            .get(..32)
+            .ok_or_else(|| SoloError::MalformedResponse("hmac-secret output too short".into()))?,
+    );
     if json {
         use crate::output::{print_json, ChallengeResponseOutput};
         return print_json(&ChallengeResponseOutput {
-            hmac_output: hex::encode(&hmac_output[..32]),
+            hmac_output: hmac_output_hex,
         });
     }
-    println!("{}", hex::encode(&hmac_output[..32]));
+    println!("{hmac_output_hex}");
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
     use crate::ctap2::cose_to_public_key;
     use ciborium::value::Value;
 
     /// Build a COSE key map (integer-keyed) from a `p256::PublicKey`.
     fn cose_pairs_from_pub(pub_key: &p256::PublicKey) -> Vec<(Value, Value)> {
-        use p256::EncodedPoint;
+        use p256::Sec1Point as EncodedPoint;
         let point = EncodedPoint::from(pub_key);
         let x = point.x().unwrap().to_vec();
         let y = point.y().unwrap().to_vec();
@@ -349,12 +387,10 @@ mod tests {
     /// and SHA-256 it; the test asserts that the resulting 32-byte secrets match.
     #[test]
     fn ecdh_key_agreement_both_sides_agree() {
-        use rand::rngs::OsRng;
-
         // Generate deterministic-within-test keys using p256::SecretKey::random
-        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 
@@ -366,7 +402,8 @@ mod tests {
             parsed_dev_pub, dev_pub,
             "COSE round-trip must preserve the key"
         );
-        let (platform_shared, _cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
+        let (platform_shared, _cose_key) =
+            ecdh_shared_secret(&parsed_dev_pub, &platform_scalar).unwrap();
 
         // Device → platform: device computes DH with platform_pub
         let dev_scalar = dev_secret.to_nonzero_scalar();
@@ -383,12 +420,11 @@ mod tests {
     /// and that its coordinates correspond to the platform scalar used.
     #[test]
     fn ecdh_key_agreement_cose_key_is_correct() {
-        use p256::EncodedPoint;
-        use rand::rngs::OsRng;
+        use p256::Sec1Point as EncodedPoint;
 
-        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
         let expected_platform_pub = platform_secret.public_key();
@@ -398,11 +434,10 @@ mod tests {
 
         let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
         let parsed_dev_pub = cose_to_public_key(&dev_cose_pairs).expect("COSE parse failed");
-        let (_shared, cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar);
+        let (_shared, cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar).unwrap();
 
-        let cose_pairs = match cose_key {
-            Value::Map(p) => p,
-            _ => panic!("COSE key is not a CBOR map"),
+        let Value::Map(cose_pairs) = cose_key else {
+            panic!("COSE key is not a CBOR map")
         };
 
         // kty = 2 (EC2)
@@ -444,14 +479,13 @@ mod tests {
     #[test]
     fn prepare_hmac_secret_input_output_is_correct() {
         use hmac::{Hmac, KeyInit as _, Mac as _};
-        use rand::rngs::OsRng;
 
         let challenge = "test-challenge";
         let expected_salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
-        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
         let (hmac_ext, shared_secret) =
@@ -459,9 +493,8 @@ mod tests {
                 .expect("prepare_hmac_secret_input_with_scalar failed");
 
         // The result must be a CBOR map
-        let ext_pairs = match hmac_ext {
-            Value::Map(p) => p,
-            _ => panic!("hmac-secret extension is not a CBOR map"),
+        let Value::Map(ext_pairs) = hmac_ext else {
+            panic!("hmac-secret extension is not a CBOR map")
         };
 
         // Keys 1, 2, 3 must be present
@@ -512,12 +545,10 @@ mod tests {
     /// matches the shared secret the device side would compute.
     #[test]
     fn prepare_hmac_secret_input_shared_secret_matches_device() {
-        use rand::rngs::OsRng;
-
         let challenge = "another-test-challenge";
-        let dev_secret = p256::SecretKey::random(&mut OsRng);
+        let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut OsRng);
+        let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 

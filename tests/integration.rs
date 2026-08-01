@@ -1,3 +1,14 @@
+#![allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::format_push_string,
+    clippy::format_collect,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::as_conversions,
+    clippy::cast_possible_truncation
+)]
 /// Integration tests for solo1-cli-rs.
 ///
 /// Tests marked `#[ignore]` require actual hardware (a Solo 1 device plugged in).
@@ -14,14 +25,13 @@ fn test_list_devices_no_hardware() {
     // We just verify it doesn't error out.
     assert!(
         result.is_ok(),
-        "list_solo_devices should not fail: {:?}",
-        result
+        "list_solo_devices should not fail: {result:?}"
     );
 }
 
 /// Ping the device (requires hardware).
 #[test]
-#[ignore]
+#[ignore = "requires connected hardware"]
 fn test_ping_hardware() {
     let hid = SoloHid::open(None, std::time::Duration::from_secs(30))
         .expect("Failed to open Solo device");
@@ -34,7 +44,7 @@ fn test_ping_hardware() {
 
 /// Get the firmware version (requires hardware).
 #[test]
-#[ignore]
+#[ignore = "requires connected hardware"]
 fn test_version_hardware() {
     let hid = SoloHid::open(None, std::time::Duration::from_secs(30))
         .expect("Failed to open Solo device");
@@ -55,7 +65,7 @@ fn test_version_hardware() {
 // Hardware-less tests: firmware signing and mergehex
 // ============================================================
 
-/// Test that firmware_bytes_to_sign_for_version produces different sizes for v1 and v2.
+/// Test that `firmware_bytes_to_sign_for_version` produces different sizes for v1 and v2.
 #[test]
 fn test_firmware_sign_versioned_regions_differ() {
     use solo1::firmware::{FLASH_PAGES, FLASH_PAGE_SIZE};
@@ -63,24 +73,22 @@ fn test_firmware_sign_versioned_regions_differ() {
     use tempfile::NamedTempFile;
 
     // Build a minimal Intel HEX file starting at 0x08005000 (app start)
-    let app_start: u32 = 0x08005000;
+    let app_start: u32 = 0x0800_5000;
     let mut hex_content = String::new();
     // Extended linear address for 0x0800_xxxx
     hex_content.push_str(":020000040800F2\n");
     // One data record at offset 0x5000
     let offset: u16 = 0x5000;
     let data = vec![0xAAu8; 16];
-    let mut sum: u32 = 0x10 + (offset >> 8) as u32 + (offset & 0xFF) as u32;
+    let mut sum: u32 = 0x10 + u32::from(offset >> 8) + u32::from(offset & 0xFF);
     for &b in &data {
-        sum += b as u32;
+        sum += u32::from(b);
     }
     let checksum = (0x100u32 - (sum & 0xFF)) as u8;
     hex_content.push_str(&format!(
         ":10{:04X}00{}  {:02X}\n",
         offset,
-        data.iter()
-            .map(|b| format!("{:02X}", b))
-            .collect::<String>(),
+        data.iter().map(|b| format!("{b:02X}")).collect::<String>(),
         checksum
     ));
     hex_content.push_str(":00000001FF\n");
@@ -97,18 +105,14 @@ fn test_firmware_sign_versioned_regions_differ() {
     // v1 region is larger (higher end page count)
     assert!(
         end_v1 > end_v2,
-        "v1 signing region should be larger than v2 (end_v1=0x{:08X} end_v2=0x{:08X})",
-        end_v1,
-        end_v2
+        "v1 signing region should be larger than v2 (end_v1=0x{end_v1:08X} end_v2=0x{end_v2:08X})"
     );
 
     let expected_v1_size = (end_v1 - app_start) as usize;
     let expected_v2_size = (end_v2 - app_start) as usize;
     assert!(
         expected_v1_size > expected_v2_size,
-        "v1 size {} should be larger than v2 size {}",
-        expected_v1_size,
-        expected_v2_size
+        "v1 size {expected_v1_size} should be larger than v2 size {expected_v2_size}"
     );
 
     // The size difference should be exactly one page (2048 bytes)
@@ -119,7 +123,7 @@ fn test_firmware_sign_versioned_regions_differ() {
     );
 }
 
-/// Test that the AUTH_WORD_ADDR calculation matches the Python reference.
+/// Test that the `AUTH_WORD_ADDR` calculation matches the Python reference.
 #[test]
 fn test_mergehex_auth_word_address() {
     use solo1::firmware::flash_addr;
@@ -133,11 +137,11 @@ fn test_mergehex_auth_word_address() {
     // auth_word_addr = 0x08036000 - 8 = 0x08035FF8
     assert_eq!(
         flash_addr(108),
-        0x08036000,
+        0x0803_6000,
         "flash_addr(108) should be 0x08036000"
     );
     assert_eq!(
-        auth_word_addr, 0x08035FF8,
+        auth_word_addr, 0x0803_5FF8,
         "AUTH_WORD_ADDR should be 0x08035FF8"
     );
 
@@ -145,13 +149,13 @@ fn test_mergehex_auth_word_address() {
     let attest_addr = flash_addr(128 - 15);
     assert_eq!(
         flash_addr(113),
-        0x08038800,
+        0x0803_8800,
         "flash_addr(113) should be 0x08038800"
     );
-    assert_eq!(attest_addr, 0x08038800, "ATTEST_ADDR should be 0x08038800");
+    assert_eq!(attest_addr, 0x0803_8800, "ATTEST_ADDR should be 0x08038800");
 }
 
-/// Test that version_matches_constraint handles the "=" operator correctly.
+/// Test that `version_matches_constraint` handles the "=" operator correctly.
 #[test]
 fn test_version_constraint_equals() {
     use solo1::firmware::{version_matches_constraint, FirmwareVersion};
@@ -238,8 +242,7 @@ fn test_mergehex_default_attestation() {
     let result = merge_hex_files(&[tmp_hex.path()], tmp_out.path(), None, None);
     assert!(
         result.is_ok(),
-        "mergehex with default attestation should succeed: {:?}",
-        result
+        "mergehex with default attestation should succeed: {result:?}"
     );
 
     // Output should be a valid HEX file (non-empty, starts with ':')
@@ -344,12 +347,11 @@ fn test_known_fingerprints_validity() {
 
     for (fp, name) in KNOWN_FINGERPRINTS {
         let bytes = hex::decode(fp)
-            .unwrap_or_else(|_| panic!("fingerprint for '{}' should be valid hex", name));
+            .unwrap_or_else(|_| panic!("fingerprint for '{name}' should be valid hex"));
         assert_eq!(
             bytes.len(),
             32,
-            "fingerprint for '{}' should be 32 bytes",
-            name
+            "fingerprint for '{name}' should be 32 bytes"
         );
     }
 
@@ -363,14 +365,14 @@ fn test_known_fingerprints_validity() {
     assert!(names.contains(&"Valid Solo with firmware from SoloKeys."));
 }
 
-/// Test flash_addr calculation.
+/// Test `flash_addr` calculation.
 #[test]
 fn test_flash_addr_calculation() {
     use solo1::firmware::flash_addr;
 
-    assert_eq!(flash_addr(0), 0x08000000);
-    assert_eq!(flash_addr(1), 0x08000800); // 0x08000000 + 2048
-    assert_eq!(flash_addr(108), 0x08036000); // 0x08000000 + 108 * 2048
-    assert_eq!(flash_addr(113), 0x08038800); // ATTEST_ADDR
-    assert_eq!(flash_addr(128), 0x08040000); // one past end
+    assert_eq!(flash_addr(0), 0x0800_0000);
+    assert_eq!(flash_addr(1), 0x0800_0800); // 0x08000000 + 2048
+    assert_eq!(flash_addr(108), 0x0803_6000); // 0x08000000 + 108 * 2048
+    assert_eq!(flash_addr(113), 0x0803_8800); // ATTEST_ADDR
+    assert_eq!(flash_addr(128), 0x0804_0000); // one past end
 }

@@ -5,6 +5,10 @@ use crate::error::Result;
 /// Enter bootloader mode (from firmware).
 /// Sends command 0x51 directly — no bootloader wrapper — as the firmware handles it.
 /// The device reboots immediately so we don't wait for a response.
+///
+/// # Errors
+/// This function does not return an error; the send result is intentionally
+/// ignored because the device reboots without replying.
 pub fn cmd_enter_bootloader(hid: &impl HidDevice) -> Result<()> {
     let _ = hid.send(CMD_ENTER_BOOT, &[]);
     println!("Entering bootloader mode...");
@@ -12,6 +16,10 @@ pub fn cmd_enter_bootloader(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Leave bootloader mode (boot to firmware) by issuing a reboot from bootloader.
+///
+/// # Errors
+/// This function does not return an error; the reboot command's result is
+/// intentionally ignored because the device reboots without replying.
 pub fn cmd_leave_bootloader(hid: &impl HidDevice) -> Result<()> {
     let _ = hid.send_bootloader_cmd(CMD_REBOOT, 0, &[]);
     println!("Booting to firmware...");
@@ -20,6 +28,10 @@ pub fn cmd_leave_bootloader(hid: &impl HidDevice) -> Result<()> {
 
 /// Enter ST DFU mode (from firmware).
 /// Sends command 0x52 directly — the firmware handles it, device reboots.
+///
+/// # Errors
+/// This function does not return an error; the send result is intentionally
+/// ignored because the device reboots without replying.
 pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
     let _ = hid.send(CMD_ENTER_ST_BOOT, &[]);
     println!("Entering ST DFU mode...");
@@ -27,6 +39,10 @@ pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Leave ST DFU mode (re-enter Solo bootloader) by issuing a reboot from bootloader.
+///
+/// # Errors
+/// This function does not return an error; the reboot command's result is
+/// intentionally ignored because the device reboots without replying.
 pub fn cmd_leave_dfu(hid: &impl HidDevice) -> Result<()> {
     let _ = hid.send_bootloader_cmd(CMD_REBOOT, 0, &[]);
     println!("Leaving ST DFU mode...");
@@ -34,6 +50,9 @@ pub fn cmd_leave_dfu(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Reboot the device.
+///
+/// # Errors
+/// Returns an error if the reboot command cannot be sent to the device.
 pub fn cmd_reboot(hid: &impl HidDevice) -> Result<()> {
     hid.send_bootloader_cmd(CMD_REBOOT, 0, &[])?;
     println!("Rebooting device...");
@@ -41,10 +60,14 @@ pub fn cmd_reboot(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Get bootloader version string.
+///
+/// # Errors
+/// Returns an error if the version query cannot be sent or the bootloader
+/// returns an error status.
 pub fn cmd_bootloader_version(hid: &impl HidDevice) -> Result<()> {
     let response = hid.send_bootloader_cmd(CMD_VERSION, 0, &[])?;
     let version_str = format_bootloader_version(&response);
-    println!("Bootloader version: {}", version_str);
+    println!("Bootloader version: {version_str}");
     Ok(())
 }
 
@@ -52,9 +75,10 @@ pub fn cmd_bootloader_version(hid: &impl HidDevice) -> Result<()> {
 ///
 /// If the response contains at least 3 bytes, formats as "major.minor.patch".
 /// Otherwise falls back to hex encoding of the raw bytes.
+#[must_use]
 pub fn format_bootloader_version(response: &[u8]) -> String {
-    if response.len() >= 3 {
-        format!("{}.{}.{}", response[0], response[1], response[2])
+    if let [major, minor, patch, ..] = response {
+        format!("{major}.{minor}.{patch}")
     } else {
         hex::encode(response)
     }
@@ -62,6 +86,15 @@ pub fn format_bootloader_version(response: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     // All aux command functions (cmd_enter_bootloader, cmd_leave_bootloader,

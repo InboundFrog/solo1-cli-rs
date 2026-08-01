@@ -13,13 +13,24 @@ pub mod protocol;
 /// without a physical device attached.
 pub trait HidDevice {
     /// Send a command with payload, receive and return the response payload.
+    ///
+    /// # Errors
+    /// Returns an error if the device transaction fails, e.g. an I/O error or a
+    /// timeout waiting for the response.
     fn send_recv(&self, cmd: u8, data: &[u8]) -> crate::error::Result<Vec<u8>>;
 
     /// Send a vendor (bootloader) command and return the response payload.
+    ///
+    /// # Errors
+    /// Returns an error if the bootloader command transaction fails, e.g. an
+    /// I/O error or a timeout waiting for the response.
     fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8])
         -> crate::error::Result<Vec<u8>>;
 
     /// Send a command with payload without waiting for a response.
+    ///
+    /// # Errors
+    /// Returns an error if sending the command to the device fails.
     fn send(&self, cmd: u8, data: &[u8]) -> crate::error::Result<()>;
 }
 
@@ -62,6 +73,7 @@ pub mod mock {
     }
 
     impl MockDevice {
+        #[must_use]
         pub fn new(responses: Vec<crate::error::Result<Vec<u8>>>) -> Self {
             Self {
                 responses: RefCell::new(responses.into()),

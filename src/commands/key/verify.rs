@@ -29,7 +29,7 @@ struct AttestationData {
 /// Key 0x03 of that map is `attStmt`, which must contain an `x5c` array
 /// whose first element is the leaf certificate as a byte string.
 ///
-/// Per WebAuthn §8.2 the packed attestation `alg` must be -7 (ES256); any
+/// Per `WebAuthn` §8.2 the packed attestation `alg` must be -7 (ES256); any
 /// other algorithm is an error because Solo keys only attest with ES256 and
 /// this code cannot verify anything else.
 fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
@@ -44,13 +44,10 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
     };
 
     // 0x03: attStmt map — contains "alg", "sig", and "x5c" array of DER certs
-    let att_stmt = match find_int_key(&pairs, 0x03) {
-        Some(Value::Map(m)) => m,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "makeCredential response missing attStmt (key 0x03)".into(),
-            ))
-        }
+    let Some(Value::Map(att_stmt)) = find_int_key(&pairs, 0x03) else {
+        return Err(SoloError::MalformedResponse(
+            "makeCredential response missing attStmt (key 0x03)".into(),
+        ));
     };
 
     // "alg" must be -7 (ES256) if present; reject anything else outright.
@@ -60,8 +57,7 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
             .map_err(|_| SoloError::MalformedResponse("attStmt alg out of i64 range".into()))?;
         if alg != -7 {
             return Err(SoloError::MalformedResponse(format!(
-                "unsupported attestation algorithm {} (expected -7 / ES256)",
-                alg
+                "unsupported attestation algorithm {alg} (expected -7 / ES256)"
             )));
         }
     } else {
@@ -77,8 +73,8 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
     };
 
     let cert_der = match find_text_key(att_stmt, "x5c") {
-        Some(Value::Array(certs)) if !certs.is_empty() => match &certs[0] {
-            Value::Bytes(b) => b.clone(),
+        Some(Value::Array(certs)) if !certs.is_empty() => match certs.first() {
+            Some(Value::Bytes(b)) => b.clone(),
             _ => return Err(SoloError::MalformedResponse("x5c[0] is not bytes".into())),
         },
         _ => {
@@ -116,18 +112,25 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
 
 /// Verify key authenticity via attestation certificate and signature.
 ///
-/// Sends a CTAP2 makeCredential (0x01) request via CTAPHID_CBOR, extracts the
+/// Sends a CTAP2 makeCredential (0x01) request via `CTAPHID_CBOR`, extracts the
 /// DER-encoded attestation certificate from attStmt.x5c[0], SHA-256 fingerprints
 /// it, and compares against known fingerprints in crypto.rs.
 ///
 /// The certificate fingerprint alone is not sufficient: a counterfeit device
 /// can replay a copied genuine certificate.  The packed attestation signature
-/// (`attStmt.sig` over `authData || clientDataHash`, WebAuthn §8.2) is
+/// (`attStmt.sig` over `authData || clientDataHash`, `WebAuthn` §8.2) is
 /// therefore verified against the certificate's public key, proving the
 /// device actually possesses the attestation private key.  If the signature
 /// is missing or invalid, the device is reported as failed regardless of the
 /// fingerprint.
+///
+/// # Errors
+/// Returns an error if acquiring a PIN token fails, if the makeCredential
+/// request fails, or if the attestation cannot be extracted from the response
+/// (missing attStmt or x5c certificate, or an unsupported attestation
+/// algorithm).
 pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
+    use crate::crypto::AttestationResult;
     use crate::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
 
     // clientDataHash: fixed 32-byte value (Solo does not verify it for attestation)
@@ -163,7 +166,6 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     let spki_fingerprint = crate::crypto::extract_spki_fingerprint(cert_der)
         .unwrap_or_else(|_| "(could not extract)".into());
 
-    use crate::crypto::AttestationResult;
     let result = check_attestation_fingerprint(cert_der);
 
     // Check certificate validity dates independently.  An expired cert on a
@@ -173,29 +175,29 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     if json {
         use crate::output::{print_json, VerifyOutput};
-        let (device_type, device_name) = if !signature_valid {
-            // The fingerprint result is meaningless without a valid signature:
-            // the certificate may simply have been copied from a genuine key.
-            ("invalid", None)
-        } else {
+        let (device_type, device_name) = if signature_valid {
             match &result {
                 AttestationResult::GenuineConsumer(n) => ("genuine", Some(n.to_string())),
                 AttestationResult::DeveloperDevice(n) => ("developer", Some(n.to_string())),
                 AttestationResult::Unknown => ("unknown", None),
             }
+        } else {
+            // The fingerprint result is meaningless without a valid signature:
+            // the certificate may simply have been copied from a genuine key.
+            ("invalid", None)
         };
         return print_json(&VerifyOutput {
             device_type: device_type.to_string(),
             device_name,
-            fingerprint: fingerprint.clone(),
-            spki_fingerprint: spki_fingerprint.clone(),
+            fingerprint,
+            spki_fingerprint,
             cert_expired,
             signature_valid,
         });
     }
 
-    println!("Attestation certificate SHA-256: {}", fingerprint);
-    println!("Attestation certificate SPKI:    {}", spki_fingerprint);
+    println!("Attestation certificate SHA-256: {fingerprint}");
+    println!("Attestation certificate SPKI:    {spki_fingerprint}");
     if cert_expired {
         println!(
             "WARNING: Attestation certificate has expired. \
@@ -212,12 +214,11 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
     match result {
         AttestationResult::GenuineConsumer(name) => {
-            println!("OK: Genuine SoloKeys device: {}", name);
+            println!("OK: Genuine SoloKeys device: {name}");
         }
         AttestationResult::DeveloperDevice(name) => {
             println!(
-                "WARNING: Developer/non-production device: {}. Not a genuine consumer key.",
-                name
+                "WARNING: Developer/non-production device: {name}. Not a genuine consumer key."
             );
         }
         AttestationResult::Unknown => {
@@ -232,6 +233,15 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
     use crate::cbor::{cbor_bytes, cbor_int, cbor_text, int_map};
     use crate::device::mock::MockDevice;
@@ -293,7 +303,7 @@ mod tests {
         (cert.der().to_vec(), auth_data, sig.as_bytes().to_vec())
     }
 
-    /// The fixed clientDataHash cmd_verify uses.
+    /// The fixed clientDataHash `cmd_verify` uses.
     fn verify_client_data_hash() -> Vec<u8> {
         Sha256::digest(b"solokeys_verify_test").to_vec()
     }
@@ -324,8 +334,7 @@ mod tests {
         let err = extract_attestation(&resp).unwrap_err();
         assert!(
             err.to_string().contains("-257"),
-            "error should name the unsupported algorithm: {}",
-            err
+            "error should name the unsupported algorithm: {err}"
         );
     }
 
@@ -423,7 +432,7 @@ mod tests {
     // ── cmd_verify end-to-end with MockDevice ────────────────────────────
 
     /// getInfo response: status 0x00 + empty CBOR map (no clientPin option,
-    /// so cmd_verify skips the PIN flow).
+    /// so `cmd_verify` skips the PIN flow).
     fn get_info_response() -> Vec<u8> {
         vec![0x00, 0xA0]
     }

@@ -44,7 +44,7 @@ pub struct VerifyOutput {
     pub device_name: Option<String>,
     /// SHA-256 of the full certificate DER bytes.
     pub fingerprint: String,
-    /// SHA-256 of the SubjectPublicKeyInfo (SPKI) only — stable across certificate re-issuance.
+    /// SHA-256 of the `SubjectPublicKeyInfo` (SPKI) only — stable across certificate re-issuance.
     pub spki_fingerprint: String,
     /// Whether the attestation certificate's validity period has expired.
     /// A genuine device may still have an expired cert; expiry is reported as
@@ -100,6 +100,9 @@ pub struct PingOutput {
 }
 
 /// Serialize `value` to pretty JSON and print to stdout.
+///
+/// # Errors
+/// Returns an error if `value` cannot be serialized to JSON.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     println!(
         "{}",
@@ -110,6 +113,15 @@ pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     #[test]

@@ -1,8 +1,8 @@
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use ciborium::value::Value;
 use hmac::{Hmac, KeyInit as _, Mac as _};
-use p256::EncodedPoint;
-use rand::rngs::OsRng;
+use p256::elliptic_curve::Generate;
+use p256::Sec1Point as EncodedPoint;
 use sha2::{Digest as _, Sha256};
 
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
@@ -10,7 +10,8 @@ use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// Map a CTAP2 status byte to a human-readable description.
-pub fn ctap2_status_message(code: u8) -> &'static str {
+#[must_use]
+pub const fn ctap2_status_message(code: u8) -> &'static str {
     match code {
         0x01 => "invalid command",
         0x02 => "invalid parameter",
@@ -68,6 +69,9 @@ pub const CTAP2_AES_IV: [u8; 16] = [0u8; 16];
 /// Encrypt `data` with AES-256-CBC using `key` and the zero IV ([`CTAP2_AES_IV`]).
 ///
 /// `data` must be a non-empty multiple of the 16-byte AES block size.
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if `data` is empty or not a multiple of the 16-byte AES block size.
 pub fn aes256_cbc_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
     type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
     let mut blocks = to_aes_blocks(data)?;
@@ -78,6 +82,9 @@ pub fn aes256_cbc_encrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
 /// Decrypt `data` with AES-256-CBC using `key` and the zero IV ([`CTAP2_AES_IV`]).
 ///
 /// `data` must be a non-empty multiple of the 16-byte AES block size.
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if `data` is empty or not a multiple of the 16-byte AES block size.
 pub fn aes256_cbc_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
     type Aes256CbcDec = cbc::Decryptor<aes::Aes256>;
     let mut blocks = to_aes_blocks(data)?;
@@ -92,10 +99,12 @@ fn to_aes_blocks(data: &[u8]) -> Result<Vec<aes::Block>> {
             data.len()
         )));
     }
-    Ok(data
-        .chunks_exact(16)
-        .map(|chunk| aes::Block::try_from(chunk).expect("chunks_exact yields 16-byte chunks"))
-        .collect())
+    data.chunks_exact(16)
+        .map(|chunk| {
+            aes::Block::try_from(chunk)
+                .map_err(|_| SoloError::CryptoError("AES block must be 16 bytes".into()))
+        })
+        .collect()
 }
 
 fn from_aes_blocks(blocks: &[aes::Block]) -> Vec<u8> {
@@ -106,6 +115,10 @@ fn from_aes_blocks(blocks: &[aes::Block]) -> Vec<u8> {
 }
 
 /// Query CTAP2 getInfo (0x04) and return whether a PIN has been set on the device.
+///
+/// # Errors
+/// Propagates transport errors from the device, and returns an error if the getInfo
+/// response is empty, reports a non-zero CTAP2 status, or is not a valid CBOR map.
 pub fn get_info_client_pin_set(hid: &impl HidDevice) -> Result<bool> {
     let info_resp = hid.send_recv(CTAPHID_CBOR, &[0x04u8])?;
     let pairs = parse_cbor_map_response(&info_resp, "getInfo")?;
@@ -120,19 +133,27 @@ pub fn get_info_client_pin_set(hid: &impl HidDevice) -> Result<bool> {
 }
 
 /// Build a raw CTAP2 request: the command byte followed by the CBOR-serialized payload.
+///
+/// # Errors
+/// Returns [`SoloError::CborSerError`] if the payload cannot be serialized to CBOR.
 pub fn ctap2_request(cmd: u8, payload: &Value) -> Result<Vec<u8>> {
     let mut request = vec![cmd];
     ciborium::ser::into_writer(payload, &mut request)?;
     Ok(request)
 }
 
-/// Build a CTAP2 request and exchange it over CTAPHID_CBOR, returning the raw response.
+/// Build a CTAP2 request and exchange it over `CTAPHID_CBOR`, returning the raw response.
+///
+/// # Errors
+/// Returns [`SoloError::CborSerError`] if the payload cannot be serialized, or propagates
+/// transport errors from the device.
 pub fn ctap2_call(hid: &impl HidDevice, cmd: u8, payload: &Value) -> Result<Vec<u8>> {
     let request = ctap2_request(cmd, payload)?;
     hid.send_recv(CTAPHID_CBOR, &request)
 }
 
 #[inline]
+#[must_use]
 pub fn create_key_agreement_cbor() -> Value {
     int_map([
         (0x01, cbor_int(1)), // pinUvAuthProtocol = 1
@@ -141,6 +162,7 @@ pub fn create_key_agreement_cbor() -> Value {
 }
 
 #[inline]
+#[must_use]
 pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
     response_values
         .iter()
@@ -156,15 +178,15 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
 
 /// Validate a raw CTAP2 response: checks it is non-empty and the status byte is 0x00.
 /// Returns `Ok(())` on success, `Err` with a context-tagged message otherwise.
+///
+/// # Errors
+/// Returns [`SoloError::MalformedResponse`] if `response` is empty, or
+/// [`SoloError::AuthenticatorError`] if the status byte is non-zero.
 pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
-    if response.is_empty() {
-        return Err(SoloError::MalformedResponse(format!(
-            "Empty response from {}",
-            context
-        )));
-    }
-    if response[0] != 0x00 {
-        let code = response[0];
+    let &code = response
+        .first()
+        .ok_or_else(|| SoloError::MalformedResponse(format!("Empty response from {context}")))?;
+    if code != 0x00 {
         let message = ctap2_status_message(code);
         return Err(SoloError::AuthenticatorError { code, message });
     }
@@ -173,15 +195,26 @@ pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
 
 /// Parse a raw CTAP2 response as a CBOR map: validates status, parses CBOR, checks it is a map.
 /// Returns the map pairs on success.
+///
+/// # Errors
+/// Returns an error if the status byte is missing or non-zero, the response is truncated,
+/// or the payload is not valid CBOR or not a map.
 pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
-    parse_map_payload(&response[1..], context)
+    let payload = response
+        .get(1..)
+        .ok_or_else(|| SoloError::MalformedResponse(format!("Truncated {context} response")))?;
+    parse_map_payload(payload, context)
 }
 
 /// Like [`parse_cbor_map_response`], but tolerates a response consisting of a
 /// lone success status byte with no CBOR payload, returning an empty map.
 ///
 /// Some credMgmt subcommands (e.g. enumerating an empty device) reply this way.
+///
+/// # Errors
+/// Returns an error if the status byte is missing or non-zero, the response is truncated,
+/// or the (non-empty) payload is not valid CBOR or not a map.
 pub fn parse_cbor_map_response_allow_empty(
     response: &[u8],
     context: &str,
@@ -190,7 +223,10 @@ pub fn parse_cbor_map_response_allow_empty(
     if response.len() == 1 {
         return Ok(vec![]);
     }
-    parse_map_payload(&response[1..], context)
+    let payload = response
+        .get(1..)
+        .ok_or_else(|| SoloError::MalformedResponse(format!("Truncated {context} response")))?;
+    parse_map_payload(payload, context)
 }
 
 fn parse_map_payload(payload: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
@@ -198,12 +234,16 @@ fn parse_map_payload(payload: &[u8], context: &str) -> Result<Vec<(Value, Value)
     match val {
         Value::Map(p) => Ok(p),
         _ => Err(SoloError::MalformedResponse(format!(
-            "{} response is not a CBOR map",
-            context
+            "{context} response is not a CBOR map"
         ))),
     }
 }
 
+/// Extract the `keyAgreement` (0x01) value from a clientPIN response map.
+///
+/// # Errors
+/// Returns [`SoloError::MalformedResponse`] if the `keyAgreement` (0x01) key is missing
+/// from the response.
 #[inline]
 pub fn find_key_agreement_response(response_pairs: &[(Value, Value)]) -> Result<&Value> {
     find_int_key(response_pairs, 0x01).ok_or_else(|| {
@@ -212,15 +252,22 @@ pub fn find_key_agreement_response(response_pairs: &[(Value, Value)]) -> Result<
 }
 
 /// Extract a byte-valued coordinate from a COSE key map by its integer key.
+///
+/// # Errors
+/// Returns an error if the key is missing from the COSE map or its value is not a byte string.
 #[inline]
 pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec<u8>> {
     crate::cbor::require_bytes(cose_pairs, key, "COSE key")
 }
 
-/// Parse a COSE_Key map (EC2 / P-256) into a `p256::PublicKey`.
+/// Parse a `COSE_Key` map (EC2 / P-256) into a `p256::PublicKey`.
 ///
 /// Extracts the x (-2) and y (-3) coordinates, validates their length, and
 /// assembles the uncompressed SEC1 point.
+///
+/// # Errors
+/// Returns [`SoloError::MalformedResponse`] if the x (-2) or y (-3) coordinates are missing,
+/// are not 32 bytes, or do not form a valid P-256 public key.
 pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicKey> {
     let dev_x = extract_cose_coord(cose_pairs, -2)?;
     let dev_y = extract_cose_coord(cose_pairs, -3)?;
@@ -234,22 +281,26 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
     uncompressed.extend_from_slice(&dev_x);
     uncompressed.extend_from_slice(&dev_y);
     p256::PublicKey::from_sec1_bytes(&uncompressed)
-        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {}", e)))
+        .map_err(|e| SoloError::MalformedResponse(format!("Invalid device public key: {e}")))
 }
 
 /// Perform ECDH against `dev_pub_key` with the given platform scalar.
 ///
 /// Returns the PIN/UV Auth Protocol One shared secret (SHA-256 of the ECDH
-/// x-coordinate) together with the platform public key wrapped as a COSE_Key
+/// x-coordinate) together with the platform public key wrapped as a `COSE_Key`
 /// CBOR map suitable for the `keyAgreement` request field.
 ///
 /// Production callers must use a freshly generated random scalar (see
 /// [`ClientPinSession::new`]); tests may pass a fixed scalar to make the
 /// key-agreement math deterministic.
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if the platform public key's SEC1 point is missing
+/// its x or y coordinate.
 pub fn ecdh_shared_secret(
     dev_pub_key: &p256::PublicKey,
     platform_scalar: &p256::NonZeroScalar,
-) -> ([u8; 32], Value) {
+) -> Result<([u8; 32], Value)> {
     let shared_point = p256::ecdh::diffie_hellman(platform_scalar, dev_pub_key.as_affine());
     let shared_secret: [u8; 32] = Sha256::digest(shared_point.raw_secret_bytes()).into();
 
@@ -257,11 +308,11 @@ pub fn ecdh_shared_secret(
     let platform_point = EncodedPoint::from(&platform_pub);
     let x = platform_point
         .x()
-        .expect("uncompressed SEC1 point always has x")
+        .ok_or_else(|| SoloError::CryptoError("SEC1 point missing x coordinate".into()))?
         .to_vec();
     let y = platform_point
         .y()
-        .expect("uncompressed SEC1 point always has y")
+        .ok_or_else(|| SoloError::CryptoError("SEC1 point missing y coordinate".into()))?
         .to_vec();
 
     let cose_key = int_map([
@@ -272,10 +323,15 @@ pub fn ecdh_shared_secret(
         (-3, cbor_bytes(y)), // y
     ]);
 
-    (shared_secret, cose_key)
+    Ok((shared_secret, cose_key))
 }
 
 /// Perform CTAP2 getKeyAgreement (0x06, subcommand 0x02) to get the device's public key.
+///
+/// # Errors
+/// Propagates transport errors from the device, and returns an error if the response is
+/// malformed, the `keyAgreement` field is missing or not a CBOR map, or the device public
+/// key is invalid.
 pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let get_ka_cbor = create_key_agreement_cbor();
     let response = ctap2_call(hid, 0x06, &get_ka_cbor)?; // authenticatorClientPIN
@@ -283,13 +339,10 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     let resp_pairs = parse_cbor_map_response(&response, "getKeyAgreement")?;
 
     let key_agreement = find_key_agreement_response(&resp_pairs)?;
-    let cose_pairs = match key_agreement {
-        Value::Map(p) => p,
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "keyAgreement is not a CBOR map".into(),
-            ))
-        }
+    let Value::Map(cose_pairs) = key_agreement else {
+        return Err(SoloError::MalformedResponse(
+            "keyAgreement is not a CBOR map".into(),
+        ));
     };
 
     cose_to_public_key(cose_pairs)
@@ -298,6 +351,10 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
 /// Prompt the user for a PIN, validate it is non-empty, and acquire a PIN token from the device.
 ///
 /// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
+///
+/// # Errors
+/// Returns [`SoloError::IoError`] if the PIN prompt fails, [`SoloError::ProtocolError`] if
+/// the entered PIN is empty, or propagates errors from the getPINToken flow.
 pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
     let pin = rpassword::prompt_password("Enter PIN: ").map_err(SoloError::IoError)?;
     if pin.is_empty() {
@@ -310,12 +367,17 @@ pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
 ///
 /// Steps:
 ///   1. getKeyAgreement (subcommand 0x02) → device P-256 public key
-///   2. Generate ephemeral P-256 keypair, ECDH → shared_secret
+///   2. Generate ephemeral P-256 keypair, ECDH → `shared_secret`
 ///   3. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
 ///   4. getPINToken (subcommand 0x05) → decrypt response → pin token bytes
+///
+/// # Errors
+/// Propagates transport, crypto, and parsing errors from the flow, and returns
+/// [`SoloError::MalformedResponse`] if the `pinTokenEnc` (0x02) field is missing from the
+/// response.
 pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     let dev_pub_key = get_key_agreement(hid)?;
-    let session = ClientPinSession::new(&dev_pub_key);
+    let session = ClientPinSession::new(&dev_pub_key)?;
     let pin_hash_enc = session.encrypt_pin_hash(pin)?;
 
     let get_pin_token_cbor = int_map([
@@ -342,6 +404,10 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
 
 /// If a PIN is set on the device, prompt for it, fetch a PIN token, and
 /// compute `pinUvAuthParam` over `msg`. Returns `None` when no PIN is set.
+///
+/// # Errors
+/// Propagates errors from querying whether a PIN is set, prompting for and fetching the PIN
+/// token, and computing `pinUvAuthParam`.
 pub fn maybe_pin_uv_auth(hid: &impl HidDevice, msg: &[u8]) -> Result<Option<Vec<u8>>> {
     if !get_info_client_pin_set(hid)? {
         return Ok(None);
@@ -401,12 +467,20 @@ pub fn build_make_credential(
 /// Compute `pinUvAuthParam = HMAC-SHA-256(key, msg)[0..16]` (PIN/UV Auth Protocol One).
 ///
 /// `key` is the PIN token, or the shared secret for clientPIN subcommands.
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if `key` is not a valid HMAC key length or the HMAC
+/// output is too short to truncate.
 pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
     type HmacSha256 = Hmac<Sha256>;
     let mut hmac = HmacSha256::new_from_slice(key)
         .map_err(|_| SoloError::CryptoError("HMAC key length invalid".into()))?;
     hmac.update(msg);
-    Ok(hmac.finalize().into_bytes()[..16].to_vec())
+    let tag = hmac.finalize().into_bytes();
+    let truncated = tag
+        .get(..16)
+        .ok_or_else(|| SoloError::CryptoError("HMAC output too short".into()))?;
+    Ok(truncated.to_vec())
 }
 
 /// Represents an established shared secret with a CTAP2 device.
@@ -418,34 +492,58 @@ pub struct ClientPinSession {
 impl ClientPinSession {
     /// Establish a session by performing ECDH with the device's public key
     /// using a freshly generated ephemeral scalar.
-    pub fn new(dev_pub_key: &p256::PublicKey) -> Self {
-        let platform_scalar = p256::NonZeroScalar::random(&mut OsRng);
-        let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar);
-        Self {
+    ///
+    /// # Errors
+    /// Returns [`SoloError::CryptoError`] if the ECDH key agreement fails to produce a valid
+    /// platform public key.
+    pub fn new(dev_pub_key: &p256::PublicKey) -> Result<Self> {
+        let platform_scalar = p256::NonZeroScalar::generate_from_rng(&mut rand::rng());
+        let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar)?;
+        Ok(Self {
             shared_secret,
             ephemeral_pub_key,
-        }
+        })
     }
 
     /// Encrypt a PIN for setPin or changePin.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::CryptoError`] if the PIN cannot be padded or the AES-256-CBC
+    /// encryption fails.
     pub fn encrypt_pin(&self, pin: &str) -> Result<Vec<u8>> {
         let pin_bytes = pin.as_bytes();
         let mut padded_pin = [0u8; 64];
         let copy_len = pin_bytes.len().min(64);
-        padded_pin[..copy_len].copy_from_slice(&pin_bytes[..copy_len]);
+        let src = pin_bytes
+            .get(..copy_len)
+            .ok_or_else(|| SoloError::CryptoError("PIN slice out of range".into()))?;
+        padded_pin
+            .get_mut(..copy_len)
+            .ok_or_else(|| SoloError::CryptoError("PIN buffer out of range".into()))?
+            .copy_from_slice(src);
 
         aes256_cbc_encrypt(&self.shared_secret, &padded_pin)
     }
 
     /// Compute pinUvAuthParam for a message.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::CryptoError`] if the underlying HMAC computation fails.
     pub fn authenticate(&self, message: &[u8]) -> Result<Vec<u8>> {
         pin_uv_auth(&self.shared_secret, message)
     }
 
     /// Encrypt the PIN hash for getPinToken.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::CryptoError`] if the SHA-256 PIN hash is too short to truncate
+    /// or the AES-256-CBC encryption fails.
     pub fn encrypt_pin_hash(&self, pin: &str) -> Result<[u8; 16]> {
         let pin_hash_full = Sha256::digest(pin.as_bytes());
-        let enc = aes256_cbc_encrypt(&self.shared_secret, &pin_hash_full[..16])?;
+        let pin_hash_prefix = pin_hash_full
+            .get(..16)
+            .ok_or_else(|| SoloError::CryptoError("PIN hash too short".into()))?;
+        let enc = aes256_cbc_encrypt(&self.shared_secret, pin_hash_prefix)?;
 
         let mut pin_hash_enc = [0u8; 16];
         pin_hash_enc.copy_from_slice(&enc);
@@ -453,6 +551,10 @@ impl ClientPinSession {
     }
 
     /// Decrypt a PIN token from the device.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::MalformedResponse`] if `pin_token_enc` is empty or not a multiple
+    /// of 16 bytes, or [`SoloError::CryptoError`] if decryption fails.
     pub fn decrypt_pin_token(&self, pin_token_enc: &[u8]) -> Result<Vec<u8>> {
         if pin_token_enc.is_empty() || !pin_token_enc.len().is_multiple_of(16) {
             return Err(SoloError::MalformedResponse(format!(
@@ -467,6 +569,15 @@ impl ClientPinSession {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
     use ciborium::value::Value;
 
@@ -476,8 +587,7 @@ mod tests {
         let err = check_ctap_status(&[0x01, 0x01, 0x02], "test").unwrap_err();
         assert!(
             matches!(err, SoloError::AuthenticatorError { code: 0x01, .. }),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
         let err_empty = check_ctap_status(&[], "test").unwrap_err();
         assert!(err_empty.to_string().contains("Empty response"));
@@ -498,9 +608,9 @@ mod tests {
     fn test_client_pin_session_crypto_roundtrip() {
         // We need a dummy public key to initialize the session.
         // P-256 public key is 65 bytes (0x04 || X || Y)
-        let pub_key = p256::SecretKey::random(&mut OsRng).public_key();
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
 
-        let session = ClientPinSession::new(&pub_key);
+        let session = ClientPinSession::new(&pub_key).unwrap();
 
         // Test encryption/decryption of a token (multi-block)
         let _encrypted = session.encrypt_pin_hash("123456").unwrap(); // 16 bytes

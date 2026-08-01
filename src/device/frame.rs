@@ -17,49 +17,89 @@ pub enum FramePayload {
 
 impl CtapHidFrame {
     /// Encode the frame into exactly 65 bytes (report ID 0 + 64 bytes).
-    pub fn encode(&self) -> [u8; 65] {
+    ///
+    /// # Errors
+    /// Returns an error if the payload does not fit within a single HID frame.
+    pub fn encode(&self) -> Result<[u8; 65]> {
         let mut buf = [0u8; 65];
         // byte 0 = report id (always 0)
         buf[1..5].copy_from_slice(&self.channel_id);
         match &self.payload {
             FramePayload::Init { cmd, bcnt, data } => {
                 buf[5] = *cmd | 0x80; // set high bit for init frame
-                buf[6] = (bcnt >> 8) as u8;
-                buf[7] = *bcnt as u8;
+                let [bcnt_hi, bcnt_lo] = bcnt.to_be_bytes();
+                buf[6] = bcnt_hi;
+                buf[7] = bcnt_lo;
                 let n = data.len().min(57);
-                buf[8..8 + n].copy_from_slice(&data[..n]);
+                let end = 8usize
+                    .checked_add(n)
+                    .ok_or_else(|| SoloError::ProtocolError("frame length overflow".into()))?;
+                let src = data
+                    .get(..n)
+                    .ok_or_else(|| SoloError::ProtocolError("frame data too short".into()))?;
+                buf.get_mut(8..end)
+                    .ok_or_else(|| SoloError::ProtocolError("frame buffer overflow".into()))?
+                    .copy_from_slice(src);
             }
             FramePayload::Cont { seq, data } => {
                 buf[5] = *seq & 0x7F; // clear high bit for cont frame
                 let n = data.len().min(59);
-                buf[6..6 + n].copy_from_slice(&data[..n]);
+                let end = 6usize
+                    .checked_add(n)
+                    .ok_or_else(|| SoloError::ProtocolError("frame length overflow".into()))?;
+                let src = data
+                    .get(..n)
+                    .ok_or_else(|| SoloError::ProtocolError("frame data too short".into()))?;
+                buf.get_mut(6..end)
+                    .ok_or_else(|| SoloError::ProtocolError("frame buffer overflow".into()))?
+                    .copy_from_slice(src);
             }
         }
-        buf
+        Ok(buf)
     }
 
     /// Parse a 64-byte raw HID report (no report ID byte).
+    ///
+    /// # Errors
+    /// Returns an error if `raw` is shorter than the 7-byte frame header.
     pub fn parse(raw: &[u8]) -> Result<Self> {
         if raw.len() < 7 {
             return Err(SoloError::ProtocolError("HID frame too short".into()));
         }
         let mut channel_id = [0u8; 4];
-        channel_id.copy_from_slice(&raw[0..4]);
-        let byte4 = raw[4];
+        channel_id.copy_from_slice(
+            raw.get(..4)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?,
+        );
+        let byte4 = *raw
+            .get(4)
+            .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
         if byte4 & 0x80 != 0 {
             // Init frame
             let cmd = byte4 & 0x7F;
-            let bcnt = ((raw[5] as u16) << 8) | raw[6] as u16;
-            let data = raw[7..].to_vec();
-            Ok(CtapHidFrame {
+            let bcnt_hi = *raw
+                .get(5)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
+            let bcnt_lo = *raw
+                .get(6)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
+            let bcnt = u16::from_be_bytes([bcnt_hi, bcnt_lo]);
+            let data = raw
+                .get(7..)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?
+                .to_vec();
+            Ok(Self {
                 channel_id,
                 payload: FramePayload::Init { cmd, bcnt, data },
             })
         } else {
             // Continuation frame
             let seq = byte4 & 0x7F;
-            let data = raw[5..].to_vec();
-            Ok(CtapHidFrame {
+            let data = raw
+                .get(5..)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?
+                .to_vec();
+            Ok(Self {
                 channel_id,
                 payload: FramePayload::Cont { seq, data },
             })
@@ -74,6 +114,7 @@ pub const CTAPHID_MAX_PAYLOAD: usize = 57 + 128 * 59;
 /// Build the list of HID frames needed to send `data` with command `cmd`
 /// on channel `cid`.
 ///
+/// # Errors
 /// Returns an error if `data` exceeds the CTAPHID maximum message size
 /// (7609 bytes), which would otherwise silently truncate the 16-bit
 /// `bcnt` field and overflow the 7-bit continuation sequence number.
@@ -85,12 +126,15 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
             CTAPHID_MAX_PAYLOAD
         )));
     }
-    let bcnt = data.len() as u16;
+    let bcnt = u16::try_from(data.len())
+        .map_err(|_| SoloError::ProtocolError("CTAPHID payload length exceeds u16".into()))?;
     let mut frames = Vec::new();
 
     // First (init) frame: up to 57 bytes of payload
     let first_data = if data.len() > 57 {
-        data[..57].to_vec()
+        data.get(..57)
+            .ok_or_else(|| SoloError::ProtocolError("CTAPHID payload too short".into()))?
+            .to_vec()
     } else {
         data.to_vec()
     };
@@ -108,16 +152,26 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
         let mut offset = 57;
         let mut seq: u8 = 0;
         while offset < data.len() {
-            let end = (offset + 59).min(data.len());
+            let end = offset
+                .checked_add(59)
+                .ok_or_else(|| SoloError::ProtocolError("CTAPHID offset overflow".into()))?
+                .min(data.len());
             frames.push(CtapHidFrame {
                 channel_id: *cid,
                 payload: FramePayload::Cont {
                     seq,
-                    data: data[offset..end].to_vec(),
+                    data: data
+                        .get(offset..end)
+                        .ok_or_else(|| {
+                            SoloError::ProtocolError("CTAPHID slice out of range".into())
+                        })?
+                        .to_vec(),
                 },
             });
             offset = end;
-            seq += 1;
+            seq = seq
+                .checked_add(1)
+                .ok_or_else(|| SoloError::ProtocolError("CTAPHID sequence overflow".into()))?;
         }
     }
 
@@ -125,13 +179,20 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
 }
 
 /// Reassemble received frames into a complete message payload.
+///
+/// # Errors
+/// Returns an error if `frames` is empty, if the first frame is not an init
+/// frame, or if a continuation position contains an init frame.
 pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     if frames.is_empty() {
         return Err(SoloError::ProtocolError("No frames to reassemble".into()));
     }
-    let (cmd, bcnt, first_data) = match &frames[0].payload {
-        FramePayload::Init { cmd, bcnt, data } => (*cmd, *bcnt as usize, data.clone()),
-        _ => {
+    let first = frames
+        .first()
+        .ok_or_else(|| SoloError::ProtocolError("No frames to reassemble".into()))?;
+    let (cmd, bcnt, first_data) = match &first.payload {
+        FramePayload::Init { cmd, bcnt, data } => (*cmd, usize::from(*bcnt), data.clone()),
+        FramePayload::Cont { .. } => {
             return Err(SoloError::ProtocolError(
                 "First frame is not an init frame".into(),
             ))
@@ -139,7 +200,10 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     };
 
     let mut payload = first_data;
-    for frame in &frames[1..] {
+    for frame in frames
+        .get(1..)
+        .ok_or_else(|| SoloError::ProtocolError("frame index out of range".into()))?
+    {
         match &frame.payload {
             FramePayload::Cont { data, .. } => payload.extend_from_slice(data),
             FramePayload::Init { .. } => {
@@ -156,26 +220,33 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
 /// Build a bootloader command packet.
 /// Address is encoded little-endian (lower 24 bits); firmware ORs 0x08000000 back in.
 ///
+/// # Errors
 /// Returns an error if `data` is longer than the 16-bit big-endian length
 /// field can express (65535 bytes), which would otherwise be silently
 /// truncated.
 pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
-    if data.len() > u16::MAX as usize {
+    if data.len() > usize::from(u16::MAX) {
         return Err(SoloError::ProtocolError(format!(
             "Bootloader packet data too large: {} bytes (max {})",
             data.len(),
             u16::MAX
         )));
     }
-    let mut packet = Vec::with_capacity(10 + data.len());
+    let capacity = 10usize
+        .checked_add(data.len())
+        .ok_or_else(|| SoloError::ProtocolError("bootloader packet capacity overflow".into()))?;
+    let mut packet = Vec::with_capacity(capacity);
     packet.push(cmd);
-    packet.push((addr & 0xFF) as u8);
-    packet.push(((addr >> 8) & 0xFF) as u8);
-    packet.push(((addr >> 16) & 0xFF) as u8);
+    let [addr0, addr1, addr2, _] = addr.to_le_bytes();
+    packet.push(addr0);
+    packet.push(addr1);
+    packet.push(addr2);
     packet.extend_from_slice(&SOLO_TAG);
-    let len = data.len() as u16;
-    packet.push((len >> 8) as u8);
-    packet.push(len as u8);
+    let len = u16::try_from(data.len())
+        .map_err(|_| SoloError::ProtocolError("bootloader packet length exceeds u16".into()))?;
+    let [len_hi, len_lo] = len.to_be_bytes();
+    packet.push(len_hi);
+    packet.push(len_lo);
     packet.extend_from_slice(data);
     Ok(packet)
 }
@@ -185,6 +256,15 @@ pub const DFU_CHUNK_SIZE: u32 = 2048;
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     #[test]
@@ -196,10 +276,10 @@ mod tests {
             payload: FramePayload::Init {
                 cmd: 0x06, // CTAPHID_INIT without high bit
                 bcnt: 3,
-                data: data.clone(),
+                data,
             },
         };
-        let encoded = frame.encode();
+        let encoded = frame.encode().unwrap();
         assert_eq!(encoded[0], 0); // report ID
         assert_eq!(&encoded[1..5], &cid);
         assert_eq!(encoded[5], 0x06 | 0x80); // high bit set
@@ -216,7 +296,7 @@ mod tests {
                 assert_eq!(bcnt, 3);
                 assert_eq!(&d[..3], &[0xAA, 0xBB, 0xCC]);
             }
-            _ => panic!("Expected init frame"),
+            FramePayload::Cont { .. } => panic!("Expected init frame"),
         }
     }
 
@@ -226,12 +306,9 @@ mod tests {
         let data = vec![0x01, 0x02, 0x03];
         let frame = CtapHidFrame {
             channel_id: cid,
-            payload: FramePayload::Cont {
-                seq: 2,
-                data: data.clone(),
-            },
+            payload: FramePayload::Cont { seq: 2, data },
         };
-        let encoded = frame.encode();
+        let encoded = frame.encode().unwrap();
         assert_eq!(encoded[5], 0x02); // seq, no high bit
         assert_eq!(&encoded[6..9], &[0x01, 0x02, 0x03]);
 
@@ -241,7 +318,7 @@ mod tests {
                 assert_eq!(seq, 2);
                 assert_eq!(&d[..3], &[0x01, 0x02, 0x03]);
             }
-            _ => panic!("Expected cont frame"),
+            FramePayload::Init { .. } => panic!("Expected cont frame"),
         }
     }
 
@@ -253,7 +330,7 @@ mod tests {
         assert_eq!(frames.len(), 1);
         match &frames[0].payload {
             FramePayload::Init { bcnt, .. } => assert_eq!(*bcnt, 10),
-            _ => panic!(),
+            FramePayload::Cont { .. } => panic!(),
         }
     }
 
@@ -268,21 +345,21 @@ mod tests {
                 assert_eq!(*bcnt, 120);
                 assert_eq!(d.len(), 57);
             }
-            _ => panic!(),
+            FramePayload::Cont { .. } => panic!(),
         }
         match &frames[1].payload {
             FramePayload::Cont { seq, data: d } => {
                 assert_eq!(*seq, 0);
                 assert_eq!(d.len(), 59);
             }
-            _ => panic!(),
+            FramePayload::Init { .. } => panic!(),
         }
         match &frames[2].payload {
             FramePayload::Cont { seq, data: d } => {
                 assert_eq!(*seq, 1);
                 assert_eq!(d.len(), 4);
             }
-            _ => panic!(),
+            FramePayload::Init { .. } => panic!(),
         }
     }
 
@@ -290,7 +367,7 @@ mod tests {
     fn test_bootloader_packet() {
         // Address 0x08001000: firmware strips 0x08000000, leaving offset 0x001000.
         // Little-endian 3-byte encoding of 0x001000: [0x00, 0x10, 0x00]
-        let pkt = build_bootloader_packet(0x40, 0x08001000, &[0xDE, 0xAD]).unwrap();
+        let pkt = build_bootloader_packet(0x40, 0x0800_1000, &[0xDE, 0xAD]).unwrap();
         assert_eq!(pkt[0], 0x40); // cmd
         assert_eq!(&pkt[1..4], &[0x00, 0x10, 0x00]); // addr little-endian (LSB first)
         assert_eq!(&pkt[4..8], &SOLO_TAG); // tag
@@ -300,11 +377,11 @@ mod tests {
 
         // Address where byte order matters: 0x08010000 → offset 0x010000
         // Little-endian: [0x00, 0x00, 0x01]  (NOT [0x01, 0x00, 0x00])
-        let pkt2 = build_bootloader_packet(0x40, 0x08010000, &[]).unwrap();
+        let pkt2 = build_bootloader_packet(0x40, 0x0801_0000, &[]).unwrap();
         assert_eq!(&pkt2[1..4], &[0x00, 0x00, 0x01]);
 
         // 0x08012345 → offset 0x012345 → LE: [0x45, 0x23, 0x01]
-        let pkt3 = build_bootloader_packet(0x40, 0x08012345, &[]).unwrap();
+        let pkt3 = build_bootloader_packet(0x40, 0x0801_2345, &[]).unwrap();
         assert_eq!(&pkt3[1..4], &[0x45, 0x23, 0x01]);
     }
 
@@ -319,14 +396,14 @@ mod tests {
                 assert_eq!(*bcnt, CTAPHID_MAX_PAYLOAD as u16);
                 assert_eq!(d.len(), 57);
             }
-            _ => panic!("Expected init frame"),
+            FramePayload::Cont { .. } => panic!("Expected init frame"),
         }
         match &frames[128].payload {
             FramePayload::Cont { seq, data: d } => {
                 assert_eq!(*seq, 127);
                 assert_eq!(d.len(), 59);
             }
-            _ => panic!("Expected cont frame"),
+            FramePayload::Init { .. } => panic!("Expected cont frame"),
         }
     }
 
@@ -341,7 +418,7 @@ mod tests {
     #[test]
     fn test_bootloader_packet_max_data_ok() {
         let data = vec![0xA5; u16::MAX as usize];
-        let pkt = build_bootloader_packet(0x40, 0x08000000, &data).unwrap();
+        let pkt = build_bootloader_packet(0x40, 0x0800_0000, &data).unwrap();
         assert_eq!(pkt[8], 0xFF); // len high
         assert_eq!(pkt[9], 0xFF); // len low
         assert_eq!(pkt.len(), 10 + u16::MAX as usize);
@@ -350,7 +427,7 @@ mod tests {
     #[test]
     fn test_bootloader_packet_oversized_data_err() {
         let data = vec![0xA5; u16::MAX as usize + 1];
-        let err = build_bootloader_packet(0x40, 0x08000000, &data).unwrap_err();
+        let err = build_bootloader_packet(0x40, 0x0800_0000, &data).unwrap_err();
         assert!(matches!(err, SoloError::ProtocolError(_)));
     }
 }

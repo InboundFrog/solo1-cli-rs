@@ -26,8 +26,8 @@ hidapi = "2"
 hmac = "0.13"
 ihex = "3"
 indicatif = "0.18"
-p256 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8", "ecdh"] }
-rand = "0.8.6"
+p256 = { version = "0.14", features = ["ecdsa", "pem", "pkcs8", "ecdh"] }
+rand = "0.10.2"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
 rpassword = "7"
 rusb = "0.9"
@@ -45,3 +45,21 @@ libc = "0.2"
 tempfile = "3"
 rcgen = "0.14"
 time = "0.3"
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+# Deny panics
+unwrap_used = "deny"
+expect_used = "deny"
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+unreachable = "deny"
+unimplemented = "deny"
+unchecked_time_subtraction = "deny"
+todo = "deny"
+string_slice = "deny"
+panic_in_result_fn = "deny"
+panic = "deny"
+exit = "deny"
+as_conversions = "deny"

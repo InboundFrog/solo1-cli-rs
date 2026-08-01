@@ -6,18 +6,31 @@ use sha2::{Digest, Sha256};
 
 use crate::device::{HidDevice, CMD_DONE, CMD_WRITE};
 use crate::dfu::DfuDevice;
-use crate::error::Result;
+use crate::error::{Result, SoloError};
 use crate::firmware::{self, FirmwareJson};
 use crate::vlog;
 
 /// Size of each flash write sent to the bootloader.
 const CHUNK_SIZE: usize = 256;
 
+/// Flash-address stride between consecutive chunks, as a `u32`.
+///
+/// Kept as a dedicated `u32` constant (rather than casting `CHUNK_SIZE`) so
+/// address arithmetic needs no `usize -> u32` conversion. Must equal
+/// `CHUNK_SIZE`; the assertion below enforces that at compile time.
+const CHUNK_STRIDE: u32 = 256;
+const _: () = assert!(CHUNK_STRIDE == 256 && CHUNK_SIZE == 256);
+
 /// Write `firmware` to the device in 256-byte chunks starting at `base_addr`,
-/// then send CMD_DONE with `signature` so the bootloader verifies and reboots.
+/// then send `CMD_DONE` with `signature` so the bootloader verifies and reboots.
 ///
 /// The device must already be in bootloader mode. `finalize_msg` is printed
-/// between the write loop and CMD_DONE (callers use different wording).
+/// between the write loop and `CMD_DONE` (callers use different wording).
+///
+/// # Errors
+/// Returns an error if the firmware size cannot be represented for the progress
+/// bar, if the progress-bar template is invalid, or if any bootloader write or
+/// the final `CMD_DONE` command fails.
 pub fn write_firmware(
     hid: &impl HidDevice,
     base_addr: u32,
@@ -32,20 +45,26 @@ pub fn write_firmware(
         base_addr
     );
 
-    let pb = ProgressBar::new(firmware.len() as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}")
-            .unwrap()
-            .progress_chars("##-"),
-    );
+    let total_bytes = u64::try_from(firmware.len())
+        .map_err(|_| SoloError::ProtocolError("firmware size too large".into()))?;
+    let pb = ProgressBar::new(total_bytes);
+    let style = ProgressStyle::default_bar()
+        .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}")
+        .map_err(|e| SoloError::ProtocolError(format!("progress template: {e}")))?
+        .progress_chars("##-");
+    pb.set_style(style);
 
     let mut offset = 0usize;
     for (chunk_num, (addr, len)) in compute_chunk_addresses(base_addr, firmware.len())
         .into_iter()
         .enumerate()
     {
-        let chunk = &firmware[offset..offset + len];
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| SoloError::ProtocolError("chunk offset overflow".into()))?;
+        let chunk = firmware
+            .get(offset..end)
+            .ok_or_else(|| SoloError::ProtocolError("chunk out of range".into()))?;
         vlog!(
             "chunk #{} addr=0x{:08X} len={}",
             chunk_num,
@@ -56,13 +75,15 @@ pub fn write_firmware(
         if !resp.is_empty() {
             vlog!("  write response: {}", hex::encode(&resp));
         }
-        pb.inc(chunk.len() as u64);
-        offset += len;
+        let inc = u64::try_from(chunk.len())
+            .map_err(|_| SoloError::ProtocolError("chunk size too large".into()))?;
+        pb.inc(inc);
+        offset = end;
     }
     pb.finish_with_message("written");
 
     // CMD_DONE sends the ECDSA signature; bootloader verifies and reboots on success
-    println!("{}", finalize_msg);
+    println!("{finalize_msg}");
     vlog!("Sending CMD_DONE with {} byte signature", signature.len());
     let done_resp = hid.send_bootloader_cmd(CMD_DONE, 0, signature)?;
     vlog!("done response: {}", hex::encode(&done_resp));
@@ -71,13 +92,17 @@ pub fn write_firmware(
 
 /// Program via the Solo bootloader (firmware.json format).
 /// The device must already be in bootloader mode when this is called.
+///
+/// # Errors
+/// Returns an error if the firmware JSON cannot be loaded or parsed, if
+/// selecting the signature fails, or if writing the firmware fails.
 pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Result<()> {
     vlog!("Loading firmware JSON: {:?}", firmware_json);
     let fw = FirmwareJson::from_file(firmware_json)?;
     let (flash_start, firmware_bytes) = fw.firmware_binary()?;
 
     println!("Firmware size: {} bytes", firmware_bytes.len());
-    println!("Flash start:   0x{:08X}", flash_start);
+    println!("Flash start:   0x{flash_start:08X}");
     vlog!(
         "Firmware SHA256: {}",
         hex::encode(Sha256::digest(&firmware_bytes))
@@ -107,7 +132,8 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 /// Compute the number of 256-byte chunks needed to cover `firmware_len` bytes.
 ///
 /// Used by `write_firmware` for the verbose chunk-count display.
-pub fn firmware_chunk_count(firmware_len: usize) -> usize {
+#[must_use]
+pub const fn firmware_chunk_count(firmware_len: usize) -> usize {
     firmware_len.div_ceil(CHUNK_SIZE)
 }
 
@@ -116,24 +142,34 @@ pub fn firmware_chunk_count(firmware_len: usize) -> usize {
 /// Returns a `Vec` of `(flash_address, chunk_length)` pairs in the order
 /// that the bootloader receives them. `write_firmware` iterates this
 /// sequence directly, so the tests below exercise the shipped code path.
+#[must_use]
 pub fn compute_chunk_addresses(flash_start: u32, firmware_len: usize) -> Vec<(u32, usize)> {
     let mut result = Vec::new();
     let mut offset = 0usize;
     let mut addr = flash_start;
     while offset < firmware_len {
-        let end = (offset + CHUNK_SIZE).min(firmware_len);
-        result.push((addr, end - offset));
+        // `saturating_add` cannot change the result: it only differs from `+`
+        // on overflow, and any overflowed value is >= `firmware_len`, so `.min`
+        // clamps it back to `firmware_len` exactly as plain `+` would.
+        let end = offset.saturating_add(CHUNK_SIZE).min(firmware_len);
+        // `end > offset` on every iteration (loop guard + non-zero stride), so
+        // `saturating_sub` yields the same value as `end - offset`.
+        result.push((addr, end.saturating_sub(offset)));
         offset = end;
-        addr += CHUNK_SIZE as u32;
+        addr = addr.saturating_add(CHUNK_STRIDE);
     }
     result
 }
 
 /// Program via ST DFU (firmware.hex format).
+///
+/// # Errors
+/// Returns an error if the HEX file cannot be parsed, if the DFU device cannot
+/// be opened, or if DFU programming fails.
 pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
     use crate::firmware::parse_hex_file;
 
-    println!("Parsing firmware HEX file: {:?}", firmware_hex);
+    println!("Parsing firmware HEX file: {}", firmware_hex.display());
     let (base_addr, firmware_bytes) = parse_hex_file(firmware_hex)?;
     println!(
         "Base address: 0x{:08X}, size: {} bytes",
@@ -152,6 +188,15 @@ pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     // write_firmware and cmd_program_dfu require a live device or DFU
@@ -201,39 +246,39 @@ mod tests {
 
     #[test]
     fn test_addresses_exact_two_chunks() {
-        let start: u32 = 0x08005000;
+        let start: u32 = 0x0800_5000;
         let chunks = compute_chunk_addresses(start, 512);
         assert_eq!(chunks.len(), 2);
         // First chunk: starts at flash_start, full 256 bytes
-        assert_eq!(chunks[0], (0x08005000, 256));
+        assert_eq!(chunks[0], (0x0800_5000, 256));
         // Second chunk: address advances by 256, full 256 bytes
-        assert_eq!(chunks[1], (0x08005100, 256));
+        assert_eq!(chunks[1], (0x0800_5100, 256));
     }
 
     #[test]
     fn test_addresses_partial_last_chunk() {
         // 300-byte firmware: first chunk full (256), second chunk partial (44)
-        let start: u32 = 0x08005000;
+        let start: u32 = 0x0800_5000;
         let chunks = compute_chunk_addresses(start, 300);
         assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0], (0x08005000, 256));
+        assert_eq!(chunks[0], (0x0800_5000, 256));
         // Address still advances by the full CHUNK_SIZE (256), not by 44
-        assert_eq!(chunks[1], (0x08005100, 44));
+        assert_eq!(chunks[1], (0x0800_5100, 44));
     }
 
     #[test]
     fn test_addresses_single_byte_firmware() {
         // One byte of firmware → one chunk of length 1 at flash_start
-        let start: u32 = 0x08005000;
+        let start: u32 = 0x0800_5000;
         let chunks = compute_chunk_addresses(start, 1);
         assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0], (0x08005000, 1));
+        assert_eq!(chunks[0], (0x0800_5000, 1));
     }
 
     #[test]
     fn test_addresses_empty_firmware() {
         // No bytes → no chunks → write loop never executes
-        let chunks = compute_chunk_addresses(0x08005000, 0);
+        let chunks = compute_chunk_addresses(0x0800_5000, 0);
         assert!(chunks.is_empty());
     }
 
@@ -241,12 +286,12 @@ mod tests {
     fn test_addresses_stride_is_always_256() {
         // Regardless of how many bytes the last chunk contains, the address
         // stride must always be 256 to match the bootloader's expectation.
-        let start: u32 = 0x08000000;
+        let start: u32 = 0x0800_0000;
         let chunks = compute_chunk_addresses(start, 600); // 256+256+88
         assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].0, 0x08000000);
-        assert_eq!(chunks[1].0, 0x08000100); // +256
-        assert_eq!(chunks[2].0, 0x08000200); // +256 again, even though chunk 2 was partial
+        assert_eq!(chunks[0].0, 0x0800_0000);
+        assert_eq!(chunks[1].0, 0x0800_0100); // +256
+        assert_eq!(chunks[2].0, 0x0800_0200); // +256 again, even though chunk 2 was partial
         assert_eq!(chunks[2].1, 88);
     }
 
@@ -254,7 +299,7 @@ mod tests {
     fn test_addresses_coverage_sums_to_firmware_len() {
         // All chunk lengths must add up to the total firmware length.
         let firmware_len = 1000;
-        let chunks = compute_chunk_addresses(0x08005000, firmware_len);
+        let chunks = compute_chunk_addresses(0x0800_5000, firmware_len);
         let total: usize = chunks.iter().map(|(_, len)| len).sum();
         assert_eq!(total, firmware_len);
     }

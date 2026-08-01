@@ -12,6 +12,12 @@ use crate::error::{Result, SoloError};
 ///   5. AES-256-CBC encrypt padded new PIN → newPinEnc
 ///   6. HMAC-SHA-256(shared_secret, newPinEnc || pinHashEnc)[0..16] → pinUvAuthParam
 ///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
+///
+/// # Errors
+/// Returns an error if reading the device version fails, if a PIN prompt cannot
+/// be read, if the new PINs do not match, if either PIN is shorter than 4
+/// characters, if key agreement or encryption fails, or if the changePin
+/// command is rejected by the device.
 pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
     let old_pin = rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?;
@@ -29,7 +35,7 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     }
 
     let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
-    let session = crate::ctap2::ClientPinSession::new(&dev_pub_key);
+    let session = crate::ctap2::ClientPinSession::new(&dev_pub_key)?;
 
     let pin_hash_enc = session.encrypt_pin_hash(&old_pin)?;
     let new_pin_enc = session.encrypt_pin(&new_pin)?;
@@ -41,7 +47,7 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let change_pin_cbor = int_map([
         (0x01, cbor_int(1)),                       // pinUvAuthProtocol = 1
         (0x02, cbor_int(4)),                       // subCommand = changePin (0x04)
-        (0x03, session.ephemeral_pub_key.clone()), // keyAgreement
+        (0x03, session.ephemeral_pub_key),         // keyAgreement
         (0x04, cbor_bytes(pin_uv_auth_param)),     // pinUvAuthParam (16 bytes)
         (0x05, cbor_bytes(new_pin_enc)),           // newPinEnc (64 bytes)
         (0x06, cbor_bytes(pin_hash_enc.to_vec())), // pinHashEnc (16 bytes)
@@ -64,6 +70,12 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 ///   4. AES-256-CBC encrypt padded PIN → newPinEnc
 ///   5. HMAC-SHA-256(shared_secret, newPinEnc)[0..16] → pinUvAuthParam
 ///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
+///
+/// # Errors
+/// Returns an error if reading the device version fails, if a PIN prompt cannot
+/// be read, if the new PINs do not match, if the PIN is shorter than 4
+/// characters, if key agreement or encryption fails, or if the setPin command
+/// is rejected by the device.
 pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
     let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
@@ -79,17 +91,17 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     }
 
     let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
-    let session = crate::ctap2::ClientPinSession::new(&dev_pub_key);
+    let session = crate::ctap2::ClientPinSession::new(&dev_pub_key)?;
 
     let new_pin_enc = session.encrypt_pin(&new_pin)?;
     let pin_uv_auth_param = session.authenticate(&new_pin_enc)?;
 
     let set_pin_cbor = int_map([
-        (0x01, cbor_int(1)),                       // pinUvAuthProtocol = 1
-        (0x02, cbor_int(3)),                       // subCommand = setPin
-        (0x03, session.ephemeral_pub_key.clone()), // keyAgreement
-        (0x04, cbor_bytes(pin_uv_auth_param)),     // pinUvAuthParam
-        (0x05, cbor_bytes(new_pin_enc)),           // newPinEnc
+        (0x01, cbor_int(1)),                   // pinUvAuthProtocol = 1
+        (0x02, cbor_int(3)),                   // subCommand = setPin
+        (0x03, session.ephemeral_pub_key),     // keyAgreement
+        (0x04, cbor_bytes(pin_uv_auth_param)), // pinUvAuthParam
+        (0x05, cbor_bytes(new_pin_enc)),       // newPinEnc
     ]);
 
     // authenticatorClientPIN (0x06)

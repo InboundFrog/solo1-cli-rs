@@ -4,19 +4,32 @@ use crate::device::{HidDevice, CMD_RNG};
 use crate::error::{Result, SoloError};
 
 /// Get N random bytes from the device, return as hex string.
+///
+/// # Errors
+/// Returns an error if `n` exceeds 255, if the device request fails, or if the
+/// device returns a shorter response than expected.
 pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
     if n > 255 {
         return Err(SoloError::ProtocolError(format!(
-            "Number of bytes must be between 0 and 255, you passed {}",
-            n
+            "Number of bytes must be between 0 and 255, you passed {n}"
         )));
     }
-    let request = [n as u8];
+    let n_u8 =
+        u8::try_from(n).map_err(|_| SoloError::ProtocolError("Byte count exceeds 255".into()))?;
+    let request = [n_u8];
     let response = hid.send_recv(CMD_RNG, &request)?;
-    Ok(hex::encode(&response[..response.len().min(n)]))
+    let take = response.len().min(n);
+    let slice = response
+        .get(..take)
+        .ok_or_else(|| SoloError::ProtocolError("RNG response slice out of range".into()))?;
+    Ok(hex::encode(slice))
 }
 
 /// Stream raw random bytes to stdout.
+///
+/// # Errors
+/// Loops indefinitely, returning an error if a device request fails or if
+/// writing to or flushing stdout fails.
 pub fn cmd_rng_raw(hid: &impl HidDevice) -> Result<()> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -32,29 +45,45 @@ pub fn cmd_rng_raw(hid: &impl HidDevice) -> Result<()> {
 ///
 /// Uses the RNDADDENTROPY ioctl (0x40085203) to properly inform the kernel
 /// of the entropy being added, rather than just writing bytes. The struct
-/// sent to the ioctl is: entropy_count (i32) | buf_size (i32) | data (bytes).
-/// entropy_count = count * 2 (2 bits per byte, pessimistic estimate).
+/// sent to the ioctl is: `entropy_count` (i32) | `buf_size` (i32) | `data` (bytes).
+/// `entropy_count` = count * 2 (2 bits per byte, pessimistic estimate).
+///
+/// # Errors
+/// Returns an error if the device request fails, if the entropy byte counts
+/// cannot be represented as `i32`, or if opening `/dev/random` or issuing the
+/// `RNDADDENTROPY` ioctl fails.
 #[cfg(target_os = "linux")]
 pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
 
     const ENTROPY_INFO: &str = "/proc/sys/kernel/random/entropy_avail";
-    const RNDADDENTROPY: libc::c_ulong = 0x40085203;
+    const RNDADDENTROPY: libc::c_ulong = 0x4008_5203;
     const COUNT: usize = 64;
     const ENTROPY_BITS_PER_BYTE: i32 = 2;
 
     let before = std::fs::read_to_string(ENTROPY_INFO).unwrap_or_else(|_| "unknown".into());
     println!("Entropy before: 0x{}", before.trim());
 
-    let request = [COUNT as u8];
+    let count_u8 =
+        u8::try_from(COUNT).map_err(|_| SoloError::ProtocolError("Count exceeds 255".into()))?;
+    let request = [count_u8];
     let response = hid.send_recv(CMD_RNG, &request)?;
-    let data = &response[..response.len().min(COUNT)];
+    let take = response.len().min(COUNT);
+    let data = response
+        .get(..take)
+        .ok_or_else(|| SoloError::ProtocolError("RNG response slice out of range".into()))?;
 
     // Build rand_pool_info struct: entropy_count (i32), buf_size (i32), buf (bytes)
-    let mut buf = Vec::with_capacity(8 + data.len());
-    let entropy_count: i32 = data.len() as i32 * ENTROPY_BITS_PER_BYTE;
-    let buf_size: i32 = data.len() as i32;
+    let capacity = 8usize
+        .checked_add(data.len())
+        .ok_or_else(|| SoloError::ProtocolError("Entropy buffer capacity overflow".into()))?;
+    let mut buf = Vec::with_capacity(capacity);
+    let buf_size: i32 = i32::try_from(data.len())
+        .map_err(|_| SoloError::ProtocolError("Entropy buffer size overflow".into()))?;
+    let entropy_count: i32 = buf_size
+        .checked_mul(ENTROPY_BITS_PER_BYTE)
+        .ok_or_else(|| SoloError::ProtocolError("Entropy count overflow".into()))?;
     buf.extend_from_slice(&entropy_count.to_ne_bytes());
     buf.extend_from_slice(&buf_size.to_ne_bytes());
     buf.extend_from_slice(data);
@@ -70,13 +99,27 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     Ok(())
 }
 
+/// Feed entropy to the kernel RNG (Linux only).
+///
+/// # Errors
+/// Always returns an error: feeding kernel entropy is unsupported on non-Linux
+/// platforms.
 #[cfg(not(target_os = "linux"))]
-pub fn cmd_rng_feedkernel(_hid: &impl HidDevice) -> Result<()> {
+pub const fn cmd_rng_feedkernel(_hid: &impl HidDevice) -> Result<()> {
     Err(SoloError::UnsupportedPlatform)
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
     use crate::device::mock::MockDevice;
     use crate::error::SoloError;
@@ -132,12 +175,11 @@ mod tests {
         let msg = err.to_string();
         assert!(
             msg.contains("256"),
-            "error should mention the bad value: {}",
-            msg
+            "error should mention the bad value: {msg}"
         );
     }
 
-    /// Device timeout propagates as SoloError::Timeout.
+    /// Device timeout propagates as `SoloError::Timeout`.
     #[test]
     fn test_cmd_rng_hexbytes_timeout() {
         let device = MockDevice::new(vec![]);

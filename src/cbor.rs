@@ -3,12 +3,14 @@ use ciborium::value::Value;
 use crate::error::{Result, SoloError};
 
 /// Extract a CBOR map's key-value pairs, or return an error with context.
+///
+/// # Errors
+/// Returns an error if `v` is not a `Value::Map`.
 pub fn expect_map(v: Value, ctx: &str) -> Result<Vec<(Value, Value)>> {
     match v {
         Value::Map(pairs) => Ok(pairs),
         _ => Err(SoloError::ProtocolError(format!(
-            "{}: expected a CBOR map",
-            ctx
+            "{ctx}: expected a CBOR map"
         ))),
     }
 }
@@ -17,6 +19,7 @@ pub fn expect_map(v: Value, ctx: &str) -> Result<Vec<(Value, Value)>> {
 ///
 /// Matches keys stored as either signed or unsigned `Value::Integer` whose
 /// numeric value equals `key` when interpreted as `i64`.
+#[must_use]
 pub fn find_int_key(pairs: &[(Value, Value)], key: i64) -> Option<&Value> {
     pairs.iter().find_map(|(k, v)| {
         if let Value::Integer(i) = k {
@@ -33,6 +36,7 @@ pub fn find_int_key(pairs: &[(Value, Value)], key: i64) -> Option<&Value> {
 ///
 /// Returns `None` if the key is absent, the value is not an integer, or the
 /// integer does not fit in `u64`.
+#[must_use]
 pub fn find_uint(pairs: &[(Value, Value)], key: i64) -> Option<u64> {
     match find_int_key(pairs, key)? {
         Value::Integer(i) => (*i).try_into().ok(),
@@ -41,6 +45,7 @@ pub fn find_uint(pairs: &[(Value, Value)], key: i64) -> Option<u64> {
 }
 
 /// Find a value in a text-keyed CBOR map by key name.
+#[must_use]
 pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
     pairs.iter().find_map(|(k, v)| {
         if let Value::Text(s) = k {
@@ -53,21 +58,23 @@ pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a V
 }
 
 /// Require a value by integer key; error with context if missing.
+///
+/// # Errors
+/// Returns an error if no entry with integer key `key` is present.
 pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> Result<&'a Value> {
-    find_int_key(pairs, key).ok_or_else(|| {
-        SoloError::ProtocolError(format!("{}: key {} missing in CBOR map", ctx, key))
-    })
+    find_int_key(pairs, key)
+        .ok_or_else(|| SoloError::ProtocolError(format!("{ctx}: key {key} missing in CBOR map")))
 }
 
 /// Extract bytes from a required integer-keyed entry.
 ///
+/// # Errors
 /// Returns `Err` if the key is absent or if its value is not `Value::Bytes`.
 pub fn require_bytes(pairs: &[(Value, Value)], key: i64, ctx: &str) -> Result<Vec<u8>> {
     match require_int_key(pairs, key, ctx)? {
         Value::Bytes(b) => Ok(b.clone()),
         _ => Err(SoloError::ProtocolError(format!(
-            "{}: key {} is not bytes",
-            ctx, key
+            "{ctx}: key {key} is not bytes"
         ))),
     }
 }
@@ -88,6 +95,7 @@ pub fn cbor_bytes(b: impl Into<Vec<u8>>) -> Value {
 }
 
 /// Wrap an `i64` as a `Value::Integer`.
+#[must_use]
 pub fn cbor_int(i: i64) -> Value {
     Value::Integer(i.into())
 }
@@ -99,6 +107,15 @@ pub fn cbor_text(s: impl Into<String>) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     fn sample_pairs() -> Vec<(Value, Value)> {

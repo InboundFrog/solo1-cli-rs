@@ -7,14 +7,20 @@ use crate::error::{Result, SoloError};
 
 /// Run a hash probe on the device.
 ///
-/// Sends a CBOR-encoded command to CMD_PROBE (0x70):
-///   {"subcommand": hash_type_str, "data": file_bytes}
+/// Sends a CBOR-encoded command to `CMD_PROBE` (0x70):
+///   {"subcommand": `hash_type_str`, "data": `file_bytes`}
 ///
 /// Valid hash types (case-insensitive input, sent as canonical form):
 ///   SHA256, SHA512, RSA2048, Ed25519
 ///
 /// File must be <= 6144 bytes.
+///
+/// # Errors
+/// Returns an error if `hash_type` is not a recognised hash type, if the file
+/// cannot be read, if the file exceeds 6144 bytes, or if the device request
+/// fails.
 pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Result<()> {
+    use ciborium::value::Value;
     // Normalize hash type to the canonical form expected by the device
     let hash_type_str = normalize_hash_type(hash_type).ok_or_else(|| {
         SoloError::DeviceError(format!(
@@ -32,7 +38,6 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
     }
 
     // CBOR-encode: {"subcommand": hash_type_str, "data": file_bytes}
-    use ciborium::value::Value;
     let cbor_val = Value::Map(vec![
         (
             Value::Text("subcommand".into()),
@@ -45,13 +50,19 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
 
     let response = hid.send_recv(CMD_PROBE, &cbor_bytes)?;
     let result_hex = hex::encode(&response);
-    println!("{}", result_hex);
+    println!("{result_hex}");
 
     if hash_type_str == "Ed25519" {
         // First 64 bytes = signature (128 hex chars), rest = content
         if response.len() > 64 {
-            println!("content: {:?}", &response[64..]);
-            println!("signature: {}", &result_hex[..128.min(result_hex.len())]);
+            let content = response
+                .get(64..)
+                .ok_or_else(|| SoloError::ProtocolError("Probe response too short".into()))?;
+            println!("content: {content:?}");
+            let sig_hex = result_hex
+                .get(..128.min(result_hex.len()))
+                .unwrap_or(result_hex.as_str());
+            println!("signature: {sig_hex}");
         }
     }
 
@@ -75,10 +86,15 @@ fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
 ///
 /// Protocol:
 ///   1. SHA-256 the file contents → clientDataHash
-///   2. getAssertion (0x02) with rp_id, clientDataHash, allowList[credential_id]
+///   2. getAssertion (0x02) with `rp_id`, clientDataHash, allowList[`credential_id`]
 ///   3. Extract signature (key 0x03) from the CBOR response
 ///   4. Save raw signature bytes to `{filename}.sig`
 ///   5. Print signature hex to stdout
+///
+/// # Errors
+/// Returns an error if `credential_id` is not valid hex, if the file cannot be
+/// read, if the getAssertion request fails, if the response is missing the
+/// signature, or if writing the `.sig` file fails.
 pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path) -> Result<()> {
     use ciborium::value::Value;
 
@@ -147,6 +163,15 @@ fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
@@ -169,9 +194,7 @@ mod tests {
             assert_eq!(
                 normalize_hash_type(input),
                 Some(*expected),
-                "hash type '{}' should normalize to '{}'",
-                input,
-                expected
+                "hash type '{input}' should normalize to '{expected}'"
             );
         }
     }
@@ -182,13 +205,12 @@ mod tests {
             assert_eq!(
                 normalize_hash_type(input),
                 None,
-                "hash type '{}' should be rejected",
-                input
+                "hash type '{input}' should be rejected"
             );
         }
     }
 
-    /// cmd_probe must reject an unknown hash type before touching the file or device.
+    /// `cmd_probe` must reject an unknown hash type before touching the file or device.
     #[test]
     fn test_cmd_probe_rejects_unknown_hash_type() {
         use crate::device::mock::MockDevice;
@@ -197,8 +219,7 @@ mod tests {
         let err = cmd_probe(&device, "md5", Path::new("/nonexistent")).unwrap_err();
         assert!(
             matches!(err, SoloError::DeviceError(_)),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
         assert!(err.to_string().contains("Unknown hash type"));
     }
@@ -241,8 +262,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             matches!(err, SoloError::AuthenticatorError { code: 0x01, .. }),
-            "unexpected error: {}",
-            err
+            "unexpected error: {err}"
         );
     }
 }

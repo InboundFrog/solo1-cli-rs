@@ -9,6 +9,10 @@ use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
+///
+/// # Errors
+/// Returns an error if the getInfo request fails or its response is not a valid
+/// CBOR map, or if printing JSON output fails.
 pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::output::{print_json, CredentialInfoOutput};
     use ciborium::value::Value;
@@ -20,32 +24,35 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     let pairs = parse_cbor_map_response(&response, "authenticatorGetInfo")?;
 
-    let mut versions = Vec::new();
-    if let Some(Value::Array(v)) = find_int_key(&pairs, 0x01) {
-        versions = extract_cbor_text_responses(v)
+    let versions: Vec<String> = if let Some(Value::Array(v)) = find_int_key(&pairs, 0x01) {
+        extract_cbor_text_responses(v)
             .into_iter()
-            .map(|s| s.to_string())
-            .collect();
-    }
+            .map(std::string::ToString::to_string)
+            .collect()
+    } else {
+        Vec::new()
+    };
 
-    let mut extensions = Vec::new();
-    if let Some(Value::Array(e)) = find_int_key(&pairs, 0x02) {
-        extensions = extract_cbor_text_responses(e)
+    let extensions: Vec<String> = if let Some(Value::Array(e)) = find_int_key(&pairs, 0x02) {
+        extract_cbor_text_responses(e)
             .into_iter()
-            .map(|s| s.to_string())
-            .collect();
-    }
+            .map(std::string::ToString::to_string)
+            .collect()
+    } else {
+        Vec::new()
+    };
 
-    let mut aaguid = String::new();
-    if let Some(Value::Bytes(b)) = find_int_key(&pairs, 0x03) {
-        aaguid = hex::encode(b);
-    }
+    let aaguid = if let Some(Value::Bytes(b)) = find_int_key(&pairs, 0x03) {
+        hex::encode(b)
+    } else {
+        String::new()
+    };
 
     let mut options = HashMap::new();
     if let Some(Value::Map(m)) = find_int_key(&pairs, 0x04) {
         for (k, v) in m {
             if let (Value::Text(name), Value::Bool(b)) = (k, v) {
-                options.insert(name.to_string(), *b);
+                options.insert(name.clone(), *b);
             }
         }
     }
@@ -89,33 +96,30 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     if !extensions.is_empty() {
         println!("Extensions:                     {}", extensions.join(", "));
     }
-    println!("AAGUID:                         {}", aaguid);
+    println!("AAGUID:                         {aaguid}");
     if !options.is_empty() {
-        let mut opt_strs: Vec<String> = options
-            .iter()
-            .map(|(k, v)| format!("{}: {}", k, v))
-            .collect();
+        let mut opt_strs: Vec<String> = options.iter().map(|(k, v)| format!("{k}: {v}")).collect();
         opt_strs.sort();
         println!("Options:                        {}", opt_strs.join(", "));
     }
     if let Some(size) = max_msg_size {
-        println!("Max message size:               {}", size);
+        println!("Max message size:               {size}");
     }
     if !pin_uv_auth_protocols.is_empty() {
         let proto_strs: Vec<String> = pin_uv_auth_protocols
             .iter()
-            .map(|n| n.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         println!("PIN/UV auth protocols:          {}", proto_strs.join(", "));
     }
     if let Some(c) = max_credential_count_in_list {
-        println!("Max credential count in list:   {}", c);
+        println!("Max credential count in list:   {c}");
     }
     if let Some(l) = max_credential_id_length {
-        println!("Max credential ID length:       {}", l);
+        println!("Max credential ID length:       {l}");
     }
     if let Some(r) = remaining_discoverable_credentials {
-        println!("Remaining discoverable creds:   {}", r);
+        println!("Remaining discoverable creds:   {r}");
     } else {
         println!("Remaining discoverable creds:   (not reported by device)");
     }
@@ -135,7 +139,7 @@ fn send_cred_mgmt(
     pin_uv: Vec<u8>,
 ) -> Result<Vec<u8>> {
     let mut entries: Vec<(i64, ciborium::value::Value)> = vec![
-        (0x01, cbor_int(subcommand as i64)), // subCommand
+        (0x01, cbor_int(i64::from(subcommand))), // subCommand
     ];
     if let Some(p) = params {
         entries.push((0x02, p)); // subCommandParams
@@ -149,10 +153,10 @@ fn send_cred_mgmt(
 
 /// Send a credMgmt (0x0A) subcommand with no authentication parameters.
 ///
-/// Used for the *GetNext* subcommands (0x03 enumerateRPsGetNextRP,
+/// Used for the *`GetNext`* subcommands (0x03 enumerateRPsGetNextRP,
 /// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
 fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
-    let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
+    let cm_cbor = int_map([(0x01i64, cbor_int(i64::from(subcommand)))]);
     ctap2_call(hid, 0x0A, &cm_cbor) // authenticatorCredentialManagement
 }
 
@@ -209,7 +213,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
                 }
             })
             .ok_or_else(|| {
-                SoloError::MalformedResponse(format!("rpIdHash (0x04) missing for RP '{}'", rp_id))
+                SoloError::MalformedResponse(format!("rpIdHash (0x04) missing for RP '{rp_id}'"))
             })?;
 
         if rp_id_hash.len() != 32 {
@@ -321,7 +325,7 @@ fn enumerate_credentials_for_rp(
 /// Protocol:
 ///   1. Prompt for PIN, derive PIN token via clientPIN (0x06):
 ///      a. getKeyAgreement (subcommand 0x02) → device COSE key
-///      b. Generate ephemeral P-256 keypair, ECDH → shared_secret = SHA-256(x)
+///      b. Generate ephemeral P-256 keypair, ECDH → `shared_secret` = SHA-256(x)
 ///      c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
 ///      d. getPINToken (subcommand 0x05) → decrypt response → pinToken (32 bytes)
 ///   2. enumerateRPsBegin (credMgmt 0x0A subcommand 0x02):
@@ -332,6 +336,11 @@ fn enumerate_credentials_for_rp(
 ///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || CBOR({0x01: rpIdHash}))[0..16]
 ///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
 ///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
+///
+/// # Errors
+/// Returns an error if no PIN is set on the device, if acquiring a PIN token
+/// fails, if any credential-management request fails, or if a response is
+/// malformed.
 pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::output::{print_json, CredentialEntry, CredentialListOutput};
     use base64::Engine as _;
@@ -401,6 +410,13 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 /// the matching credential ID; exactly one match is required.
 ///
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
+///
+/// # Errors
+/// Returns an error if no PIN is set on the device, if acquiring a PIN token
+/// fails, if `credential_id` is not valid base64, if neither `credential_id`
+/// nor a `host`+`user` pair is supplied, if no credential matches or more than
+/// one matches, if reading the confirmation prompt fails, or if the
+/// deleteCredential command is rejected by the device.
 pub fn cmd_credential_rm(
     hid: &impl HidDevice,
     credential_id: Option<&str>,
@@ -421,24 +437,23 @@ pub fn cmd_credential_rm(
     let pin_token = pin_token.as_slice();
 
     // ── Resolve credential ID bytes ──────────────────────────────────────
-    let cred_id_bytes: Vec<u8>;
-    let display_label: String;
-
-    if let Some(id) = credential_id {
-        cred_id_bytes = base64::engine::general_purpose::STANDARD
+    let (cred_id_bytes, display_label): (Vec<u8>, String) = if let Some(id) = credential_id {
+        let bytes = base64::engine::general_purpose::STANDARD
             .decode(id)
-            .map_err(|e| {
-                SoloError::ProtocolError(format!("Invalid base64 credential ID: {}", e))
-            })?;
-        display_label = id.to_string();
+            .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {e}")))?;
+        (bytes, id.to_string())
     } else {
-        let host = host.expect("host required when credential_id is absent");
-        let user = user.expect("user required when credential_id is absent");
+        let host = host.ok_or_else(|| {
+            SoloError::ProtocolError("host required when credential_id is absent".into())
+        })?;
+        let user = user.ok_or_else(|| {
+            SoloError::ProtocolError("user required when credential_id is absent".into())
+        })?;
 
         let rps = enumerate_rps(hid, pin_token)?;
         let matching_rp = rps.iter().find(|(rp_id, _)| rp_id == host);
         let (_, rp_id_hash) = matching_rp.ok_or_else(|| {
-            SoloError::ProtocolError(format!("No credentials found for host '{}'", host))
+            SoloError::ProtocolError(format!("No credentials found for host '{host}'"))
         })?;
 
         let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
@@ -449,24 +464,20 @@ pub fn cmd_credential_rm(
 
         if matches.is_empty() {
             return Err(SoloError::ProtocolError(format!(
-                "No credential found for host '{}' and user '{}'",
-                host, user
+                "No credential found for host '{host}' and user '{user}'"
             )));
         }
         if matches.len() > 1 {
             return Err(SoloError::ProtocolError(format!(
-                "Multiple credentials found for host '{}' and user '{}'; delete by credential ID instead",
-                host, user
+                "Multiple credentials found for host '{host}' and user '{user}'; delete by credential ID instead"
             )));
         }
-        cred_id_bytes = matches.remove(0);
-        display_label = format!("{} / {}", host, user);
-    }
+        (matches.remove(0), format!("{host} / {user}"))
+    };
 
     // Confirmation prompt
     if !common::confirm(&format!(
-        "Delete credential {}?\nType 'yes' to confirm:",
-        display_label
+        "Delete credential {display_label}?\nType 'yes' to confirm:"
     ))? {
         println!("Aborted.");
         return Ok(());
@@ -514,6 +525,15 @@ pub fn cmd_credential_rm(
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use base64::Engine as _;
 
     /// Credential IDs are displayed and accepted as standard base64, not hex.
@@ -527,8 +547,8 @@ mod tests {
         assert!(hex::decode(b64).is_err(), "credential ID is not valid hex");
     }
 
-    /// deleteCredential subCommandParams must use key 0x02 (CM_subCommandCred)
-    /// for the credential descriptor, not key 0x01 (CM_subCommandRpId).
+    /// deleteCredential subCommandParams must use key 0x02 (`CM_subCommandCred`)
+    /// for the credential descriptor, not key 0x01 (`CM_subCommandRpId`).
     /// Key 0x01 with a map value causes the Solo1 firmware CBOR iterator to hang.
     #[test]
     fn delete_sub_command_params_uses_key_0x02() {
@@ -538,7 +558,7 @@ mod tests {
         let cred_id_bytes = vec![0u8; 70];
         let cred_descriptor = Value::Map(vec![
             (Value::Text("type".into()), Value::Text("public-key".into())),
-            (Value::Text("id".into()), cbor_bytes(cred_id_bytes.clone())),
+            (Value::Text("id".into()), cbor_bytes(cred_id_bytes)),
         ]);
         let del_params = int_map([(0x02i64, cred_descriptor)]);
 
@@ -547,9 +567,8 @@ mod tests {
         ciborium::ser::into_writer(&del_params, &mut buf).unwrap();
         let roundtrip: Value = ciborium::de::from_reader(buf.as_slice()).unwrap();
 
-        let pairs = match roundtrip {
-            Value::Map(p) => p,
-            _ => panic!("expected map"),
+        let Value::Map(pairs) = roundtrip else {
+            panic!("expected map")
         };
         assert_eq!(pairs.len(), 1);
         assert_eq!(
@@ -559,9 +578,8 @@ mod tests {
         );
 
         // The value must be a descriptor map, not raw bytes.
-        let descriptor = match &pairs[0].1 {
-            Value::Map(m) => m,
-            _ => panic!("value must be a map (PublicKeyCredentialDescriptor), not raw bytes"),
+        let Value::Map(descriptor) = &pairs[0].1 else {
+            panic!("value must be a map (PublicKeyCredentialDescriptor), not raw bytes")
         };
         let keys: Vec<&str> = descriptor
             .iter()

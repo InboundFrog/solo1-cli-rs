@@ -26,44 +26,65 @@ pub struct VersionedSignature {
 
 impl FirmwareJson {
     /// Load from a JSON file.
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be read, or its contents are not
+    /// valid `FirmwareJson` JSON.
     pub fn from_file(path: &Path) -> Result<Self> {
         let data = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&data)?)
     }
 
     /// Decode the raw bytes from the firmware field (may be Intel HEX text or binary).
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if the `firmware` field is not valid
+    /// websafe base64.
     pub fn firmware_bytes(&self) -> Result<Vec<u8>> {
         websafe_b64_decode(&self.firmware)
     }
 
     /// Decode firmware to a flat binary with its base flash address.
     ///
-    /// The official SoloKeys firmware JSONs store Intel HEX text in the `firmware`
+    /// The official `SoloKeys` firmware JSONs store Intel HEX text in the `firmware`
     /// field (base64-encoded). This method detects that and parses it correctly.
     /// Raw binary (from our own `cmd_sign`) is also handled.
     ///
     /// Returns `(base_address, binary_bytes)`.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if the `firmware` field is not valid
+    /// websafe base64, the embedded Intel HEX text is not valid UTF-8, or the
+    /// HEX cannot be parsed (malformed record, 32-bit address overflow, or an
+    /// address span exceeding [`MAX_FIRMWARE_SPAN`]).
     pub fn firmware_binary(&self) -> Result<(u32, Vec<u8>)> {
         let bytes = websafe_b64_decode(&self.firmware)?;
         // Intel HEX files always start with ':'
         if bytes.first() == Some(&b':') {
-            let hex_str = String::from_utf8(bytes).map_err(|e| {
-                SoloError::FirmwareError(format!("Firmware HEX UTF-8 error: {}", e))
-            })?;
+            let hex_str = String::from_utf8(bytes)
+                .map_err(|e| SoloError::FirmwareError(format!("Firmware HEX UTF-8 error: {e}")))?;
             parse_hex_string(&hex_str)
         } else {
             // Raw binary — use the Solo 1 application start address
-            Ok((0x08005000, bytes))
+            Ok((0x0800_5000, bytes))
         }
     }
 
     /// Decode the signature from the websafe base64 field.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if the `signature` field is not valid
+    /// websafe base64.
     pub fn signature_bytes(&self) -> Result<Vec<u8>> {
         websafe_b64_decode(&self.signature)
     }
 
     /// Select the appropriate signature based on firmware version.
     /// Version constraint format: "<=2.5.3" or ">2.5.3"
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if a version constraint string is
+    /// malformed, or the selected signature is not valid websafe base64.
     pub fn signature_for_version(&self, version: &FirmwareVersion) -> Result<Vec<u8>> {
         if self.versions.is_empty() {
             return self.signature_bytes();
@@ -77,6 +98,9 @@ impl FirmwareJson {
     }
 
     /// Serialize to JSON string.
+    ///
+    /// # Errors
+    /// Returns an error if the value cannot be serialized to JSON.
     pub fn to_json(&self) -> Result<String> {
         Ok(serde_json::to_string_pretty(self)?)
     }
@@ -88,16 +112,33 @@ impl FirmwareJson {
 /// Bootloaders <= 2.5.3 use the v1 signing region; later ones use v2.
 /// If the version query fails or returns no data, falls back to the default
 /// (latest) signature rather than incorrectly matching "<=2.5.3".
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if the bootloader version response is
+/// too short to parse, or if signature selection fails (a malformed version
+/// constraint, or a signature that is not valid websafe base64).
 pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
     match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
-            let v = FirmwareVersion::new(resp[0] as u32, resp[1] as u32, resp[2] as u32);
-            println!("Bootloader version: {}", v);
+            let short = || SoloError::FirmwareError("bootloader version response too short".into());
+            let v = FirmwareVersion::new(
+                u32::from(*resp.first().ok_or_else(short)?),
+                u32::from(*resp.get(1).ok_or_else(short)?),
+                u32::from(*resp.get(2).ok_or_else(short)?),
+            );
+            println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
         Ok(resp) if !resp.is_empty() => {
-            let v = FirmwareVersion::new(0, 0, resp[0] as u32);
-            println!("Bootloader version: {}", v);
+            let v =
+                FirmwareVersion::new(
+                    0,
+                    0,
+                    u32::from(*resp.first().ok_or_else(|| {
+                        SoloError::FirmwareError("empty version response".into())
+                    })?),
+                );
+            println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
         _ => {
@@ -116,32 +157,47 @@ pub struct FirmwareVersion {
 }
 
 impl FirmwareVersion {
-    pub fn new(major: u32, minor: u32, patch: u32) -> Self {
-        FirmwareVersion {
+    #[must_use]
+    pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
+        Self {
             major,
             minor,
             patch,
         }
     }
 
+    /// Parse a version string of the form `major.minor.patch` (an optional
+    /// leading `v` is stripped).
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if the string does not have exactly
+    /// three dot-separated components, or any component is not a valid `u32`.
     pub fn parse(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.trim_start_matches('v').split('.').collect();
         if parts.len() != 3 {
             return Err(SoloError::FirmwareError(format!(
-                "Invalid version string: {}",
-                s
+                "Invalid version string: {s}"
             )));
         }
-        let major = parts[0]
+        let major_str: &str = parts
+            .first()
+            .ok_or_else(|| SoloError::FirmwareError(format!("Invalid version string: {s}")))?;
+        let minor_str: &str = parts
+            .get(1)
+            .ok_or_else(|| SoloError::FirmwareError(format!("Invalid version string: {s}")))?;
+        let patch_str: &str = parts
+            .get(2)
+            .ok_or_else(|| SoloError::FirmwareError(format!("Invalid version string: {s}")))?;
+        let major = major_str
             .parse()
-            .map_err(|_| SoloError::FirmwareError(format!("Invalid major: {}", parts[0])))?;
-        let minor = parts[1]
+            .map_err(|_| SoloError::FirmwareError(format!("Invalid major: {major_str}")))?;
+        let minor = minor_str
             .parse()
-            .map_err(|_| SoloError::FirmwareError(format!("Invalid minor: {}", parts[1])))?;
-        let patch = parts[2]
+            .map_err(|_| SoloError::FirmwareError(format!("Invalid minor: {minor_str}")))?;
+        let patch = patch_str
             .parse()
-            .map_err(|_| SoloError::FirmwareError(format!("Invalid patch: {}", parts[2])))?;
-        Ok(FirmwareVersion {
+            .map_err(|_| SoloError::FirmwareError(format!("Invalid patch: {patch_str}")))?;
+        Ok(Self {
             major,
             minor,
             patch,
@@ -156,6 +212,11 @@ impl std::fmt::Display for FirmwareVersion {
 }
 
 /// Check if a version matches a constraint like "<=2.5.3" or ">2.5.3".
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if `constraint` has no recognised
+/// comparison prefix (`<=`, `>=`, `<`, `>`, `=`), or the version it contains
+/// cannot be parsed.
 pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -> Result<bool> {
     if let Some(rest) = constraint.strip_prefix("<=") {
         let bound = FirmwareVersion::parse(rest)?;
@@ -174,26 +235,34 @@ pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -
         Ok(*version == bound)
     } else {
         Err(SoloError::FirmwareError(format!(
-            "Unknown version constraint: {}",
-            constraint
+            "Unknown version constraint: {constraint}"
         )))
     }
 }
 
 /// Parse an Intel HEX file into a flat binary buffer.
-/// Returns (base_address, bytes).
+/// Returns (`base_address`, bytes).
+///
+/// # Errors
+/// Returns an error if the file cannot be read, or its Intel HEX content cannot
+/// be parsed (see [`parse_hex_string`]).
 pub fn parse_hex_file(path: &Path) -> Result<(u32, Vec<u8>)> {
     let content = std::fs::read_to_string(path)?;
     parse_hex_string(&content)
 }
 
 /// Parse Intel HEX content from a string.
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if the Intel HEX is malformed, contains
+/// no data records, has an address that overflows 32 bits, or spans more than
+/// [`MAX_FIRMWARE_SPAN`] bytes.
 pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
     let reader = ihex::Reader::new(content);
     let mut records: Vec<Record> = Vec::new();
     for record in reader {
         let r = record
-            .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e)))?;
+            .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {e:?}")))?;
         records.push(r);
     }
     hex_records_to_binary(&records)
@@ -205,7 +274,7 @@ pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
 /// HEX content can arrive from the network (the firmware JSON downloaded by
 /// `update`), and the span determines the allocation size when flattening to
 /// a binary. Solo flash is only 256 KiB, so 16 MiB is generous while still
-/// preventing a crafted ExtendedLinearAddress record from forcing a multi-GB
+/// preventing a crafted `ExtendedLinearAddress` record from forcing a multi-GB
 /// allocation.
 const MAX_FIRMWARE_SPAN: u32 = 16 * 1024 * 1024;
 
@@ -229,16 +298,20 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
         match record {
             Record::Data { offset, value } => {
                 let addr = upper_linear
-                    .checked_add(*offset as u32)
+                    .checked_add(u32::from(*offset))
                     .and_then(|a| a.checked_add(base_addr))
                     .ok_or_else(|| {
                         SoloError::FirmwareError(format!(
                             "HEX record address overflows 32 bits: \
-                             upper=0x{:08X} offset=0x{:04X} base=0x{:08X}",
-                            upper_linear, offset, base_addr
+                             upper=0x{upper_linear:08X} offset=0x{offset:04X} base=0x{base_addr:08X}"
                         ))
                     })?;
-                let end = addr.checked_add(value.len() as u32).ok_or_else(|| {
+                let value_len = u32::try_from(value.len()).map_err(|_| {
+                    SoloError::FirmwareError(format!(
+                        "HEX record at 0x{addr:08X} has too many bytes for a 32-bit address space"
+                    ))
+                })?;
+                let end = addr.checked_add(value_len).ok_or_else(|| {
                     SoloError::FirmwareError(format!(
                         "HEX record at 0x{:08X} ({} bytes) overflows the 32-bit address space",
                         addr,
@@ -250,11 +323,11 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
                 segments.push((addr, value.clone()));
             }
             Record::ExtendedLinearAddress(upper) => {
-                upper_linear = (*upper as u32) << 16;
+                upper_linear = u32::from(*upper) << 16;
                 base_addr = 0;
             }
             Record::ExtendedSegmentAddress(seg) => {
-                base_addr = (*seg as u32) << 4;
+                base_addr = u32::from(*seg) << 4;
                 upper_linear = 0;
             }
             Record::StartLinearAddress(_) | Record::StartSegmentAddress { .. } => {}
@@ -263,10 +336,14 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
     }
 
     // max_end >= min_addr whenever there is at least one segment.
-    if !segments.is_empty() && max_end - min_addr > MAX_FIRMWARE_SPAN {
+    if !segments.is_empty()
+        && max_end
+            .checked_sub(min_addr)
+            .ok_or_else(|| SoloError::FirmwareError("HEX address span underflow".into()))?
+            > MAX_FIRMWARE_SPAN
+    {
         return Err(SoloError::FirmwareError(format!(
-            "HEX address span too large: 0x{:08X}..0x{:08X} exceeds {} bytes",
-            min_addr, max_end, MAX_FIRMWARE_SPAN
+            "HEX address span too large: 0x{min_addr:08X}..0x{max_end:08X} exceeds {MAX_FIRMWARE_SPAN} bytes"
         )));
     }
 
@@ -274,7 +351,12 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
 }
 
 /// Convert Intel HEX records to a flat binary.
-/// Returns (base_address, bytes).
+/// Returns (`base_address`, bytes).
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if the records contain no data, an
+/// absolute address overflows 32 bits, or the address span exceeds
+/// [`MAX_FIRMWARE_SPAN`] bytes.
 pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
     let mut segments = hex_records_to_segments(records)?;
 
@@ -287,15 +369,22 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
     // Sort by address
     segments.sort_by_key(|(addr, _)| *addr);
 
-    let min_addr = segments[0].0;
+    let min_addr = segments
+        .first()
+        .ok_or_else(|| SoloError::FirmwareError("No data records in HEX file".into()))?
+        .0;
     // Per-record overflow and the MAX_FIRMWARE_SPAN cap were already enforced
     // by hex_records_to_segments; keep checked arithmetic as defense in depth.
     let mut max_addr = min_addr;
     for (addr, data) in &segments {
-        let end = addr.checked_add(data.len() as u32).ok_or_else(|| {
+        let data_len = u32::try_from(data.len()).map_err(|_| {
             SoloError::FirmwareError(format!(
-                "HEX record at 0x{:08X} overflows the 32-bit address space",
-                addr
+                "HEX record at 0x{addr:08X} has too many bytes for a 32-bit address space"
+            ))
+        })?;
+        let end = addr.checked_add(data_len).ok_or_else(|| {
+            SoloError::FirmwareError(format!(
+                "HEX record at 0x{addr:08X} overflows the 32-bit address space"
             ))
         })?;
         max_addr = max_addr.max(end);
@@ -303,12 +392,27 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
 
     // max_addr >= min_addr by construction, and the span is capped, so this
     // allocation is bounded by MAX_FIRMWARE_SPAN.
-    let size = (max_addr - min_addr) as usize;
+    let size = usize::try_from(
+        max_addr
+            .checked_sub(min_addr)
+            .ok_or_else(|| SoloError::FirmwareError("HEX address span underflow".into()))?,
+    )
+    .map_err(|_| SoloError::FirmwareError("HEX binary size too large".into()))?;
     let mut binary = vec![0xFFu8; size];
 
     for (addr, data) in &segments {
-        let offset = (addr - min_addr) as usize;
-        binary[offset..offset + data.len()].copy_from_slice(data);
+        let offset = usize::try_from(
+            addr.checked_sub(min_addr)
+                .ok_or_else(|| SoloError::FirmwareError("HEX address underflow".into()))?,
+        )
+        .map_err(|_| SoloError::FirmwareError("HEX offset too large".into()))?;
+        let end = offset
+            .checked_add(data.len())
+            .ok_or_else(|| SoloError::FirmwareError("HEX offset overflow".into()))?;
+        binary
+            .get_mut(offset..end)
+            .ok_or_else(|| SoloError::FirmwareError("HEX data out of range".into()))?
+            .copy_from_slice(data);
     }
 
     Ok((min_addr, binary))
@@ -320,7 +424,7 @@ pub const HACKER_ATTESTATION_KEY_HEX: &str =
     "1b2626ecc8f69b0f69e34fb236d76466ba12ac16c3ab5750ba064e8b90e02448";
 
 /// Default Solo Hacker attestation certificate (DER bytes).
-/// From operations.py hacker_attestation_cert.
+/// From operations.py `hacker_attestation_cert`.
 pub const HACKER_ATTESTATION_CERT: &[u8] = &[
     0x30, 0x82, 0x02, 0xe9, 0x30, 0x82, 0x02, 0x8e, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x01, 0x01,
     0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x81, 0x82, 0x31,
@@ -374,22 +478,32 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
 /// Write the boot-authorisation bytes into the byte map.
 ///
 /// Sets the two-byte marker at `flash_addr(application_end_page - 1)` to
-/// `0x41 0x41` ('A' 'A'), then writes the 8-byte AUTH_WORD at `auth_word_addr`:
+/// `0x41 0x41` ('A' 'A'), then writes the 8-byte `AUTH_WORD` at `auth_word_addr`:
 /// bytes 0–3 are `0x00` (authorise boot) and bytes 4–7 are `0xFF` (enable
 /// bootloader).
-fn patch_auth_word(byte_map: &mut HashMap<u32, u8>, app_end_page_start: u32, auth_word_addr: u32) {
+fn patch_auth_word(
+    byte_map: &mut HashMap<u32, u8>,
+    app_end_page_start: u32,
+    auth_word_addr: u32,
+) -> Result<()> {
+    let overflow = || SoloError::FirmwareError("auth word address overflow".into());
+
     // Boot marker: flash_addr(APPLICATION_END_PAGE - 1) = 'A' 'A'
     byte_map.insert(app_end_page_start, 0x41);
-    byte_map.insert(app_end_page_start + 1, 0x41);
+    byte_map.insert(
+        app_end_page_start.checked_add(1).ok_or_else(overflow)?,
+        0x41,
+    );
 
     // AUTH_WORD[0..3] = 0 (authorise boot)
     for i in 0..4u32 {
-        byte_map.insert(auth_word_addr + i, 0x00);
+        byte_map.insert(auth_word_addr.checked_add(i).ok_or_else(overflow)?, 0x00);
     }
     // AUTH_WORD[4..7] = 0xFF (enable bootloader)
     for i in 4..8u32 {
-        byte_map.insert(auth_word_addr + i, 0xFF);
+        byte_map.insert(auth_word_addr.checked_add(i).ok_or_else(overflow)?, 0xFF);
     }
+    Ok(())
 }
 
 /// Write the attestation region into the byte map starting at `attest_addr`.
@@ -399,59 +513,101 @@ fn patch_auth_word(byte_map: &mut HashMap<u32, u8>, app_end_page_start: u32, aut
 ///   [+32]:  8 bytes device settings (little-endian u64: `0xAA551E7900000000`)
 ///   [+40]:  8 bytes cert size (little-endian u64)
 ///   [+48]:  N bytes certificate
-fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u8], cert: &[u8]) {
+fn patch_attestation(
+    byte_map: &mut HashMap<u32, u8>,
+    attest_addr: u32,
+    key: &[u8],
+    cert: &[u8],
+) -> Result<()> {
+    let idx_err = || SoloError::FirmwareError("attestation index too large".into());
+    let overflow = || SoloError::FirmwareError("attestation address overflow".into());
+
     // Attestation key at ATTEST_ADDR+0 (32 bytes)
     for (i, &b) in key.iter().take(32).enumerate() {
-        byte_map.insert(attest_addr + i as u32, b);
+        let iu = u32::try_from(i).map_err(|_| idx_err())?;
+        byte_map.insert(attest_addr.checked_add(iu).ok_or_else(overflow)?, b);
     }
 
     // Device settings at ATTEST_ADDR+32 (8 bytes little-endian u64)
     // 0xAA551E7900000000 | lock_byte (lock_byte=0 since no --lock flag)
-    let device_settings: u64 = 0xAA551E7900000000u64;
+    let device_settings: u64 = 0xAA55_1E79_0000_0000_u64;
     let ds_bytes = device_settings.to_le_bytes();
     for (i, &b) in ds_bytes.iter().enumerate() {
-        byte_map.insert(attest_addr + 32 + i as u32, b);
+        let iu = u32::try_from(i).map_err(|_| idx_err())?;
+        byte_map.insert(
+            attest_addr
+                .checked_add(32)
+                .and_then(|a| a.checked_add(iu))
+                .ok_or_else(overflow)?,
+            b,
+        );
     }
 
     // Cert size at ATTEST_ADDR+40 (8 bytes little-endian u64)
-    let cert_size: u64 = cert.len() as u64;
+    let cert_size: u64 =
+        u64::try_from(cert.len()).map_err(|_| SoloError::FirmwareError("cert too large".into()))?;
     let cs_bytes = cert_size.to_le_bytes();
     for (i, &b) in cs_bytes.iter().enumerate() {
-        byte_map.insert(attest_addr + 40 + i as u32, b);
+        let iu = u32::try_from(i).map_err(|_| idx_err())?;
+        byte_map.insert(
+            attest_addr
+                .checked_add(40)
+                .and_then(|a| a.checked_add(iu))
+                .ok_or_else(overflow)?,
+            b,
+        );
     }
 
     // Certificate at ATTEST_ADDR+48
     for (i, &b) in cert.iter().enumerate() {
-        byte_map.insert(attest_addr + 48 + i as u32, b);
+        let iu = u32::try_from(i).map_err(|_| idx_err())?;
+        byte_map.insert(
+            attest_addr
+                .checked_add(48)
+                .and_then(|a| a.checked_add(iu))
+                .ok_or_else(overflow)?,
+            b,
+        );
     }
+    Ok(())
 }
 
 /// Merge multiple Intel HEX files into one output HEX file.
 ///
 /// Matches the Python reference (operations.py mergehex) which:
 /// 1. Merges all input HEX files (later ones override earlier on overlap)
-/// 2. Sets boot authorization bytes at AUTH_WORD_ADDR
-/// 3. Patches attestation key, device settings, cert size, and cert at ATTEST_ADDR
+/// 2. Sets boot authorization bytes at `AUTH_WORD_ADDR`
+/// 3. Patches attestation key, device settings, cert size, and cert at `ATTEST_ADDR`
 ///
-/// If no attestation_key/cert files are provided, uses the default hacker
+/// If no `attestation_key/cert` files are provided, uses the default hacker
 /// attestation key and cert. Both must be provided or both must be None.
 ///
-/// Layout constants (APPLICATION_END_PAGE_COUNT=20, default for new bootloaders):
-///   APPLICATION_END_PAGE = 128 - 20 = 108
-///   AUTH_WORD_ADDR = flash_addr(108) - 8 = 0x080367F8
-///   ATTEST_ADDR = flash_addr(128 - 15) = flash_addr(113) = 0x08038800
+/// Layout constants (`APPLICATION_END_PAGE_COUNT=20`, default for new bootloaders):
+///   `APPLICATION_END_PAGE` = 128 - 20 = 108
+///   `AUTH_WORD_ADDR` = `flash_addr(108)` - 8 = 0x080367F8
+///   `ATTEST_ADDR` = `flash_addr(128` - 15) = `flash_addr(113)` = 0x08038800
 ///
-/// Attestation layout at ATTEST_ADDR:
+/// Attestation layout at `ATTEST_ADDR`:
 ///   [+0]:  32 bytes attestation key
-///   [+32]:  8 bytes device settings (little-endian u64: 0xAA551E7900000000 | lock_byte)
+///   [+32]:  8 bytes device settings (little-endian u64: 0xAA551E7900000000 | `lock_byte`)
 ///   [+40]:  8 bytes cert size (little-endian u64)
 ///   [+48]:  N bytes certificate
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if only one of `attestation_key` and
+/// `attestation_cert` is provided, an attestation key or certificate file
+/// cannot be read or is invalid (malformed hex key, or a certificate shorter
+/// than 100 bytes), an input HEX file cannot be read or parsed, an address
+/// overflows 32 bits, or the output file cannot be written.
 pub fn merge_hex_files(
     inputs: &[&Path],
     output: &Path,
     attestation_key: Option<&Path>,
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
+    // APPLICATION_END_PAGE_COUNT = 20 (default, for new bootloader)
+    const APPLICATION_END_PAGE_COUNT: u32 = 20;
+
     // Validate that key and cert are either both provided or both None
     if attestation_key.is_some() != attestation_cert.is_some() {
         return Err(SoloError::FirmwareError(
@@ -465,7 +621,7 @@ pub fn merge_hex_files(
         if raw.len() == 64 || raw.len() == 65 {
             // Hex-encoded key file
             hex::decode(std::str::from_utf8(&raw).unwrap_or("").trim()).map_err(|e| {
-                SoloError::FirmwareError(format!("Invalid attestation key hex: {}", e))
+                SoloError::FirmwareError(format!("Invalid attestation key hex: {e}"))
             })?
         } else {
             raw
@@ -486,13 +642,13 @@ pub fn merge_hex_files(
         HACKER_ATTESTATION_CERT.to_vec()
     };
 
-    // APPLICATION_END_PAGE_COUNT = 20 (default, for new bootloader)
-    const APPLICATION_END_PAGE_COUNT: u32 = 20;
     let application_end_page = FLASH_PAGES - APPLICATION_END_PAGE_COUNT; // = 108
 
-    eprintln!("app end page: {}", application_end_page);
+    eprintln!("app end page: {application_end_page}");
 
-    let auth_word_addr = flash_addr(application_end_page) - 8;
+    let auth_word_addr = flash_addr(application_end_page)
+        .checked_sub(8)
+        .ok_or_else(|| SoloError::FirmwareError("auth word address underflow".into()))?;
     // ATTEST_ADDR = flash_addr(PAGES - 15) = flash_addr(113)
     let attest_addr = flash_addr(FLASH_PAGES - 15);
 
@@ -505,36 +661,61 @@ pub fn merge_hex_files(
         let records: Vec<Record> = ihex::Reader::new(&content)
             .collect::<std::result::Result<_, _>>()
             .map_err(|e| {
-                SoloError::FirmwareError(format!("HEX parse error in {:?}: {:?}", input_path, e))
+                SoloError::FirmwareError(format!(
+                    "HEX parse error in {}: {e:?}",
+                    input_path.display()
+                ))
             })?;
 
         for (addr, data) in hex_records_to_segments(&records)? {
             for (i, &b) in data.iter().enumerate() {
-                byte_map.insert(addr + i as u32, b);
+                let iu = u32::try_from(i)
+                    .map_err(|_| SoloError::FirmwareError("HEX segment index too large".into()))?;
+                byte_map.insert(
+                    addr.checked_add(iu)
+                        .ok_or_else(|| SoloError::FirmwareError("HEX address overflow".into()))?,
+                    b,
+                );
             }
         }
     }
 
     // Patch boot authorization bytes and attestation region
     let app_end_page_start = flash_addr(application_end_page - 1);
-    patch_auth_word(&mut byte_map, app_end_page_start, auth_word_addr);
-    patch_attestation(&mut byte_map, attest_addr, &key_bytes, &cert_bytes);
+    patch_auth_word(&mut byte_map, app_end_page_start, auth_word_addr)?;
+    patch_attestation(&mut byte_map, attest_addr, &key_bytes, &cert_bytes)?;
 
     // Convert byte_map back to sorted segments for HEX output
-    let mut addrs: Vec<u32> = byte_map.keys().cloned().collect();
-    addrs.sort();
+    let mut addrs: Vec<u32> = byte_map.keys().copied().collect();
+    addrs.sort_unstable();
+
+    let missing = || SoloError::FirmwareError("byte map missing address".into());
+    let idx_overflow = || SoloError::FirmwareError("address index overflow".into());
 
     let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
-    let mut i = 0;
-    while i < addrs.len() {
-        let start = addrs[i];
-        let mut data = vec![byte_map[&start]];
-        while i + 1 < addrs.len() && addrs[i + 1] == addrs[i] + 1 {
-            i += 1;
-            data.push(byte_map[&addrs[i]]);
+    let mut i: usize = 0;
+    // Coalesce runs of consecutive addresses into single segments (identical
+    // grouping to the original index-based loop).
+    while let Some(&start) = addrs.get(i) {
+        let mut data = vec![*byte_map.get(&start).ok_or_else(missing)?];
+        let mut cur = start;
+        loop {
+            let next_i = i.checked_add(1).ok_or_else(idx_overflow)?;
+            let Some(&next_addr) = addrs.get(next_i) else {
+                break;
+            };
+            let expected = cur
+                .checked_add(1)
+                .ok_or_else(|| SoloError::FirmwareError("address overflow".into()))?;
+            if next_addr != expected {
+                break;
+            }
+            i = next_i;
+            cur = next_addr;
+            data.push(*byte_map.get(&next_addr).ok_or_else(missing)?);
         }
         segments.push((start, data));
-        i += 1;
+        i = i.checked_add(1).ok_or_else(idx_overflow)?;
     }
 
     write_hex_file(output, &segments)
@@ -550,75 +731,121 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
         let upper = addr >> 16;
         if upper != current_upper {
             // Emit Extended Linear Address record
-            let upper16 = upper as u16;
-            let record_data = [(upper16 >> 8) as u8, upper16 as u8];
-            let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data);
-            writeln!(output, ":02000004{:04X}{:02X}", upper16, checksum).unwrap();
+            let upper16 = u16::try_from(upper)
+                .map_err(|_| SoloError::FirmwareError("upper address overflow".into()))?;
+            // Big-endian 2-byte encoding of the upper 16 address bits.
+            let record_data = upper16.to_be_bytes();
+            let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data)?;
+            writeln!(output, ":02000004{upper16:04X}{checksum:02X}")
+                .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             current_upper = upper;
         }
 
         // Write data in chunks of 16 bytes
-        let offset_base = (*addr & 0xFFFF) as u16;
-        let mut pos = 0;
+        let offset_base = u16::try_from(*addr & 0xFFFF)
+            .map_err(|_| SoloError::FirmwareError("segment offset overflow".into()))?;
+        let mut pos: usize = 0;
         while pos < data.len() {
-            let chunk_size = (data.len() - pos).min(16);
-            let chunk = &data[pos..pos + chunk_size];
-            let offset = offset_base + pos as u16;
-            let checksum = ihex_checksum(chunk_size as u8, offset, 0x00, chunk);
-            write!(output, ":{:02X}{:04X}00", chunk_size, offset).unwrap();
+            let chunk_size = data
+                .len()
+                .checked_sub(pos)
+                .ok_or_else(|| SoloError::FirmwareError("chunk size underflow".into()))?
+                .min(16);
+            let chunk_end = pos
+                .checked_add(chunk_size)
+                .ok_or_else(|| SoloError::FirmwareError("chunk range overflow".into()))?;
+            let chunk = data
+                .get(pos..chunk_end)
+                .ok_or_else(|| SoloError::FirmwareError("chunk out of range".into()))?;
+            // Preserve the original 16-bit offset wrap: (offset_base + pos) mod 2^16.
+            let pos_low = u16::try_from(pos & 0xFFFF)
+                .map_err(|_| SoloError::FirmwareError("offset overflow".into()))?;
+            let offset = offset_base.wrapping_add(pos_low);
+            let chunk_len = u8::try_from(chunk_size)
+                .map_err(|_| SoloError::FirmwareError("chunk length overflow".into()))?;
+            let checksum = ihex_checksum(chunk_len, offset, 0x00, chunk)?;
+            write!(output, ":{chunk_size:02X}{offset:04X}00")
+                .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             for b in chunk {
-                write!(output, "{:02X}", b).unwrap();
+                write!(output, "{b:02X}")
+                    .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             }
-            writeln!(output, "{:02X}", checksum).unwrap();
-            pos += chunk_size;
+            writeln!(output, "{checksum:02X}")
+                .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
+            pos = pos
+                .checked_add(chunk_size)
+                .ok_or_else(|| SoloError::FirmwareError("position overflow".into()))?;
         }
     }
 
     // EOF record
-    writeln!(output, ":00000001FF").unwrap();
+    writeln!(output, ":00000001FF")
+        .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
     std::fs::write(path, output)?;
     Ok(())
 }
 
-fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> u8 {
+fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> Result<u8> {
+    let overflow = || SoloError::FirmwareError("checksum accumulator overflow".into());
     let mut sum: u32 = 0;
-    sum += byte_count as u32;
-    sum += (offset >> 8) as u32;
-    sum += (offset & 0xFF) as u32;
-    sum += record_type as u32;
+    sum = sum
+        .checked_add(u32::from(byte_count))
+        .ok_or_else(overflow)?;
+    sum = sum
+        .checked_add(u32::from(offset >> 8))
+        .ok_or_else(overflow)?;
+    sum = sum
+        .checked_add(u32::from(offset & 0xFF))
+        .ok_or_else(overflow)?;
+    sum = sum
+        .checked_add(u32::from(record_type))
+        .ok_or_else(overflow)?;
     for b in data {
-        sum += *b as u32;
+        sum = sum.checked_add(u32::from(*b)).ok_or_else(overflow)?;
     }
-    (0x100 - (sum & 0xFF)) as u8
+    // Two's-complement checksum: (0x100 - (sum & 0xFF)) mod 0x100.
+    // (256 - low) mod 256 == low.wrapping_neg(), including the low == 0 -> 0 case,
+    // which the old `(0x100 - (sum & 0xFF)) as u8` relied on wrapping to produce.
+    Ok(u8::try_from(sum & 0xFF)
+        .map_err(|_| SoloError::FirmwareError("checksum overflow".into()))?
+        .wrapping_neg())
 }
 
 /// Flash base address for STM32L4.
-pub const FLASH_BASE: u32 = 0x08000000;
+pub const FLASH_BASE: u32 = 0x0800_0000;
 /// Total number of flash pages.
 pub const FLASH_PAGES: u32 = 128;
 /// Flash page size in bytes.
 pub const FLASH_PAGE_SIZE: u32 = 2048;
 
 /// Compute the flash address for a given page number.
-pub fn flash_addr(page: u32) -> u32 {
-    FLASH_BASE + page * FLASH_PAGE_SIZE
+#[must_use]
+pub const fn flash_addr(page: u32) -> u32 {
+    // saturating_add / saturating_mul are const-stable and never saturate for
+    // valid page numbers, so the result is identical to `FLASH_BASE + page * FLASH_PAGE_SIZE`.
+    FLASH_BASE.saturating_add(page.saturating_mul(FLASH_PAGE_SIZE))
 }
 
-/// Extract the firmware bytes to sign for a specific APPLICATION_END_PAGE value.
+/// Extract the firmware bytes to sign for a specific `APPLICATION_END_PAGE` value.
 ///
 /// The signing region is:
 ///   START = first address in the hex file
-///   END = flash_addr(FLASH_PAGES - app_end_page) - 8
-///   bytes = hex_data[START .. END]  (padded with 0xFF for gaps)
+///   END = `flash_addr(FLASH_PAGES` - `app_end_page`) - 8
+///   bytes = `hex_data`[START .. END]  (padded with 0xFF for gaps)
 ///
 /// Two versions exist:
-///   app_end_page=19: for bootloaders <=2.5.3 (APPLICATION_END_PAGE_COUNT=19)
-///   app_end_page=20: for bootloaders >2.5.3  (APPLICATION_END_PAGE_COUNT=20)
+///   `app_end_page=19`: for bootloaders <=2.5.3 (`APPLICATION_END_PAGE_COUNT=19`)
+///   `app_end_page=20`: for bootloaders >2.5.3  (`APPLICATION_END_PAGE_COUNT=20`)
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if the HEX file cannot be read or
+/// parsed, contains no data, `app_end_page` is larger than [`FLASH_PAGES`], the
+/// computed signing region is empty, or an address computation overflows.
 pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) -> Result<Vec<u8>> {
     let content = std::fs::read_to_string(hex_path)?;
     let records: Vec<Record> = ihex::Reader::new(&content)
         .collect::<std::result::Result<_, _>>()
-        .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {:?}", e)))?;
+        .map_err(|e| SoloError::FirmwareError(format!("Intel HEX parse error: {e:?}")))?;
     let mut segments = hex_records_to_segments(&records)?;
 
     if segments.is_empty() {
@@ -626,40 +853,66 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
     }
 
     segments.sort_by_key(|(addr, _)| *addr);
-    let start = segments[0].0;
+    let start = segments
+        .first()
+        .ok_or_else(|| SoloError::FirmwareError("No data in HEX file".into()))?
+        .0;
 
     // END = flash_addr(PAGES - app_end_page) - 8
-    let end = flash_addr(FLASH_PAGES - app_end_page) - 8;
+    let pages = FLASH_PAGES
+        .checked_sub(app_end_page)
+        .ok_or_else(|| SoloError::FirmwareError("application end page too large".into()))?;
+    let end = flash_addr(pages)
+        .checked_sub(8)
+        .ok_or_else(|| SoloError::FirmwareError("signing region end underflow".into()))?;
 
     if end <= start {
         return Err(SoloError::FirmwareError(format!(
-            "Signing region is empty: start=0x{:08X} end=0x{:08X}",
-            start, end
+            "Signing region is empty: start=0x{start:08X} end=0x{end:08X}"
         )));
     }
 
-    let size = (end - start) as usize;
+    let size = usize::try_from(
+        end.checked_sub(start)
+            .ok_or_else(|| SoloError::FirmwareError("signing region size underflow".into()))?,
+    )
+    .map_err(|_| SoloError::FirmwareError("signing region too large".into()))?;
     let mut binary = vec![0xFFu8; size];
 
     for (addr, data) in &segments {
         if *addr >= end {
             continue;
         }
-        let offset = (addr - start) as usize;
+        let offset =
+            usize::try_from(addr.checked_sub(start).ok_or_else(|| {
+                SoloError::FirmwareError("signing region offset underflow".into())
+            })?)
+            .map_err(|_| SoloError::FirmwareError("signing region offset too large".into()))?;
         let copy_len = data.len().min(size.saturating_sub(offset));
         if copy_len > 0 {
-            binary[offset..offset + copy_len].copy_from_slice(&data[..copy_len]);
+            let copy_end = offset
+                .checked_add(copy_len)
+                .ok_or_else(|| SoloError::FirmwareError("signing region copy overflow".into()))?;
+            binary
+                .get_mut(offset..copy_end)
+                .ok_or_else(|| SoloError::FirmwareError("signing region out of range".into()))?
+                .copy_from_slice(data.get(..copy_len).ok_or_else(|| {
+                    SoloError::FirmwareError("signing region source out of range".into())
+                })?);
         }
     }
 
     Ok(binary)
 }
 
-/// Create a FirmwareJson from the hex file text and both versioned signatures.
+/// Create a `FirmwareJson` from the hex file text and both versioned signatures.
 ///
 /// The firmware field contains the base64 of the HEX FILE TEXT (not binary),
 /// matching the Python reference which does:
-///   fw = base64.b64encode(open(hex_file, "r").read().encode())
+///   fw = `base64.b64encode(open(hex_file`, "`r").read().encode()`)
+///
+/// # Errors
+/// Returns an error if the HEX file cannot be read.
 pub fn create_firmware_json_versioned(
     hex_path: &Path,
     sig_v1: &[u8],
@@ -690,7 +943,8 @@ pub fn create_firmware_json_versioned(
     })
 }
 
-/// Create a FirmwareJson from firmware bytes and a signature (legacy single-version form).
+/// Create a `FirmwareJson` from firmware bytes and a signature (legacy single-version form).
+#[must_use]
 pub fn create_firmware_json(firmware: &[u8], signature: &[u8]) -> FirmwareJson {
     FirmwareJson {
         firmware: websafe_b64_encode(firmware),
@@ -715,8 +969,13 @@ pub struct GithubAsset {
 
 impl GithubRelease {
     /// Find the firmware JSON asset.
+    #[must_use]
     pub fn find_firmware_asset(&self) -> Option<&GithubAsset> {
-        self.assets.iter().find(|a| a.name.ends_with(".json"))
+        self.assets.iter().find(|a| {
+            std::path::Path::new(&a.name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        })
     }
 }
 
@@ -729,6 +988,10 @@ fn http_client() -> Result<reqwest::blocking::Client> {
 }
 
 /// Fetch the latest release info from GitHub.
+///
+/// # Errors
+/// Returns [`SoloError::NetworkError`] if the HTTP client cannot be built, the
+/// request fails, or the response body is not valid release JSON.
 pub fn fetch_latest_release() -> Result<GithubRelease> {
     let url = "https://api.github.com/repos/solokeys/solo1/releases/latest";
     let client = http_client()?;
@@ -738,11 +1001,15 @@ pub fn fetch_latest_release() -> Result<GithubRelease> {
         .map_err(|e| SoloError::NetworkError(e.to_string()))?;
     let release: GithubRelease = resp
         .json()
-        .map_err(|e| SoloError::NetworkError(format!("Failed to parse release JSON: {}", e)))?;
+        .map_err(|e| SoloError::NetworkError(format!("Failed to parse release JSON: {e}")))?;
     Ok(release)
 }
 
 /// Download a URL to bytes.
+///
+/// # Errors
+/// Returns [`SoloError::NetworkError`] if the HTTP client cannot be built, the
+/// request fails, or the response body cannot be read.
 pub fn download_url(url: &str) -> Result<Vec<u8>> {
     let client = http_client()?;
     let resp = client
@@ -757,6 +1024,15 @@ pub fn download_url(url: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     #[test]
@@ -854,7 +1130,7 @@ mod tests {
             Record::EndOfFile,
         ];
         let (base, bytes) = hex_records_to_binary(&records).unwrap();
-        assert_eq!(base, 0x08000000);
+        assert_eq!(base, 0x0800_0000);
         assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
     }
 
@@ -901,7 +1177,7 @@ mod tests {
         // A normal small HEX file is unaffected by the overflow/span checks.
         let hex = ":020000040800F2\n:0400000001020304F2\n:00000001FF\n";
         let (base, bytes) = parse_hex_string(hex).unwrap();
-        assert_eq!(base, 0x08000000);
+        assert_eq!(base, 0x0800_0000);
         assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04]);
     }
 
@@ -918,10 +1194,10 @@ mod tests {
 
     #[test]
     fn test_flash_addr() {
-        assert_eq!(flash_addr(0), 0x08000000);
-        assert_eq!(flash_addr(1), 0x08000800);
-        assert_eq!(flash_addr(108), 0x08036000);
-        assert_eq!(flash_addr(113), 0x08038800);
+        assert_eq!(flash_addr(0), 0x0800_0000);
+        assert_eq!(flash_addr(1), 0x0800_0800);
+        assert_eq!(flash_addr(108), 0x0803_6000);
+        assert_eq!(flash_addr(113), 0x0803_8800);
     }
 
     #[test]
@@ -941,7 +1217,7 @@ mod tests {
         // AUTH_WORD_ADDR = flash_addr(108) - 8 = 0x08036000 - 8 = 0x08035FF8
         let app_end_page = FLASH_PAGES - 20; // 108
         let auth_word_addr = flash_addr(app_end_page) - 8;
-        assert_eq!(auth_word_addr, 0x08035FF8);
+        assert_eq!(auth_word_addr, 0x0803_5FF8);
     }
 
     #[test]

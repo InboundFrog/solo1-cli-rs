@@ -9,6 +9,10 @@ use crate::firmware::{
 };
 
 /// Print the library version.
+///
+/// # Errors
+/// Returns an error if serializing or writing the JSON output fails (JSON mode
+/// only).
 pub fn cmd_version(json: bool) -> Result<()> {
     if json {
         use crate::output::{print_json, CliVersionOutput};
@@ -24,13 +28,17 @@ pub fn cmd_version(json: bool) -> Result<()> {
 
 /// Generate an ECDSA P-256 keypair.
 /// Writes the private key to `output` (or stdout) and prints the public key.
+///
+/// # Errors
+/// Returns an error if keypair generation fails, writing the private key file
+/// fails, or JSON serialization fails.
 pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool) -> Result<()> {
     // Optionally seed additional entropy (informational; ring/p256 use OS RNG)
     if let Some(entropy_path) = entropy_file {
         eprintln!(
-            "Note: additional entropy from {:?} is not directly injectable into the OS RNG; \
+            "Note: additional entropy from {} is not directly injectable into the OS RNG; \
              the OS RNG is used regardless.",
-            entropy_path
+            entropy_path.display()
         );
     }
 
@@ -47,12 +55,12 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
 
     if let Some(out_path) = output {
         write_private_key(out_path, &priv_pem)?;
-        eprintln!("Private key written to {:?}", out_path);
+        eprintln!("Private key written to {}", out_path.display());
     } else {
-        print!("{}", priv_pem);
+        print!("{priv_pem}");
     }
 
-    eprintln!("Public key:\n{}", pub_pem);
+    eprintln!("Public key:\n{pub_pem}");
     Ok(())
 }
 
@@ -85,13 +93,18 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 /// Sign a firmware hex file with the given key.
 ///
 /// Generates two signatures for different bootloader versions (matching Python reference):
-///   - v1: signed over region using APPLICATION_END_PAGE=19 (bootloaders <=2.5.3)
-///   - v2: signed over region using APPLICATION_END_PAGE=20 (bootloaders >2.5.3)
+///   - v1: signed over region using `APPLICATION_END_PAGE=19` (bootloaders <=2.5.3)
+///   - v2: signed over region using `APPLICATION_END_PAGE=20` (bootloaders >2.5.3)
 ///
 /// The firmware field in the output JSON is the base64 of the HEX FILE TEXT,
 /// not the binary, matching the Python reference implementation.
 ///
 /// Outputs JSON {firmware, signature, versions} to stdout.
+///
+/// # Errors
+/// Returns an error if the signing key cannot be loaded, the firmware hex
+/// cannot be read or parsed, signing fails, or building or serializing the
+/// output JSON fails.
 pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
     let signing_key = load_signing_key(key_path)?;
 
@@ -111,19 +124,27 @@ pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
 }
 
 /// Merge Intel HEX files into a single output.
+///
+/// # Errors
+/// Returns an error if reading or parsing the input hex files, merging them,
+/// or writing the output file fails.
 pub fn cmd_mergehex(
     inputs: &[PathBuf],
     output: &Path,
     attestation_key: Option<&Path>,
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
-    let input_refs: Vec<&Path> = inputs.iter().map(|p| p.as_path()).collect();
+    let input_refs: Vec<&Path> = inputs.iter().map(std::path::PathBuf::as_path).collect();
     merge_hex_files(&input_refs, output, attestation_key, attestation_cert)?;
-    println!("Merged {} files into {:?}", inputs.len(), output);
+    println!("Merged {} files into {}", inputs.len(), output.display());
     Ok(())
 }
 
 /// List connected Solo devices.
+///
+/// # Errors
+/// Returns an error if enumerating HID devices fails or JSON serialization
+/// fails.
 pub fn cmd_ls(json: bool) -> Result<()> {
     use crate::output::{print_json, DeviceInfo, ListOutput};
 
@@ -162,6 +183,15 @@ pub fn cmd_ls(json: bool) -> Result<()> {
 
 #[cfg(all(test, unix))]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::write_private_key;
     use std::os::unix::fs::PermissionsExt;
 

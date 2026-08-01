@@ -9,6 +9,10 @@ use crate::firmware::FirmwareVersion;
 use crate::output::{print_json, PingOutput};
 
 /// Get firmware version from the device.
+///
+/// # Errors
+/// Returns an error if the version query fails (device/transport error or
+/// timeout), the response is too short, or JSON serialization fails.
 pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::output::{print_json, VersionOutput};
 
@@ -18,25 +22,29 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
             firmware_version: version.to_string(),
         });
     }
-    println!("Firmware version: {}", version);
+    println!("Firmware version: {version}");
     Ok(())
 }
 
 pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
     let response = hid.send_recv(CMD_GET_VERSION, &[])?;
-    if response.len() < 3 {
+    let [major, minor, patch, ..] = response.as_slice() else {
         return Err(SoloError::ProtocolError(
             "Version response too short".into(),
         ));
-    }
+    };
     Ok(FirmwareVersion::new(
-        response[0] as u32,
-        response[1] as u32,
-        response[2] as u32,
+        u32::from(*major),
+        u32::from(*minor),
+        u32::from(*patch),
     ))
 }
 
 /// Blink the LED on the device.
+///
+/// # Errors
+/// Returns an error if the wink command fails (device/transport error or
+/// timeout).
 pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
     hid.send_recv(CTAPHID_WINK, &[])?;
     println!("Winked!");
@@ -44,6 +52,11 @@ pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Send ping(s) and measure round-trip time.
+///
+/// # Errors
+/// Returns an error if a ping cannot be sent or received (device/transport
+/// error or timeout), the echoed data does not match what was sent, the ping
+/// index overflows, or JSON serialization fails.
 pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Result<()> {
     for i in 0..count {
         let start = Instant::now();
@@ -56,16 +69,20 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
             ));
         }
 
+        let index = i
+            .checked_add(1)
+            .ok_or_else(|| SoloError::ProtocolError("Ping index overflow".into()))?;
+
         if json {
             print_json(&PingOutput {
-                index: i + 1,
+                index,
                 data_len: data.len(),
                 duration_ms: elapsed.as_secs_f64() * 1000.0,
             })?;
         } else {
             println!(
                 "Ping {}: {} bytes, RTT = {:.3}ms",
-                i + 1,
+                index,
                 data.len(),
                 elapsed.as_secs_f64() * 1000.0
             );
@@ -75,6 +92,10 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
 }
 
 /// Program a keyboard sequence (HID keyboard emulation).
+///
+/// # Errors
+/// Returns an error if the data exceeds 64 bytes or the keyboard command fails
+/// (device/transport error or timeout).
 pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
     if data.len() > 64 {
         return Err(SoloError::ProtocolError(
@@ -87,6 +108,10 @@ pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
 }
 
 /// Factory reset the device.
+///
+/// # Errors
+/// Returns an error if reading the confirmation from stdin fails or the reset
+/// command fails (device/transport error or timeout).
 pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
     if !common::confirm("Warning: Your credentials will be lost!!! Type 'yes' to confirm:")? {
         println!("Aborted.");
@@ -102,6 +127,11 @@ pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Permanently disable firmware updates on the device.
+///
+/// # Errors
+/// Returns an error if reading the confirmation from stdin fails or the
+/// disable-bootloader command fails (device/transport error or a non-zero
+/// bootloader status).
 pub fn cmd_disable_updates(hid: &impl HidDevice) -> Result<()> {
     use crate::device::CMD_DISABLE_BOOTLOADER;
     if !common::confirm(
@@ -117,13 +147,22 @@ pub fn cmd_disable_updates(hid: &impl HidDevice) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
     use crate::device::mock::MockDevice;
     use crate::error::SoloError;
 
     // ── cmd_ping ────────────────────────────────────────────────────────────
 
-    /// The device echoes back the same payload: cmd_ping must succeed.
+    /// The device echoes back the same payload: `cmd_ping` must succeed.
     #[test]
     fn test_cmd_ping_success_echo() {
         let data = vec![0x01u8, 0x02, 0x03, 0x04];
@@ -132,7 +171,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// The device echoes back different bytes: cmd_ping must return an error.
+    /// The device echoes back different bytes: `cmd_ping` must return an error.
     #[test]
     fn test_cmd_ping_data_mismatch() {
         let sent = vec![0x01u8, 0x02, 0x03];
@@ -143,12 +182,11 @@ mod tests {
         let msg = result.unwrap_err().to_string();
         assert!(
             msg.contains("mismatch") || msg.contains("Protocol error"),
-            "unexpected error: {}",
-            msg
+            "unexpected error: {msg}"
         );
     }
 
-    /// When the mock queue is empty, send_recv returns Timeout: cmd_ping must propagate it.
+    /// When the mock queue is empty, `send_recv` returns Timeout: `cmd_ping` must propagate it.
     #[test]
     fn test_cmd_ping_timeout() {
         let device = MockDevice::new(vec![]);
@@ -156,7 +194,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), SoloError::Timeout));
     }
 
-    /// cmd_ping with count=0 performs no sends and must succeed immediately.
+    /// `cmd_ping` with count=0 performs no sends and must succeed immediately.
     #[test]
     fn test_cmd_ping_count_zero() {
         // No responses queued — if any send_recv is called, it would return Timeout.
@@ -209,7 +247,7 @@ mod tests {
         assert_eq!(version, FirmwareVersion::new(2, 5, 3));
     }
 
-    /// Fewer than 3 bytes must produce a ProtocolError.
+    /// Fewer than 3 bytes must produce a `ProtocolError`.
     #[test]
     fn test_cmd_key_version_too_short() {
         let device = MockDevice::new(vec![Ok(vec![1, 0])]);

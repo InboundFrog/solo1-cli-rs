@@ -4,6 +4,7 @@ use std::path::Path;
 
 use p256::{
     ecdsa::{SigningKey, VerifyingKey},
+    elliptic_curve::Generate,
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
     SecretKey,
 };
@@ -44,29 +45,41 @@ pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
 ];
 
 /// Generate a new ECDSA P-256 key pair.
-/// Returns (private_key_pem, public_key_pem).
+/// Returns (`private_key_pem`, `public_key_pem`).
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if the generated private or public key
+/// cannot be PEM-encoded.
 pub fn generate_keypair() -> Result<(String, String)> {
-    let signing_key = SigningKey::random(&mut rand::thread_rng());
+    let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
     let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
     let private_pem = secret_key
         .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
-        .map_err(|e| SoloError::CryptoError(format!("PEM encode error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("PEM encode error: {e}")))?;
     let verifying_key = VerifyingKey::from(&signing_key);
     let public_pem = verifying_key
         .to_public_key_pem(p256::pkcs8::LineEnding::LF)
-        .map_err(|e| SoloError::CryptoError(format!("Public key PEM encode error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Public key PEM encode error: {e}")))?;
     Ok((private_pem.to_string(), public_pem))
 }
 
 /// Load a signing key from a PEM file path.
+///
+/// # Errors
+/// Returns an error if the file cannot be read, or its contents are not a valid
+/// PKCS#8 PEM-encoded P-256 signing key.
 pub fn load_signing_key(path: &Path) -> Result<SigningKey> {
     let pem = std::fs::read_to_string(path)?;
     SigningKey::from_pkcs8_pem(&pem)
-        .map_err(|e| SoloError::CryptoError(format!("Failed to load key: {}", e)))
+        .map_err(|e| SoloError::CryptoError(format!("Failed to load key: {e}")))
 }
 
 /// Sign the firmware bytes with the given key.
 /// Returns the DER-encoded signature bytes.
+///
+/// # Errors
+/// This function is currently infallible; the `Result` return type is retained
+/// for API stability with signing backends that can fail.
 pub fn sign_firmware(key: &SigningKey, firmware_bytes: &[u8]) -> Result<Vec<u8>> {
     use p256::ecdsa::signature::Signer;
     use p256::ecdsa::{DerSignature, Signature};
@@ -77,12 +90,16 @@ pub fn sign_firmware(key: &SigningKey, firmware_bytes: &[u8]) -> Result<Vec<u8>>
 }
 
 /// Compute SHA-256 of the given bytes, returning hex string.
+#[must_use]
 pub fn sha256_hex(data: &[u8]) -> String {
     let hash = Sha256::digest(data);
     hex::encode(hash)
 }
 
 /// Compute SHA-256 of a file.
+///
+/// # Errors
+/// Returns an error if the file cannot be read.
 pub fn sha256_file(path: &Path) -> Result<Vec<u8>> {
     let data = std::fs::read(path)?;
     Ok(Sha256::digest(&data).to_vec())
@@ -91,12 +108,12 @@ pub fn sha256_file(path: &Path) -> Result<Vec<u8>> {
 /// The result of checking an attestation certificate fingerprint.
 ///
 /// Variants carry the device name as a `&'static str`.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum AttestationResult {
     /// The certificate fingerprint matched a known genuine consumer device.
     GenuineConsumer(&'static str),
     /// The certificate fingerprint matched a developer or non-production device.
-    /// These devices are real SoloKeys builds but are not genuine consumer hardware.
+    /// These devices are real `SoloKeys` builds but are not genuine consumer hardware.
     /// This variant is included for developer convenience and does **not** indicate
     /// that the device is a genuine end-user product.
     DeveloperDevice(&'static str),
@@ -104,7 +121,7 @@ pub enum AttestationResult {
     Unknown,
 }
 
-/// Check whether a DER-encoded attestation certificate matches a known SoloKeys fingerprint.
+/// Check whether a DER-encoded attestation certificate matches a known `SoloKeys` fingerprint.
 ///
 /// ## What this check does
 ///
@@ -117,13 +134,13 @@ pub enum AttestationResult {
 ///
 /// - **No certificate chain validation.** The attestation certificate is not
 ///   verified against a trusted root CA.  Chain validation is a FIDO requirement
-///   for full attestation verification (see CTAP2 §8.1 and WebAuthn §6.5.3).
+///   for full attestation verification (see CTAP2 §8.1 and `WebAuthn` §6.5.3).
 /// - **No validity date check.** An expired attestation certificate will still
 ///   match if its full DER bytes are identical to the known fingerprint.
 /// - **No revocation check.** There is no CRL or OCSP query.
 /// - **Fingerprints cover the full certificate DER, not just the public key.**
 ///   Any change to the certificate — e.g., updated validity dates or extensions —
-///   will cause a mismatch even for a device with a genuine SoloKeys attestation
+///   will cause a mismatch even for a device with a genuine `SoloKeys` attestation
 ///   key.  Newer firmware builds may produce certificates whose fingerprints are
 ///   not yet listed here.
 ///
@@ -133,6 +150,7 @@ pub enum AttestationResult {
 /// non-production builds.  They are included here for developer convenience but
 /// are returned as `DeveloperDevice`, not `GenuineConsumer`.  A
 /// `DeveloperDevice` result does **not** indicate genuine consumer hardware.
+#[must_use]
 pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
     let fp = sha256_hex(cert_der);
     match fp.as_str() {
@@ -186,19 +204,23 @@ pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate fr
 ///
 /// Unlike `sha256_hex(cert_der)` (which fingerprints the entire certificate),
 /// this function fingerprints only the `SubjectPublicKeyInfo` structure inside
-/// the TBSCertificate.  Two certificates for the same attestation key but with
+/// the `TBSCertificate`.  Two certificates for the same attestation key but with
 /// different validity dates or extensions will produce the **same** SPKI
 /// fingerprint and **different** full-DER fingerprints.
 ///
 /// This is the building block for future SPKI pinning (see TODO(0003) above).
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if `cert_der` is not a parseable X.509
+/// certificate, or its `SubjectPublicKeyInfo` cannot be re-encoded to DER.
 pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
     let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
     let spki_der = cert
         .tbs_certificate()
         .subject_public_key_info()
         .to_der()
-        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {e}")))?;
     Ok(sha256_hex(&spki_der))
 }
 
@@ -213,9 +235,13 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
 ///
 /// This check uses the local system clock and does not contact any external
 /// time service.  Clock skew on the host may produce false positives.
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if the certificate cannot be parsed, has
+/// expired (now > `notAfter`), or is not yet valid (now < `notBefore`).
 pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
     let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
 
     let validity = cert.tbs_certificate().validity();
     let now = std::time::SystemTime::now();
@@ -237,7 +263,7 @@ pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Verify a packed-attestation ECDSA signature (WebAuthn §8.2, ES256 only).
+/// Verify a packed-attestation ECDSA signature (`WebAuthn` §8.2, ES256 only).
 ///
 /// Checks that `sig_der` is a valid DER-encoded ECDSA P-256 signature, made by
 /// the key certified in `cert_der`, over the message
@@ -251,6 +277,11 @@ pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
 /// Returns `Ok(())` only if the signature verifies.  Any parse failure
 /// (certificate, public key, or signature DER) or signature mismatch returns
 /// `Err(SoloError::CryptoError(...))`.
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if the certificate, its public key, or the
+/// signature DER cannot be parsed, the message length overflows, or the
+/// signature does not verify.
 pub fn verify_attestation_signature(
     cert_der: &[u8],
     auth_data: &[u8],
@@ -260,20 +291,24 @@ pub fn verify_attestation_signature(
     use p256::ecdsa::{signature::Verifier, DerSignature};
 
     let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
     let spki_der = cert
         .tbs_certificate()
         .subject_public_key_info()
         .to_der()
-        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {e}")))?;
     let verifying_key = VerifyingKey::from_public_key_der(&spki_der).map_err(|e| {
-        SoloError::CryptoError(format!("Attestation public key is not ECDSA P-256: {}", e))
+        SoloError::CryptoError(format!("Attestation public key is not ECDSA P-256: {e}"))
     })?;
 
     let sig = DerSignature::try_from(sig_der)
-        .map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {}", e)))?;
+        .map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {e}")))?;
 
-    let mut message = Vec::with_capacity(auth_data.len() + client_data_hash.len());
+    let capacity = auth_data
+        .len()
+        .checked_add(client_data_hash.len())
+        .ok_or_else(|| SoloError::CryptoError("Attestation message length overflow".into()))?;
+    let mut message = Vec::with_capacity(capacity);
     message.extend_from_slice(auth_data);
     message.extend_from_slice(client_data_hash);
 
@@ -283,6 +318,7 @@ pub fn verify_attestation_signature(
 }
 
 /// Websafe base64 encoding (RFC 4648 URL-safe, no padding).
+#[must_use]
 pub fn websafe_b64_encode(data: &[u8]) -> String {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
@@ -290,16 +326,29 @@ pub fn websafe_b64_encode(data: &[u8]) -> String {
 }
 
 /// Websafe base64 decoding.
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if `s` is not valid websafe base64
+/// (RFC 4648 URL-safe, no padding).
 pub fn websafe_b64_decode(s: &str) -> Result<Vec<u8>> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
     URL_SAFE_NO_PAD
         .decode(s)
-        .map_err(|e| SoloError::FirmwareError(format!("Base64 decode error: {}", e)))
+        .map_err(|e| SoloError::FirmwareError(format!("Base64 decode error: {e}")))
 }
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
     use super::*;
 
     #[test]
@@ -344,13 +393,13 @@ mod tests {
 
     #[test]
     fn test_sign_and_verify_firmware() {
-        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        use p256::ecdsa::{signature::Verifier, DerSignature, VerifyingKey};
+        let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
         let firmware = b"fake firmware data for testing";
         let sig_der = sign_firmware(&signing_key, firmware).unwrap();
         assert!(!sig_der.is_empty());
 
         // Verify using p256
-        use p256::ecdsa::{signature::Verifier, DerSignature, VerifyingKey};
         let vk = VerifyingKey::from(&signing_key);
         let hash = Sha256::digest(firmware);
         let sig = DerSignature::try_from(sig_der.as_slice()).unwrap();
@@ -379,7 +428,7 @@ mod tests {
         // Verify all fingerprint constants are valid 32-byte hex strings
         for (fp, _name) in KNOWN_FINGERPRINTS {
             let bytes = hex::decode(fp).expect("fingerprint should be valid hex");
-            assert_eq!(bytes.len(), 32, "fingerprint should be 32 bytes: {}", fp);
+            assert_eq!(bytes.len(), 32, "fingerprint should be 32 bytes: {fp}");
         }
     }
 
@@ -490,8 +539,7 @@ mod tests {
         let msg = err.to_string();
         assert!(
             msg.contains("expired") || msg.contains("Expired"),
-            "Error should mention expiry, got: {}",
-            msg
+            "Error should mention expiry, got: {msg}"
         );
     }
 
@@ -506,8 +554,7 @@ mod tests {
         let msg = err.to_string();
         assert!(
             msg.contains("not yet valid") || msg.contains("Not yet valid"),
-            "Error should mention not-yet-valid, got: {}",
-            msg
+            "Error should mention not-yet-valid, got: {msg}"
         );
     }
 

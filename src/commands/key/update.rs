@@ -6,6 +6,12 @@ use crate::firmware;
 use crate::vlog;
 
 /// Update the device firmware.
+///
+/// # Errors
+/// Returns an error if the firmware cannot be loaded from the given file or
+/// downloaded from GitHub, if the release contains no firmware asset, if the
+/// firmware JSON is malformed, if reconnecting in bootloader mode fails, if
+/// selecting the signature fails, or if writing the firmware fails.
 pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<()> {
     use crate::commands::program::write_firmware;
     use crate::crypto::sha256_hex;
@@ -13,7 +19,7 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
     use crate::firmware::{download_url, fetch_latest_release, FirmwareJson};
 
     let fw_json = if let Some(path) = firmware_file {
-        println!("Loading firmware from {:?}", path);
+        println!("Loading firmware from {}", path.display());
         FirmwareJson::from_file(path)?
     } else {
         println!("Fetching latest firmware from GitHub...");
@@ -25,13 +31,13 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
         println!("Downloading: {}", asset.name);
         let bytes = download_url(&asset.browser_download_url)?;
         let json_str = String::from_utf8(bytes)
-            .map_err(|e| SoloError::FirmwareError(format!("Firmware JSON UTF-8 error: {}", e)))?;
+            .map_err(|e| SoloError::FirmwareError(format!("Firmware JSON UTF-8 error: {e}")))?;
         serde_json::from_str(&json_str)?
     };
 
     let (flash_start, firmware_bytes) = fw_json.firmware_binary()?;
     println!("Firmware size: {} bytes", firmware_bytes.len());
-    println!("Flash start:   0x{:08X}", flash_start);
+    println!("Flash start:   0x{flash_start:08X}");
     println!("Firmware SHA-256: {}", sha256_hex(&firmware_bytes));
 
     // Enter bootloader mode. CMD_ENTER_BOOT (0x51) is a direct firmware vendor command —
