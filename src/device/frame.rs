@@ -17,26 +17,45 @@ pub enum FramePayload {
 
 impl CtapHidFrame {
     /// Encode the frame into exactly 65 bytes (report ID 0 + 64 bytes).
-    #[must_use]
-    pub fn encode(&self) -> [u8; 65] {
+    ///
+    /// # Errors
+    /// Returns an error if the payload does not fit within a single HID frame.
+    pub fn encode(&self) -> Result<[u8; 65]> {
         let mut buf = [0u8; 65];
         // byte 0 = report id (always 0)
         buf[1..5].copy_from_slice(&self.channel_id);
         match &self.payload {
             FramePayload::Init { cmd, bcnt, data } => {
                 buf[5] = *cmd | 0x80; // set high bit for init frame
-                buf[6] = (bcnt >> 8) as u8;
-                buf[7] = *bcnt as u8;
+                let [bcnt_hi, bcnt_lo] = bcnt.to_be_bytes();
+                buf[6] = bcnt_hi;
+                buf[7] = bcnt_lo;
                 let n = data.len().min(57);
-                buf[8..8 + n].copy_from_slice(&data[..n]);
+                let end = 8usize
+                    .checked_add(n)
+                    .ok_or_else(|| SoloError::ProtocolError("frame length overflow".into()))?;
+                let src = data
+                    .get(..n)
+                    .ok_or_else(|| SoloError::ProtocolError("frame data too short".into()))?;
+                buf.get_mut(8..end)
+                    .ok_or_else(|| SoloError::ProtocolError("frame buffer overflow".into()))?
+                    .copy_from_slice(src);
             }
             FramePayload::Cont { seq, data } => {
                 buf[5] = *seq & 0x7F; // clear high bit for cont frame
                 let n = data.len().min(59);
-                buf[6..6 + n].copy_from_slice(&data[..n]);
+                let end = 6usize
+                    .checked_add(n)
+                    .ok_or_else(|| SoloError::ProtocolError("frame length overflow".into()))?;
+                let src = data
+                    .get(..n)
+                    .ok_or_else(|| SoloError::ProtocolError("frame data too short".into()))?;
+                buf.get_mut(6..end)
+                    .ok_or_else(|| SoloError::ProtocolError("frame buffer overflow".into()))?
+                    .copy_from_slice(src);
             }
         }
-        buf
+        Ok(buf)
     }
 
     /// Parse a 64-byte raw HID report (no report ID byte).
@@ -45,13 +64,27 @@ impl CtapHidFrame {
             return Err(SoloError::ProtocolError("HID frame too short".into()));
         }
         let mut channel_id = [0u8; 4];
-        channel_id.copy_from_slice(&raw[0..4]);
-        let byte4 = raw[4];
+        channel_id.copy_from_slice(
+            raw.get(..4)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?,
+        );
+        let byte4 = *raw
+            .get(4)
+            .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
         if byte4 & 0x80 != 0 {
             // Init frame
             let cmd = byte4 & 0x7F;
-            let bcnt = (u16::from(raw[5]) << 8) | u16::from(raw[6]);
-            let data = raw[7..].to_vec();
+            let bcnt_hi = *raw
+                .get(5)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
+            let bcnt_lo = *raw
+                .get(6)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
+            let bcnt = u16::from_be_bytes([bcnt_hi, bcnt_lo]);
+            let data = raw
+                .get(7..)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?
+                .to_vec();
             Ok(Self {
                 channel_id,
                 payload: FramePayload::Init { cmd, bcnt, data },
@@ -59,7 +92,10 @@ impl CtapHidFrame {
         } else {
             // Continuation frame
             let seq = byte4 & 0x7F;
-            let data = raw[5..].to_vec();
+            let data = raw
+                .get(5..)
+                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?
+                .to_vec();
             Ok(Self {
                 channel_id,
                 payload: FramePayload::Cont { seq, data },
@@ -86,12 +122,15 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
             CTAPHID_MAX_PAYLOAD
         )));
     }
-    let bcnt = data.len() as u16;
+    let bcnt = u16::try_from(data.len())
+        .map_err(|_| SoloError::ProtocolError("CTAPHID payload length exceeds u16".into()))?;
     let mut frames = Vec::new();
 
     // First (init) frame: up to 57 bytes of payload
     let first_data = if data.len() > 57 {
-        data[..57].to_vec()
+        data.get(..57)
+            .ok_or_else(|| SoloError::ProtocolError("CTAPHID payload too short".into()))?
+            .to_vec()
     } else {
         data.to_vec()
     };
@@ -109,16 +148,26 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
         let mut offset = 57;
         let mut seq: u8 = 0;
         while offset < data.len() {
-            let end = (offset + 59).min(data.len());
+            let end = offset
+                .checked_add(59)
+                .ok_or_else(|| SoloError::ProtocolError("CTAPHID offset overflow".into()))?
+                .min(data.len());
             frames.push(CtapHidFrame {
                 channel_id: *cid,
                 payload: FramePayload::Cont {
                     seq,
-                    data: data[offset..end].to_vec(),
+                    data: data
+                        .get(offset..end)
+                        .ok_or_else(|| {
+                            SoloError::ProtocolError("CTAPHID slice out of range".into())
+                        })?
+                        .to_vec(),
                 },
             });
             offset = end;
-            seq += 1;
+            seq = seq
+                .checked_add(1)
+                .ok_or_else(|| SoloError::ProtocolError("CTAPHID sequence overflow".into()))?;
         }
     }
 
@@ -130,8 +179,11 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     if frames.is_empty() {
         return Err(SoloError::ProtocolError("No frames to reassemble".into()));
     }
-    let (cmd, bcnt, first_data) = match &frames[0].payload {
-        FramePayload::Init { cmd, bcnt, data } => (*cmd, *bcnt as usize, data.clone()),
+    let first = frames
+        .first()
+        .ok_or_else(|| SoloError::ProtocolError("No frames to reassemble".into()))?;
+    let (cmd, bcnt, first_data) = match &first.payload {
+        FramePayload::Init { cmd, bcnt, data } => (*cmd, usize::from(*bcnt), data.clone()),
         FramePayload::Cont { .. } => {
             return Err(SoloError::ProtocolError(
                 "First frame is not an init frame".into(),
@@ -140,7 +192,10 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     };
 
     let mut payload = first_data;
-    for frame in &frames[1..] {
+    for frame in frames
+        .get(1..)
+        .ok_or_else(|| SoloError::ProtocolError("frame index out of range".into()))?
+    {
         match &frame.payload {
             FramePayload::Cont { data, .. } => payload.extend_from_slice(data),
             FramePayload::Init { .. } => {
@@ -161,22 +216,28 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
 /// field can express (65535 bytes), which would otherwise be silently
 /// truncated.
 pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
-    if data.len() > u16::MAX as usize {
+    if data.len() > usize::from(u16::MAX) {
         return Err(SoloError::ProtocolError(format!(
             "Bootloader packet data too large: {} bytes (max {})",
             data.len(),
             u16::MAX
         )));
     }
-    let mut packet = Vec::with_capacity(10 + data.len());
+    let capacity = 10usize
+        .checked_add(data.len())
+        .ok_or_else(|| SoloError::ProtocolError("bootloader packet capacity overflow".into()))?;
+    let mut packet = Vec::with_capacity(capacity);
     packet.push(cmd);
-    packet.push((addr & 0xFF) as u8);
-    packet.push(((addr >> 8) & 0xFF) as u8);
-    packet.push(((addr >> 16) & 0xFF) as u8);
+    let [addr0, addr1, addr2, _] = addr.to_le_bytes();
+    packet.push(addr0);
+    packet.push(addr1);
+    packet.push(addr2);
     packet.extend_from_slice(&SOLO_TAG);
-    let len = data.len() as u16;
-    packet.push((len >> 8) as u8);
-    packet.push(len as u8);
+    let len = u16::try_from(data.len())
+        .map_err(|_| SoloError::ProtocolError("bootloader packet length exceeds u16".into()))?;
+    let [len_hi, len_lo] = len.to_be_bytes();
+    packet.push(len_hi);
+    packet.push(len_lo);
     packet.extend_from_slice(data);
     Ok(packet)
 }
@@ -209,7 +270,7 @@ mod tests {
                 data: data,
             },
         };
-        let encoded = frame.encode();
+        let encoded = frame.encode().unwrap();
         assert_eq!(encoded[0], 0); // report ID
         assert_eq!(&encoded[1..5], &cid);
         assert_eq!(encoded[5], 0x06 | 0x80); // high bit set
@@ -238,7 +299,7 @@ mod tests {
             channel_id: cid,
             payload: FramePayload::Cont { seq: 2, data: data },
         };
-        let encoded = frame.encode();
+        let encoded = frame.encode().unwrap();
         assert_eq!(encoded[5], 0x02); // seq, no high bit
         assert_eq!(&encoded[6..9], &[0x01, 0x02, 0x03]);
 

@@ -73,7 +73,10 @@ impl SoloHid {
             if devices.len() > 1 {
                 return Err(SoloError::NonUniqueDevice);
             }
-            devices[0]
+            devices
+                .first()
+                .copied()
+                .ok_or_else(|| SoloError::DeviceError("No device available".into()))?
         };
 
         let device = info.open_device(&api)?;
@@ -95,7 +98,7 @@ impl SoloHid {
         vlog!("CTAPHID_INIT: sending nonce {}", hex::encode(nonce));
         let frames = build_ctaphid_frames(&CTAPHID_BROADCAST_CID, CTAPHID_INIT, &nonce)?;
         for frame in &frames {
-            let encoded = frame.encode();
+            let encoded = frame.encode()?;
             self.device.write(&encoded)?;
         }
 
@@ -106,7 +109,11 @@ impl SoloHid {
             ));
         }
         // Response: nonce[8] | channel_id[4] | ...
-        self.channel_id.copy_from_slice(&response[8..12]);
+        self.channel_id.copy_from_slice(
+            response
+                .get(8..12)
+                .ok_or_else(|| SoloError::ProtocolError("CTAPHID_INIT response too short".into()))?,
+        );
         vlog!(
             "CTAPHID_INIT: assigned channel_id {}",
             hex::encode(self.channel_id)
@@ -129,16 +136,55 @@ impl SoloHid {
             if data.len() <= 64 {
                 hex::encode(data)
             } else {
-                format!("{}...", hex::encode(&data[..64]))
+                format!("{}...", hex::encode(data.get(..64).unwrap_or(data)))
             }
         );
         let frames = build_ctaphid_frames(&self.channel_id, cmd, data)?;
         vlog!("HID send: {} frame(s)", frames.len());
         for frame in &frames {
-            let encoded = frame.encode();
+            let encoded = frame.encode()?;
             self.device.write(&encoded)?;
         }
         Ok(())
+    }
+
+    /// Read a single HID frame from the device, stripping the platform report-ID
+    /// byte when present. Returns `Ok(None)` when the read timed out with no data.
+    fn read_frame(&self) -> Result<Option<CtapHidFrame>> {
+        let mut buf = [0u8; 65];
+        let n = self
+            .device
+            .read_timeout(&mut buf, 500)
+            .map_err(|e| SoloError::DeviceError(format!("HID read error: {e}")))?;
+
+        if n == 0 {
+            return Ok(None);
+        }
+
+        // The HID report may or may not include the report ID byte depending on platform.
+        // hidapi on most platforms does NOT include the report ID byte in the read buffer.
+        let raw = buf
+            .get(..n)
+            .ok_or_else(|| SoloError::ProtocolError("HID read length invalid".into()))?;
+        // If first byte looks like a report ID (0x00), skip it
+        let frame_bytes = if n >= 65
+            && *raw
+                .first()
+                .ok_or_else(|| SoloError::ProtocolError("HID read buffer empty".into()))?
+                == 0
+        {
+            raw.get(1..65)
+                .ok_or_else(|| SoloError::ProtocolError("HID read buffer too short".into()))?
+        } else if n >= 64 {
+            raw.get(..64)
+                .ok_or_else(|| SoloError::ProtocolError("HID read buffer too short".into()))?
+        } else {
+            // pad to 64
+            raw.get(..n)
+                .ok_or_else(|| SoloError::ProtocolError("HID read length invalid".into()))?
+        };
+
+        Ok(Some(CtapHidFrame::parse(frame_bytes)?))
     }
 
     /// Receive a response for a given command, with timeout.
@@ -153,30 +199,9 @@ impl SoloHid {
             if start.elapsed() > timeout {
                 return Err(SoloError::Timeout);
             }
-            let mut buf = [0u8; 65];
-            let n = self
-                .device
-                .read_timeout(&mut buf, 500)
-                .map_err(|e| SoloError::DeviceError(format!("HID read error: {e}")))?;
-
-            if n == 0 {
+            let Some(frame) = self.read_frame()? else {
                 continue;
-            }
-
-            // The HID report may or may not include the report ID byte depending on platform.
-            // hidapi on most platforms does NOT include the report ID byte in the read buffer.
-            let raw = &buf[..n];
-            // If first byte looks like a report ID (0x00), skip it
-            let frame_bytes = if n >= 65 && raw[0] == 0 {
-                &raw[1..65]
-            } else if n >= 64 {
-                &raw[..64]
-            } else {
-                // pad to 64
-                &raw[..n]
             };
-
-            let frame = CtapHidFrame::parse(frame_bytes)?;
 
             // Skip frames not for our channel (unless this is INIT response on broadcast)
             let for_us =
@@ -204,7 +229,7 @@ impl SoloHid {
                         "HID recv: init frame cmd=0x{:02X} bcnt={} first_data={}",
                         cmd,
                         bcnt,
-                        hex::encode(&data[..data.len().min(16)])
+                        hex::encode(data.get(..data.len().min(16)).unwrap_or(data))
                     );
                     if *cmd != (expected_cmd & 0x7F) {
                         vlog!(
@@ -214,8 +239,8 @@ impl SoloHid {
                         );
                         continue;
                     }
-                    total_bcnt = Some(*bcnt as usize);
-                    collected = data.len().min(*bcnt as usize);
+                    total_bcnt = Some(usize::from(*bcnt));
+                    collected = data.len().min(usize::from(*bcnt));
                     frames.clear();
                     frames.push(frame);
                 }
@@ -224,7 +249,9 @@ impl SoloHid {
                     if let Some(tb) = total_bcnt {
                         frames.push(frame.clone());
                         if let FramePayload::Cont { data, .. } = &frame.payload {
-                            collected += data.len();
+                            collected = collected.checked_add(data.len()).ok_or_else(|| {
+                                SoloError::ProtocolError("response length overflow".into())
+                            })?;
                         }
                         if collected >= tb {
                             break;
@@ -247,7 +274,7 @@ impl SoloHid {
             if payload.len() <= 32 {
                 hex::encode(&payload)
             } else {
-                format!("{}...", hex::encode(&payload[..32]))
+                format!("{}...", hex::encode(payload.get(..32).unwrap_or(&payload)))
             }
         );
         Ok(payload)
@@ -276,13 +303,18 @@ impl SoloHid {
         if resp.is_empty() {
             return Ok(resp);
         }
-        let status = resp[0];
+        let status = *resp
+            .first()
+            .ok_or_else(|| SoloError::ProtocolError("empty bootloader response".into()))?;
         if status != 0x00 {
             return Err(SoloError::ProtocolError(format!(
                 "Bootloader error status: 0x{status:02X}"
             )));
         }
-        Ok(resp[1..].to_vec())
+        Ok(resp
+            .get(1..)
+            .ok_or_else(|| SoloError::ProtocolError("bootloader response too short".into()))?
+            .to_vec())
     }
 }
 
