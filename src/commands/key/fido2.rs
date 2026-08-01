@@ -349,7 +349,6 @@ mod tests {
     /// and SHA-256 it; the test asserts that the resulting 32-byte secrets match.
     #[test]
     fn ecdh_key_agreement_both_sides_agree() {
-
         // Generate deterministic-within-test keys using p256::SecretKey::random
         let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
@@ -509,7 +508,6 @@ mod tests {
     /// matches the shared secret the device side would compute.
     #[test]
     fn prepare_hmac_secret_input_shared_secret_matches_device() {
-
         let challenge = "another-test-challenge";
         let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();

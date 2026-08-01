@@ -29,7 +29,9 @@ pub fn list_solo_devices() -> Result<Vec<SoloDevice>> {
             path: d.path().to_string_lossy().to_string(),
             serial: d.serial_number().map(std::string::ToString::to_string),
             product: d.product_string().map(std::string::ToString::to_string),
-            manufacturer: d.manufacturer_string().map(std::string::ToString::to_string),
+            manufacturer: d
+                .manufacturer_string()
+                .map(std::string::ToString::to_string),
         })
         .collect();
     Ok(devices)

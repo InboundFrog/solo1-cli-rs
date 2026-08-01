@@ -91,10 +91,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
     println!("AAGUID:                         {aaguid}");
     if !options.is_empty() {
-        let mut opt_strs: Vec<String> = options
-            .iter()
-            .map(|(k, v)| format!("{k}: {v}"))
-            .collect();
+        let mut opt_strs: Vec<String> = options.iter().map(|(k, v)| format!("{k}: {v}")).collect();
         opt_strs.sort();
         println!("Options:                        {}", opt_strs.join(", "));
     }
@@ -427,9 +424,7 @@ pub fn cmd_credential_rm(
     if let Some(id) = credential_id {
         cred_id_bytes = base64::engine::general_purpose::STANDARD
             .decode(id)
-            .map_err(|e| {
-                SoloError::ProtocolError(format!("Invalid base64 credential ID: {e}"))
-            })?;
+            .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {e}")))?;
         display_label = id.to_string();
     } else {
         let host = host.expect("host required when credential_id is absent");

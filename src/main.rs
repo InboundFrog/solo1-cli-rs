@@ -237,7 +237,7 @@ fn run_monitor(port: &str) -> error::Result<()> {
     println!("Monitoring serial port {port} at 115200 baud...");
     println!("Press Ctrl+C to stop.");
 
-    let port = serialport::new(port, 115200)
+    let port = serialport::new(port, 115_200)
         .timeout(std::time::Duration::from_millis(100))
         .open()
         .map_err(|e| error::SoloError::DeviceError(format!("Serial port error: {e}")))?;

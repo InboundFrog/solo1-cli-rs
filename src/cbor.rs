@@ -56,9 +56,8 @@ pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a V
 
 /// Require a value by integer key; error with context if missing.
 pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> Result<&'a Value> {
-    find_int_key(pairs, key).ok_or_else(|| {
-        SoloError::ProtocolError(format!("{ctx}: key {key} missing in CBOR map"))
-    })
+    find_int_key(pairs, key)
+        .ok_or_else(|| SoloError::ProtocolError(format!("{ctx}: key {key} missing in CBOR map")))
 }
 
 /// Extract bytes from a required integer-keyed entry.

@@ -47,13 +47,12 @@ impl FirmwareJson {
         let bytes = websafe_b64_decode(&self.firmware)?;
         // Intel HEX files always start with ':'
         if bytes.first() == Some(&b':') {
-            let hex_str = String::from_utf8(bytes).map_err(|e| {
-                SoloError::FirmwareError(format!("Firmware HEX UTF-8 error: {e}"))
-            })?;
+            let hex_str = String::from_utf8(bytes)
+                .map_err(|e| SoloError::FirmwareError(format!("Firmware HEX UTF-8 error: {e}")))?;
             parse_hex_string(&hex_str)
         } else {
             // Raw binary — use the Solo 1 application start address
-            Ok((0x08005000, bytes))
+            Ok((0x0800_5000, bytes))
         }
     }
 
@@ -91,7 +90,8 @@ impl FirmwareJson {
 pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
     match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
-            let v = FirmwareVersion::new(u32::from(resp[0]), u32::from(resp[1]), u32::from(resp[2]));
+            let v =
+                FirmwareVersion::new(u32::from(resp[0]), u32::from(resp[1]), u32::from(resp[2]));
             println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
@@ -403,7 +403,7 @@ fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u
 
     // Device settings at ATTEST_ADDR+32 (8 bytes little-endian u64)
     // 0xAA551E7900000000 | lock_byte (lock_byte=0 since no --lock flag)
-    let device_settings: u64 = 0xAA551E7900000000u64;
+    let device_settings: u64 = 0xAA55_1E79_0000_0000_u64;
     let ds_bytes = device_settings.to_le_bytes();
     for (i, &b) in ds_bytes.iter().enumerate() {
         byte_map.insert(attest_addr + 32 + i as u32, b);
@@ -589,7 +589,7 @@ fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> u
 }
 
 /// Flash base address for STM32L4.
-pub const FLASH_BASE: u32 = 0x08000000;
+pub const FLASH_BASE: u32 = 0x0800_0000;
 /// Total number of flash pages.
 pub const FLASH_PAGES: u32 = 128;
 /// Flash page size in bytes.
@@ -852,7 +852,7 @@ mod tests {
             Record::EndOfFile,
         ];
         let (base, bytes) = hex_records_to_binary(&records).unwrap();
-        assert_eq!(base, 0x08000000);
+        assert_eq!(base, 0x0800_0000);
         assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
     }
 
@@ -899,7 +899,7 @@ mod tests {
         // A normal small HEX file is unaffected by the overflow/span checks.
         let hex = ":020000040800F2\n:0400000001020304F2\n:00000001FF\n";
         let (base, bytes) = parse_hex_string(hex).unwrap();
-        assert_eq!(base, 0x08000000);
+        assert_eq!(base, 0x0800_0000);
         assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04]);
     }
 
@@ -916,10 +916,10 @@ mod tests {
 
     #[test]
     fn test_flash_addr() {
-        assert_eq!(flash_addr(0), 0x08000000);
-        assert_eq!(flash_addr(1), 0x08000800);
-        assert_eq!(flash_addr(108), 0x08036000);
-        assert_eq!(flash_addr(113), 0x08038800);
+        assert_eq!(flash_addr(0), 0x0800_0000);
+        assert_eq!(flash_addr(1), 0x0800_0800);
+        assert_eq!(flash_addr(108), 0x0803_6000);
+        assert_eq!(flash_addr(113), 0x0803_8800);
     }
 
     #[test]
@@ -939,7 +939,7 @@ mod tests {
         // AUTH_WORD_ADDR = flash_addr(108) - 8 = 0x08036000 - 8 = 0x08035FF8
         let app_end_page = FLASH_PAGES - 20; // 108
         let auth_word_addr = flash_addr(app_end_page) - 8;
-        assert_eq!(auth_word_addr, 0x08035FF8);
+        assert_eq!(auth_word_addr, 0x0803_5FF8);
     }
 
     #[test]

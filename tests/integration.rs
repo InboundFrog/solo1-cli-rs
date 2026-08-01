@@ -62,7 +62,7 @@ fn test_firmware_sign_versioned_regions_differ() {
     use tempfile::NamedTempFile;
 
     // Build a minimal Intel HEX file starting at 0x08005000 (app start)
-    let app_start: u32 = 0x08005000;
+    let app_start: u32 = 0x0800_5000;
     let mut hex_content = String::new();
     // Extended linear address for 0x0800_xxxx
     hex_content.push_str(":020000040800F2\n");
@@ -77,9 +77,7 @@ fn test_firmware_sign_versioned_regions_differ() {
     hex_content.push_str(&format!(
         ":10{:04X}00{}  {:02X}\n",
         offset,
-        data.iter()
-            .map(|b| format!("{b:02X}"))
-            .collect::<String>(),
+        data.iter().map(|b| format!("{b:02X}")).collect::<String>(),
         checksum
     ));
     hex_content.push_str(":00000001FF\n");
@@ -128,11 +126,11 @@ fn test_mergehex_auth_word_address() {
     // auth_word_addr = 0x08036000 - 8 = 0x08035FF8
     assert_eq!(
         flash_addr(108),
-        0x08036000,
+        0x0803_6000,
         "flash_addr(108) should be 0x08036000"
     );
     assert_eq!(
-        auth_word_addr, 0x08035FF8,
+        auth_word_addr, 0x0803_5FF8,
         "AUTH_WORD_ADDR should be 0x08035FF8"
     );
 
@@ -140,10 +138,10 @@ fn test_mergehex_auth_word_address() {
     let attest_addr = flash_addr(128 - 15);
     assert_eq!(
         flash_addr(113),
-        0x08038800,
+        0x0803_8800,
         "flash_addr(113) should be 0x08038800"
     );
-    assert_eq!(attest_addr, 0x08038800, "ATTEST_ADDR should be 0x08038800");
+    assert_eq!(attest_addr, 0x0803_8800, "ATTEST_ADDR should be 0x08038800");
 }
 
 /// Test that `version_matches_constraint` handles the "=" operator correctly.
@@ -361,9 +359,9 @@ fn test_known_fingerprints_validity() {
 fn test_flash_addr_calculation() {
     use solo1::firmware::flash_addr;
 
-    assert_eq!(flash_addr(0), 0x08000000);
-    assert_eq!(flash_addr(1), 0x08000800); // 0x08000000 + 2048
-    assert_eq!(flash_addr(108), 0x08036000); // 0x08000000 + 108 * 2048
-    assert_eq!(flash_addr(113), 0x08038800); // ATTEST_ADDR
-    assert_eq!(flash_addr(128), 0x08040000); // one past end
+    assert_eq!(flash_addr(0), 0x0800_0000);
+    assert_eq!(flash_addr(1), 0x0800_0800); // 0x08000000 + 2048
+    assert_eq!(flash_addr(108), 0x0803_6000); // 0x08000000 + 108 * 2048
+    assert_eq!(flash_addr(113), 0x0803_8800); // ATTEST_ADDR
+    assert_eq!(flash_addr(128), 0x0804_0000); // one past end
 }

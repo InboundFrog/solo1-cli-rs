@@ -227,10 +227,7 @@ mod tests {
         let data = vec![0x01, 0x02, 0x03];
         let frame = CtapHidFrame {
             channel_id: cid,
-            payload: FramePayload::Cont {
-                seq: 2,
-                data: data,
-            },
+            payload: FramePayload::Cont { seq: 2, data: data },
         };
         let encoded = frame.encode();
         assert_eq!(encoded[5], 0x02); // seq, no high bit
@@ -291,7 +288,7 @@ mod tests {
     fn test_bootloader_packet() {
         // Address 0x08001000: firmware strips 0x08000000, leaving offset 0x001000.
         // Little-endian 3-byte encoding of 0x001000: [0x00, 0x10, 0x00]
-        let pkt = build_bootloader_packet(0x40, 0x08001000, &[0xDE, 0xAD]).unwrap();
+        let pkt = build_bootloader_packet(0x40, 0x0800_1000, &[0xDE, 0xAD]).unwrap();
         assert_eq!(pkt[0], 0x40); // cmd
         assert_eq!(&pkt[1..4], &[0x00, 0x10, 0x00]); // addr little-endian (LSB first)
         assert_eq!(&pkt[4..8], &SOLO_TAG); // tag
@@ -301,11 +298,11 @@ mod tests {
 
         // Address where byte order matters: 0x08010000 → offset 0x010000
         // Little-endian: [0x00, 0x00, 0x01]  (NOT [0x01, 0x00, 0x00])
-        let pkt2 = build_bootloader_packet(0x40, 0x08010000, &[]).unwrap();
+        let pkt2 = build_bootloader_packet(0x40, 0x0801_0000, &[]).unwrap();
         assert_eq!(&pkt2[1..4], &[0x00, 0x00, 0x01]);
 
         // 0x08012345 → offset 0x012345 → LE: [0x45, 0x23, 0x01]
-        let pkt3 = build_bootloader_packet(0x40, 0x08012345, &[]).unwrap();
+        let pkt3 = build_bootloader_packet(0x40, 0x0801_2345, &[]).unwrap();
         assert_eq!(&pkt3[1..4], &[0x45, 0x23, 0x01]);
     }
 
@@ -342,7 +339,7 @@ mod tests {
     #[test]
     fn test_bootloader_packet_max_data_ok() {
         let data = vec![0xA5; u16::MAX as usize];
-        let pkt = build_bootloader_packet(0x40, 0x08000000, &data).unwrap();
+        let pkt = build_bootloader_packet(0x40, 0x0800_0000, &data).unwrap();
         assert_eq!(pkt[8], 0xFF); // len high
         assert_eq!(pkt[9], 0xFF); // len low
         assert_eq!(pkt.len(), 10 + u16::MAX as usize);
@@ -351,7 +348,7 @@ mod tests {
     #[test]
     fn test_bootloader_packet_oversized_data_err() {
         let data = vec![0xA5; u16::MAX as usize + 1];
-        let err = build_bootloader_packet(0x40, 0x08000000, &data).unwrap_err();
+        let err = build_bootloader_packet(0x40, 0x0800_0000, &data).unwrap_err();
         assert!(matches!(err, SoloError::ProtocolError(_)));
     }
 }

@@ -203,39 +203,39 @@ mod tests {
 
     #[test]
     fn test_addresses_exact_two_chunks() {
-        let start: u32 = 0x08005000;
+        let start: u32 = 0x0800_5000;
         let chunks = compute_chunk_addresses(start, 512);
         assert_eq!(chunks.len(), 2);
         // First chunk: starts at flash_start, full 256 bytes
-        assert_eq!(chunks[0], (0x08005000, 256));
+        assert_eq!(chunks[0], (0x0800_5000, 256));
         // Second chunk: address advances by 256, full 256 bytes
-        assert_eq!(chunks[1], (0x08005100, 256));
+        assert_eq!(chunks[1], (0x0800_5100, 256));
     }
 
     #[test]
     fn test_addresses_partial_last_chunk() {
         // 300-byte firmware: first chunk full (256), second chunk partial (44)
-        let start: u32 = 0x08005000;
+        let start: u32 = 0x0800_5000;
         let chunks = compute_chunk_addresses(start, 300);
         assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0], (0x08005000, 256));
+        assert_eq!(chunks[0], (0x0800_5000, 256));
         // Address still advances by the full CHUNK_SIZE (256), not by 44
-        assert_eq!(chunks[1], (0x08005100, 44));
+        assert_eq!(chunks[1], (0x0800_5100, 44));
     }
 
     #[test]
     fn test_addresses_single_byte_firmware() {
         // One byte of firmware → one chunk of length 1 at flash_start
-        let start: u32 = 0x08005000;
+        let start: u32 = 0x0800_5000;
         let chunks = compute_chunk_addresses(start, 1);
         assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0], (0x08005000, 1));
+        assert_eq!(chunks[0], (0x0800_5000, 1));
     }
 
     #[test]
     fn test_addresses_empty_firmware() {
         // No bytes → no chunks → write loop never executes
-        let chunks = compute_chunk_addresses(0x08005000, 0);
+        let chunks = compute_chunk_addresses(0x0800_5000, 0);
         assert!(chunks.is_empty());
     }
 
@@ -243,12 +243,12 @@ mod tests {
     fn test_addresses_stride_is_always_256() {
         // Regardless of how many bytes the last chunk contains, the address
         // stride must always be 256 to match the bootloader's expectation.
-        let start: u32 = 0x08000000;
+        let start: u32 = 0x0800_0000;
         let chunks = compute_chunk_addresses(start, 600); // 256+256+88
         assert_eq!(chunks.len(), 3);
-        assert_eq!(chunks[0].0, 0x08000000);
-        assert_eq!(chunks[1].0, 0x08000100); // +256
-        assert_eq!(chunks[2].0, 0x08000200); // +256 again, even though chunk 2 was partial
+        assert_eq!(chunks[0].0, 0x0800_0000);
+        assert_eq!(chunks[1].0, 0x0800_0100); // +256
+        assert_eq!(chunks[2].0, 0x0800_0200); // +256 again, even though chunk 2 was partial
         assert_eq!(chunks[2].1, 88);
     }
 
@@ -256,7 +256,7 @@ mod tests {
     fn test_addresses_coverage_sums_to_firmware_len() {
         // All chunk lengths must add up to the total firmware length.
         let firmware_len = 1000;
-        let chunks = compute_chunk_addresses(0x08005000, firmware_len);
+        let chunks = compute_chunk_addresses(0x0800_5000, firmware_len);
         let total: usize = chunks.iter().map(|(_, len)| len).sum();
         assert_eq!(total, firmware_len);
     }
