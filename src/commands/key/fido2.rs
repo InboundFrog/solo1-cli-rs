@@ -4,6 +4,7 @@ use crate::ctap2::{
 };
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+use p256::elliptic_curve::Generate;
 use sha2::{Digest, Sha256};
 
 /// Create a FIDO2 credential with hmac-secret extension.
@@ -158,7 +159,7 @@ fn prepare_hmac_secret_input(
     dev_pub_key: &p256::PublicKey,
     challenge: &str,
 ) -> Result<(ciborium::value::Value, [u8; 32])> {
-    let platform_scalar = p256::NonZeroScalar::random(&mut rand::rng());
+    let platform_scalar = p256::NonZeroScalar::generate_from_rng(&mut rand::rng());
     prepare_hmac_secret_input_with_scalar(dev_pub_key, challenge, &platform_scalar)
 }
 
@@ -316,7 +317,7 @@ mod tests {
 
     /// Build a COSE key map (integer-keyed) from a `p256::PublicKey`.
     fn cose_pairs_from_pub(pub_key: &p256::PublicKey) -> Vec<(Value, Value)> {
-        use p256::EncodedPoint;
+        use p256::Sec1Point as EncodedPoint;
         let point = EncodedPoint::from(pub_key);
         let x = point.x().unwrap().to_vec();
         let y = point.y().unwrap().to_vec();
@@ -350,9 +351,9 @@ mod tests {
     fn ecdh_key_agreement_both_sides_agree() {
 
         // Generate deterministic-within-test keys using p256::SecretKey::random
-        let dev_secret = p256::SecretKey::random(&mut rand::rng());
+        let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut rand::rng());
+        let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 
@@ -381,11 +382,11 @@ mod tests {
     /// and that its coordinates correspond to the platform scalar used.
     #[test]
     fn ecdh_key_agreement_cose_key_is_correct() {
-        use p256::EncodedPoint;
+        use p256::Sec1Point as EncodedPoint;
 
-        let dev_secret = p256::SecretKey::random(&mut rand::rng());
+        let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut rand::rng());
+        let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
         let expected_platform_pub = platform_secret.public_key();
@@ -445,9 +446,9 @@ mod tests {
         let challenge = "test-challenge";
         let expected_salt: [u8; 32] = Sha256::digest(challenge.as_bytes()).into();
 
-        let dev_secret = p256::SecretKey::random(&mut rand::rng());
+        let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut rand::rng());
+        let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
         let (hmac_ext, shared_secret) =
@@ -510,9 +511,9 @@ mod tests {
     fn prepare_hmac_secret_input_shared_secret_matches_device() {
 
         let challenge = "another-test-challenge";
-        let dev_secret = p256::SecretKey::random(&mut rand::rng());
+        let dev_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let dev_pub = dev_secret.public_key();
-        let platform_secret = p256::SecretKey::random(&mut rand::rng());
+        let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 

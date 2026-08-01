@@ -1,7 +1,8 @@
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use ciborium::value::Value;
 use hmac::{Hmac, KeyInit as _, Mac as _};
-use p256::EncodedPoint;
+use p256::elliptic_curve::Generate;
+use p256::Sec1Point as EncodedPoint;
 use sha2::{Digest as _, Sha256};
 
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
@@ -418,7 +419,7 @@ impl ClientPinSession {
     /// Establish a session by performing ECDH with the device's public key
     /// using a freshly generated ephemeral scalar.
     pub fn new(dev_pub_key: &p256::PublicKey) -> Self {
-        let platform_scalar = p256::NonZeroScalar::random(&mut rand::rng());
+        let platform_scalar = p256::NonZeroScalar::generate_from_rng(&mut rand::rng());
         let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar);
         Self {
             shared_secret,
@@ -497,7 +498,7 @@ mod tests {
     fn test_client_pin_session_crypto_roundtrip() {
         // We need a dummy public key to initialize the session.
         // P-256 public key is 65 bytes (0x04 || X || Y)
-        let pub_key = p256::SecretKey::random(&mut rand::rng()).public_key();
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
 
         let session = ClientPinSession::new(&pub_key);
 
