@@ -16,6 +16,7 @@ pub fn expect_map(v: Value, ctx: &str) -> Result<Vec<(Value, Value)>> {
 ///
 /// Matches keys stored as either signed or unsigned `Value::Integer` whose
 /// numeric value equals `key` when interpreted as `i64`.
+#[must_use]
 pub fn find_int_key(pairs: &[(Value, Value)], key: i64) -> Option<&Value> {
     pairs.iter().find_map(|(k, v)| {
         if let Value::Integer(i) = k {
@@ -32,6 +33,7 @@ pub fn find_int_key(pairs: &[(Value, Value)], key: i64) -> Option<&Value> {
 ///
 /// Returns `None` if the key is absent, the value is not an integer, or the
 /// integer does not fit in `u64`.
+#[must_use]
 pub fn find_uint(pairs: &[(Value, Value)], key: i64) -> Option<u64> {
     match find_int_key(pairs, key)? {
         Value::Integer(i) => (*i).try_into().ok(),
@@ -40,6 +42,7 @@ pub fn find_uint(pairs: &[(Value, Value)], key: i64) -> Option<u64> {
 }
 
 /// Find a value in a text-keyed CBOR map by key name.
+#[must_use]
 pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
     pairs.iter().find_map(|(k, v)| {
         if let Value::Text(s) = k {
@@ -86,6 +89,7 @@ pub fn cbor_bytes(b: impl Into<Vec<u8>>) -> Value {
 }
 
 /// Wrap an `i64` as a `Value::Integer`.
+#[must_use]
 pub fn cbor_int(i: i64) -> Value {
     Value::Integer(i.into())
 }

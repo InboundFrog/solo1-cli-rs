@@ -62,6 +62,7 @@ pub mod mock {
     }
 
     impl MockDevice {
+        #[must_use]
         pub fn new(responses: Vec<crate::error::Result<Vec<u8>>>) -> Self {
             Self {
                 responses: RefCell::new(responses.into()),

@@ -17,6 +17,7 @@ pub enum FramePayload {
 
 impl CtapHidFrame {
     /// Encode the frame into exactly 65 bytes (report ID 0 + 64 bytes).
+    #[must_use]
     pub fn encode(&self) -> [u8; 65] {
         let mut buf = [0u8; 65];
         // byte 0 = report id (always 0)

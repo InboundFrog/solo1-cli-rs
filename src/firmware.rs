@@ -116,6 +116,7 @@ pub struct FirmwareVersion {
 }
 
 impl FirmwareVersion {
+    #[must_use]
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
         Self {
             major,
@@ -595,6 +596,7 @@ pub const FLASH_PAGES: u32 = 128;
 pub const FLASH_PAGE_SIZE: u32 = 2048;
 
 /// Compute the flash address for a given page number.
+#[must_use]
 pub const fn flash_addr(page: u32) -> u32 {
     FLASH_BASE + page * FLASH_PAGE_SIZE
 }
@@ -685,6 +687,7 @@ pub fn create_firmware_json_versioned(
 }
 
 /// Create a `FirmwareJson` from firmware bytes and a signature (legacy single-version form).
+#[must_use]
 pub fn create_firmware_json(firmware: &[u8], signature: &[u8]) -> FirmwareJson {
     FirmwareJson {
         firmware: websafe_b64_encode(firmware),
@@ -709,6 +712,7 @@ pub struct GithubAsset {
 
 impl GithubRelease {
     /// Find the firmware JSON asset.
+    #[must_use]
     pub fn find_firmware_asset(&self) -> Option<&GithubAsset> {
         self.assets.iter().find(|a| a.name.ends_with(".json"))
     }

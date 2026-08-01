@@ -78,6 +78,7 @@ pub fn sign_firmware(key: &SigningKey, firmware_bytes: &[u8]) -> Result<Vec<u8>>
 }
 
 /// Compute SHA-256 of the given bytes, returning hex string.
+#[must_use]
 pub fn sha256_hex(data: &[u8]) -> String {
     let hash = Sha256::digest(data);
     hex::encode(hash)
@@ -134,6 +135,7 @@ pub enum AttestationResult {
 /// non-production builds.  They are included here for developer convenience but
 /// are returned as `DeveloperDevice`, not `GenuineConsumer`.  A
 /// `DeveloperDevice` result does **not** indicate genuine consumer hardware.
+#[must_use]
 pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
     let fp = sha256_hex(cert_der);
     match fp.as_str() {
@@ -284,6 +286,7 @@ pub fn verify_attestation_signature(
 }
 
 /// Websafe base64 encoding (RFC 4648 URL-safe, no padding).
+#[must_use]
 pub fn websafe_b64_encode(data: &[u8]) -> String {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;

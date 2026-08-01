@@ -52,6 +52,7 @@ pub fn cmd_bootloader_version(hid: &impl HidDevice) -> Result<()> {
 ///
 /// If the response contains at least 3 bytes, formats as "major.minor.patch".
 /// Otherwise falls back to hex encoding of the raw bytes.
+#[must_use]
 pub fn format_bootloader_version(response: &[u8]) -> String {
     if response.len() >= 3 {
         format!("{}.{}.{}", response[0], response[1], response[2])

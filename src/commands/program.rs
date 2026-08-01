@@ -107,6 +107,7 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 /// Compute the number of 256-byte chunks needed to cover `firmware_len` bytes.
 ///
 /// Used by `write_firmware` for the verbose chunk-count display.
+#[must_use]
 pub const fn firmware_chunk_count(firmware_len: usize) -> usize {
     firmware_len.div_ceil(CHUNK_SIZE)
 }
@@ -116,6 +117,7 @@ pub const fn firmware_chunk_count(firmware_len: usize) -> usize {
 /// Returns a `Vec` of `(flash_address, chunk_length)` pairs in the order
 /// that the bootloader receives them. `write_firmware` iterates this
 /// sequence directly, so the tests below exercise the shipped code path.
+#[must_use]
 pub fn compute_chunk_addresses(flash_start: u32, firmware_len: usize) -> Vec<(u32, usize)> {
     let mut result = Vec::new();
     let mut offset = 0usize;

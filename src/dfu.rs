@@ -52,6 +52,7 @@ impl DfuStatus {
         })
     }
 
+    #[must_use]
     pub const fn is_ok(&self) -> bool {
         self.status == 0x00
     }

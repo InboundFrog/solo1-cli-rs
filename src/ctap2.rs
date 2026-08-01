@@ -10,6 +10,7 @@ use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// Map a CTAP2 status byte to a human-readable description.
+#[must_use]
 pub const fn ctap2_status_message(code: u8) -> &'static str {
     match code {
         0x01 => "invalid command",
@@ -133,6 +134,7 @@ pub fn ctap2_call(hid: &impl HidDevice, cmd: u8, payload: &Value) -> Result<Vec<
 }
 
 #[inline]
+#[must_use]
 pub fn create_key_agreement_cbor() -> Value {
     int_map([
         (0x01, cbor_int(1)), // pinUvAuthProtocol = 1
@@ -141,6 +143,7 @@ pub fn create_key_agreement_cbor() -> Value {
 }
 
 #[inline]
+#[must_use]
 pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
     response_values
         .iter()
@@ -244,6 +247,7 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
 /// Production callers must use a freshly generated random scalar (see
 /// [`ClientPinSession::new`]); tests may pass a fixed scalar to make the
 /// key-agreement math deterministic.
+#[must_use]
 pub fn ecdh_shared_secret(
     dev_pub_key: &p256::PublicKey,
     platform_scalar: &p256::NonZeroScalar,
@@ -416,6 +420,7 @@ pub struct ClientPinSession {
 impl ClientPinSession {
     /// Establish a session by performing ECDH with the device's public key
     /// using a freshly generated ephemeral scalar.
+    #[must_use]
     pub fn new(dev_pub_key: &p256::PublicKey) -> Self {
         let platform_scalar = p256::NonZeroScalar::generate_from_rng(&mut rand::rng());
         let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar);
