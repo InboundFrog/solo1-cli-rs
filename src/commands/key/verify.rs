@@ -169,16 +169,16 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     if json {
         use crate::output::{print_json, VerifyOutput};
-        let (device_type, device_name) = if !signature_valid {
-            // The fingerprint result is meaningless without a valid signature:
-            // the certificate may simply have been copied from a genuine key.
-            ("invalid", None)
-        } else {
+        let (device_type, device_name) = if signature_valid {
             match &result {
                 AttestationResult::GenuineConsumer(n) => ("genuine", Some(n.to_string())),
                 AttestationResult::DeveloperDevice(n) => ("developer", Some(n.to_string())),
                 AttestationResult::Unknown => ("unknown", None),
             }
+        } else {
+            // The fingerprint result is meaningless without a valid signature:
+            // the certificate may simply have been copied from a genuine key.
+            ("invalid", None)
         };
         return print_json(&VerifyOutput {
             device_type: device_type.to_string(),
