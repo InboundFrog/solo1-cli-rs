@@ -10,9 +10,15 @@ pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
             "Number of bytes must be between 0 and 255, you passed {n}"
         )));
     }
-    let request = [n as u8];
+    let n_u8 = u8::try_from(n)
+        .map_err(|_| SoloError::ProtocolError("Byte count exceeds 255".into()))?;
+    let request = [n_u8];
     let response = hid.send_recv(CMD_RNG, &request)?;
-    Ok(hex::encode(&response[..response.len().min(n)]))
+    let take = response.len().min(n);
+    let slice = response
+        .get(..take)
+        .ok_or_else(|| SoloError::ProtocolError("RNG response slice out of range".into()))?;
+    Ok(hex::encode(slice))
 }
 
 /// Stream raw random bytes to stdout.
@@ -46,14 +52,25 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     let before = std::fs::read_to_string(ENTROPY_INFO).unwrap_or_else(|_| "unknown".into());
     println!("Entropy before: 0x{}", before.trim());
 
-    let request = [COUNT as u8];
+    let count_u8 =
+        u8::try_from(COUNT).map_err(|_| SoloError::ProtocolError("Count exceeds 255".into()))?;
+    let request = [count_u8];
     let response = hid.send_recv(CMD_RNG, &request)?;
-    let data = &response[..response.len().min(COUNT)];
+    let take = response.len().min(COUNT);
+    let data = response
+        .get(..take)
+        .ok_or_else(|| SoloError::ProtocolError("RNG response slice out of range".into()))?;
 
     // Build rand_pool_info struct: entropy_count (i32), buf_size (i32), buf (bytes)
-    let mut buf = Vec::with_capacity(8 + data.len());
-    let entropy_count: i32 = data.len() as i32 * ENTROPY_BITS_PER_BYTE;
-    let buf_size: i32 = data.len() as i32;
+    let capacity = 8usize
+        .checked_add(data.len())
+        .ok_or_else(|| SoloError::ProtocolError("Entropy buffer capacity overflow".into()))?;
+    let mut buf = Vec::with_capacity(capacity);
+    let buf_size: i32 = i32::try_from(data.len())
+        .map_err(|_| SoloError::ProtocolError("Entropy buffer size overflow".into()))?;
+    let entropy_count: i32 = buf_size
+        .checked_mul(ENTROPY_BITS_PER_BYTE)
+        .ok_or_else(|| SoloError::ProtocolError("Entropy count overflow".into()))?;
     buf.extend_from_slice(&entropy_count.to_ne_bytes());
     buf.extend_from_slice(&buf_size.to_ne_bytes());
     buf.extend_from_slice(data);

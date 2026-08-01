@@ -24,15 +24,15 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
 
 pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
     let response = hid.send_recv(CMD_GET_VERSION, &[])?;
-    if response.len() < 3 {
+    let [major, minor, patch, ..] = response.as_slice() else {
         return Err(SoloError::ProtocolError(
             "Version response too short".into(),
         ));
-    }
+    };
     Ok(FirmwareVersion::new(
-        u32::from(response[0]),
-        u32::from(response[1]),
-        u32::from(response[2]),
+        u32::from(*major),
+        u32::from(*minor),
+        u32::from(*patch),
     ))
 }
 
@@ -56,16 +56,20 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
             ));
         }
 
+        let index = i
+            .checked_add(1)
+            .ok_or_else(|| SoloError::ProtocolError("Ping index overflow".into()))?;
+
         if json {
             print_json(&PingOutput {
-                index: i + 1,
+                index,
                 data_len: data.len(),
                 duration_ms: elapsed.as_secs_f64() * 1000.0,
             })?;
         } else {
             println!(
                 "Ping {}: {} bytes, RTT = {:.3}ms",
-                i + 1,
+                index,
                 data.len(),
                 elapsed.as_secs_f64() * 1000.0
             );

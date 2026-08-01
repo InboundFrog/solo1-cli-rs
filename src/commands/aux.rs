@@ -54,8 +54,8 @@ pub fn cmd_bootloader_version(hid: &impl HidDevice) -> Result<()> {
 /// Otherwise falls back to hex encoding of the raw bytes.
 #[must_use]
 pub fn format_bootloader_version(response: &[u8]) -> String {
-    if response.len() >= 3 {
-        format!("{}.{}.{}", response[0], response[1], response[2])
+    if let [major, minor, patch, ..] = response {
+        format!("{major}.{minor}.{patch}")
     } else {
         hex::encode(response)
     }

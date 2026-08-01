@@ -162,13 +162,10 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
 /// Validate a raw CTAP2 response: checks it is non-empty and the status byte is 0x00.
 /// Returns `Ok(())` on success, `Err` with a context-tagged message otherwise.
 pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
-    if response.is_empty() {
-        return Err(SoloError::MalformedResponse(format!(
-            "Empty response from {context}"
-        )));
-    }
-    if response[0] != 0x00 {
-        let code = response[0];
+    let &code = response.first().ok_or_else(|| {
+        SoloError::MalformedResponse(format!("Empty response from {context}"))
+    })?;
+    if code != 0x00 {
         let message = ctap2_status_message(code);
         return Err(SoloError::AuthenticatorError { code, message });
     }
@@ -179,7 +176,10 @@ pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
 /// Returns the map pairs on success.
 pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
-    parse_map_payload(&response[1..], context)
+    let payload = response
+        .get(1..)
+        .ok_or_else(|| SoloError::MalformedResponse(format!("Truncated {context} response")))?;
+    parse_map_payload(payload, context)
 }
 
 /// Like [`parse_cbor_map_response`], but tolerates a response consisting of a
@@ -194,7 +194,10 @@ pub fn parse_cbor_map_response_allow_empty(
     if response.len() == 1 {
         return Ok(vec![]);
     }
-    parse_map_payload(&response[1..], context)
+    let payload = response
+        .get(1..)
+        .ok_or_else(|| SoloError::MalformedResponse(format!("Truncated {context} response")))?;
+    parse_map_payload(payload, context)
 }
 
 fn parse_map_payload(payload: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
@@ -406,7 +409,11 @@ pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
     let mut hmac = HmacSha256::new_from_slice(key)
         .map_err(|_| SoloError::CryptoError("HMAC key length invalid".into()))?;
     hmac.update(msg);
-    Ok(hmac.finalize().into_bytes()[..16].to_vec())
+    let tag = hmac.finalize().into_bytes();
+    let truncated = tag
+        .get(..16)
+        .ok_or_else(|| SoloError::CryptoError("HMAC output too short".into()))?;
+    Ok(truncated.to_vec())
 }
 
 /// Represents an established shared secret with a CTAP2 device.
@@ -432,7 +439,13 @@ impl ClientPinSession {
         let pin_bytes = pin.as_bytes();
         let mut padded_pin = [0u8; 64];
         let copy_len = pin_bytes.len().min(64);
-        padded_pin[..copy_len].copy_from_slice(&pin_bytes[..copy_len]);
+        let src = pin_bytes
+            .get(..copy_len)
+            .ok_or_else(|| SoloError::CryptoError("PIN slice out of range".into()))?;
+        padded_pin
+            .get_mut(..copy_len)
+            .ok_or_else(|| SoloError::CryptoError("PIN buffer out of range".into()))?
+            .copy_from_slice(src);
 
         aes256_cbc_encrypt(&self.shared_secret, &padded_pin)
     }
@@ -445,7 +458,10 @@ impl ClientPinSession {
     /// Encrypt the PIN hash for getPinToken.
     pub fn encrypt_pin_hash(&self, pin: &str) -> Result<[u8; 16]> {
         let pin_hash_full = Sha256::digest(pin.as_bytes());
-        let enc = aes256_cbc_encrypt(&self.shared_secret, &pin_hash_full[..16])?;
+        let pin_hash_prefix = pin_hash_full
+            .get(..16)
+            .ok_or_else(|| SoloError::CryptoError("PIN hash too short".into()))?;
+        let enc = aes256_cbc_encrypt(&self.shared_secret, pin_hash_prefix)?;
 
         let mut pin_hash_enc = [0u8; 16];
         pin_hash_enc.copy_from_slice(&enc);

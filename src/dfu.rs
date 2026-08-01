@@ -37,11 +37,11 @@ pub struct DfuStatus {
 
 impl DfuStatus {
     pub fn parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < 6 {
-            return Err(SoloError::ProtocolError(
-                "DFU status response too short".into(),
-            ));
-        }
+        let bytes: [u8; 6] = bytes
+            .get(..6)
+            .ok_or_else(|| SoloError::ProtocolError("DFU status response too short".into()))?
+            .try_into()
+            .map_err(|_| SoloError::ProtocolError("DFU status response too short".into()))?;
         Ok(Self {
             status: bytes[0],
             poll_timeout_ms: u32::from(bytes[1])
@@ -164,17 +164,24 @@ impl DfuDevice {
             data.len()
         );
         self.control_out(DFU_DNLOAD, self.transaction, data)?;
-        self.transaction += 1;
+        self.transaction = self
+            .transaction
+            .checked_add(1)
+            .ok_or_else(|| SoloError::ProtocolError("DFU transaction counter overflow".into()))?;
         self.wait_while_busy()?;
         Ok(())
     }
 
     /// Program a firmware binary to the device.
     pub fn program(&mut self, firmware: &[u8]) -> Result<()> {
-        let chunk_size = DFU_CHUNK_SIZE as usize;
+        let chunk_size = usize::try_from(DFU_CHUNK_SIZE)
+            .map_err(|_| SoloError::ProtocolError("DFU chunk size overflow".into()))?;
         let total_chunks = firmware.len().div_ceil(chunk_size);
 
-        let pb = ProgressBar::new(total_chunks as u64);
+        let pb = ProgressBar::new(
+            u64::try_from(total_chunks)
+                .map_err(|_| SoloError::ProtocolError("DFU chunk count overflow".into()))?,
+        );
         pb.set_style(
             ProgressStyle::default_bar()
                 .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} chunks")
@@ -189,8 +196,13 @@ impl DfuDevice {
 
         let mut offset = 0;
         while offset < firmware.len() {
-            let end = (offset + chunk_size).min(firmware.len());
-            let chunk = &firmware[offset..end];
+            let end = offset
+                .checked_add(chunk_size)
+                .ok_or_else(|| SoloError::ProtocolError("DFU offset overflow".into()))?
+                .min(firmware.len());
+            let chunk = firmware
+                .get(offset..end)
+                .ok_or_else(|| SoloError::ProtocolError("DFU chunk range out of bounds".into()))?;
 
             // Pad chunk to chunk_size if needed
             let mut padded = chunk.to_vec();
@@ -200,7 +212,9 @@ impl DfuDevice {
 
             self.dnload_chunk(&padded)?;
             pb.inc(1);
-            offset += chunk_size;
+            offset = offset
+                .checked_add(chunk_size)
+                .ok_or_else(|| SoloError::ProtocolError("DFU offset overflow".into()))?;
         }
 
         // Send zero-length download to signal end

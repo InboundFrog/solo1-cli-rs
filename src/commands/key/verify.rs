@@ -73,8 +73,8 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
     };
 
     let cert_der = match find_text_key(att_stmt, "x5c") {
-        Some(Value::Array(certs)) if !certs.is_empty() => match &certs[0] {
-            Value::Bytes(b) => b.clone(),
+        Some(Value::Array(certs)) if !certs.is_empty() => match certs.first() {
+            Some(Value::Bytes(b)) => b.clone(),
             _ => return Err(SoloError::MalformedResponse("x5c[0] is not bytes".into())),
         },
         _ => {

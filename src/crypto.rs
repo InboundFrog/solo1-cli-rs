@@ -276,7 +276,11 @@ pub fn verify_attestation_signature(
     let sig = DerSignature::try_from(sig_der)
         .map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {e}")))?;
 
-    let mut message = Vec::with_capacity(auth_data.len() + client_data_hash.len());
+    let capacity = auth_data
+        .len()
+        .checked_add(client_data_hash.len())
+        .ok_or_else(|| SoloError::CryptoError("Attestation message length overflow".into()))?;
+    let mut message = Vec::with_capacity(capacity);
     message.extend_from_slice(auth_data);
     message.extend_from_slice(client_data_hash);
 

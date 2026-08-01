@@ -50,7 +50,10 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
     if hash_type_str == "Ed25519" {
         // First 64 bytes = signature (128 hex chars), rest = content
         if response.len() > 64 {
-            println!("content: {:?}", &response[64..]);
+            let content = response
+                .get(64..)
+                .ok_or_else(|| SoloError::ProtocolError("Probe response too short".into()))?;
+            println!("content: {content:?}");
             let sig_hex = result_hex
                 .get(..128.min(result_hex.len()))
                 .unwrap_or(result_hex.as_str());

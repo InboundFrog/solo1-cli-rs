@@ -6,12 +6,20 @@ use sha2::{Digest, Sha256};
 
 use crate::device::{HidDevice, CMD_DONE, CMD_WRITE};
 use crate::dfu::DfuDevice;
-use crate::error::Result;
+use crate::error::{Result, SoloError};
 use crate::firmware::{self, FirmwareJson};
 use crate::vlog;
 
 /// Size of each flash write sent to the bootloader.
 const CHUNK_SIZE: usize = 256;
+
+/// Flash-address stride between consecutive chunks, as a `u32`.
+///
+/// Kept as a dedicated `u32` constant (rather than casting `CHUNK_SIZE`) so
+/// address arithmetic needs no `usize -> u32` conversion. Must equal
+/// `CHUNK_SIZE`; the assertion below enforces that at compile time.
+const CHUNK_STRIDE: u32 = 256;
+const _: () = assert!(CHUNK_STRIDE == 256 && CHUNK_SIZE == 256);
 
 /// Write `firmware` to the device in 256-byte chunks starting at `base_addr`,
 /// then send `CMD_DONE` with `signature` so the bootloader verifies and reboots.
@@ -32,20 +40,26 @@ pub fn write_firmware(
         base_addr
     );
 
-    let pb = ProgressBar::new(firmware.len() as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}")
-            .unwrap()
-            .progress_chars("##-"),
-    );
+    let total_bytes = u64::try_from(firmware.len())
+        .map_err(|_| SoloError::ProtocolError("firmware size too large".into()))?;
+    let pb = ProgressBar::new(total_bytes);
+    let style = ProgressStyle::default_bar()
+        .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}")
+        .map_err(|e| SoloError::ProtocolError(format!("progress template: {e}")))?
+        .progress_chars("##-");
+    pb.set_style(style);
 
     let mut offset = 0usize;
     for (chunk_num, (addr, len)) in compute_chunk_addresses(base_addr, firmware.len())
         .into_iter()
         .enumerate()
     {
-        let chunk = &firmware[offset..offset + len];
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| SoloError::ProtocolError("chunk offset overflow".into()))?;
+        let chunk = firmware
+            .get(offset..end)
+            .ok_or_else(|| SoloError::ProtocolError("chunk out of range".into()))?;
         vlog!(
             "chunk #{} addr=0x{:08X} len={}",
             chunk_num,
@@ -56,8 +70,10 @@ pub fn write_firmware(
         if !resp.is_empty() {
             vlog!("  write response: {}", hex::encode(&resp));
         }
-        pb.inc(chunk.len() as u64);
-        offset += len;
+        let inc = u64::try_from(chunk.len())
+            .map_err(|_| SoloError::ProtocolError("chunk size too large".into()))?;
+        pb.inc(inc);
+        offset = end;
     }
     pb.finish_with_message("written");
 
@@ -123,10 +139,15 @@ pub fn compute_chunk_addresses(flash_start: u32, firmware_len: usize) -> Vec<(u3
     let mut offset = 0usize;
     let mut addr = flash_start;
     while offset < firmware_len {
-        let end = (offset + CHUNK_SIZE).min(firmware_len);
-        result.push((addr, end - offset));
+        // `saturating_add` cannot change the result: it only differs from `+`
+        // on overflow, and any overflowed value is >= `firmware_len`, so `.min`
+        // clamps it back to `firmware_len` exactly as plain `+` would.
+        let end = offset.saturating_add(CHUNK_SIZE).min(firmware_len);
+        // `end > offset` on every iteration (loop guard + non-zero stride), so
+        // `saturating_sub` yields the same value as `end - offset`.
+        result.push((addr, end.saturating_sub(offset)));
         offset = end;
-        addr += CHUNK_SIZE as u32;
+        addr = addr.saturating_add(CHUNK_STRIDE);
     }
     result
 }

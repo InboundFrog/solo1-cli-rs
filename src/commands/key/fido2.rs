@@ -84,7 +84,9 @@ pub fn cmd_make_credential(
         ));
     }
 
-    let flags = auth_data[32];
+    let flags = *auth_data
+        .get(32)
+        .ok_or_else(|| SoloError::MalformedResponse("authData missing flags byte".into()))?;
     let at_flag = (flags & 0x40) != 0; // bit 6 = attested credential data present
 
     if !at_flag {
@@ -99,9 +101,18 @@ pub fn cmd_make_credential(
         ));
     }
 
-    let cred_id_len = u16::from_be_bytes([auth_data[53], auth_data[54]]) as usize;
-    let cred_id_start = 55;
-    let cred_id_end = cred_id_start + cred_id_len;
+    let cred_id_len_bytes: [u8; 2] = auth_data
+        .get(53..55)
+        .ok_or_else(|| {
+            SoloError::MalformedResponse("authData too short to read credentialIdLength".into())
+        })?
+        .try_into()
+        .map_err(|_| SoloError::MalformedResponse("invalid credentialIdLength field".into()))?;
+    let cred_id_len = usize::from(u16::from_be_bytes(cred_id_len_bytes));
+    let cred_id_start: usize = 55;
+    let cred_id_end = cred_id_start
+        .checked_add(cred_id_len)
+        .ok_or_else(|| SoloError::ProtocolError("credentialId length overflow".into()))?;
 
     if auth_data.len() < cred_id_end {
         return Err(SoloError::MalformedResponse(format!(
@@ -111,7 +122,9 @@ pub fn cmd_make_credential(
         )));
     }
 
-    let credential_id = &auth_data[cred_id_start..cred_id_end];
+    let credential_id = auth_data.get(cred_id_start..cred_id_end).ok_or_else(|| {
+        SoloError::MalformedResponse("authData too short for credential ID".into())
+    })?;
 
     if json {
         use crate::output::{print_json, MakeCredentialOutput};
@@ -263,7 +276,9 @@ pub fn cmd_challenge_response(
         return Err(SoloError::MalformedResponse("authData too short".into()));
     }
 
-    let flags = auth_data[32];
+    let flags = *auth_data
+        .get(32)
+        .ok_or_else(|| SoloError::MalformedResponse("authData missing flags byte".into()))?;
     let ed_flag = (flags & 0x80) != 0; // bit 7 = extensions data present
 
     if !ed_flag {
@@ -273,7 +288,9 @@ pub fn cmd_challenge_response(
     }
 
     // Parse extensions CBOR starting at byte 37
-    let ext_cbor_bytes = &auth_data[37..];
+    let ext_cbor_bytes = auth_data
+        .get(37..)
+        .ok_or_else(|| SoloError::MalformedResponse("authData missing extensions data".into()))?;
     let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)?;
 
     let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
@@ -292,13 +309,18 @@ pub fn cmd_challenge_response(
     let hmac_output = decrypt_hmac_secret(&shared_secret, &hmac_secret_enc)?;
 
     // ── Step 9: Print the HMAC output as hex ────────────────────────────────
+    let hmac_output_hex = hex::encode(
+        hmac_output
+            .get(..32)
+            .ok_or_else(|| SoloError::MalformedResponse("hmac-secret output too short".into()))?,
+    );
     if json {
         use crate::output::{print_json, ChallengeResponseOutput};
         return print_json(&ChallengeResponseOutput {
-            hmac_output: hex::encode(&hmac_output[..32]),
+            hmac_output: hmac_output_hex,
         });
     }
-    println!("{}", hex::encode(&hmac_output[..32]));
+    println!("{hmac_output_hex}");
 
     Ok(())
 }
