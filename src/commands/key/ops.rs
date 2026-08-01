@@ -123,7 +123,7 @@ mod tests {
 
     // ── cmd_ping ────────────────────────────────────────────────────────────
 
-    /// The device echoes back the same payload: cmd_ping must succeed.
+    /// The device echoes back the same payload: `cmd_ping` must succeed.
     #[test]
     fn test_cmd_ping_success_echo() {
         let data = vec![0x01u8, 0x02, 0x03, 0x04];
@@ -132,7 +132,7 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// The device echoes back different bytes: cmd_ping must return an error.
+    /// The device echoes back different bytes: `cmd_ping` must return an error.
     #[test]
     fn test_cmd_ping_data_mismatch() {
         let sent = vec![0x01u8, 0x02, 0x03];
@@ -147,7 +147,7 @@ mod tests {
         );
     }
 
-    /// When the mock queue is empty, send_recv returns Timeout: cmd_ping must propagate it.
+    /// When the mock queue is empty, `send_recv` returns Timeout: `cmd_ping` must propagate it.
     #[test]
     fn test_cmd_ping_timeout() {
         let device = MockDevice::new(vec![]);
@@ -155,7 +155,7 @@ mod tests {
         assert!(matches!(result.unwrap_err(), SoloError::Timeout));
     }
 
-    /// cmd_ping with count=0 performs no sends and must succeed immediately.
+    /// `cmd_ping` with count=0 performs no sends and must succeed immediately.
     #[test]
     fn test_cmd_ping_count_zero() {
         // No responses queued — if any send_recv is called, it would return Timeout.
@@ -208,7 +208,7 @@ mod tests {
         assert_eq!(version, FirmwareVersion::new(2, 5, 3));
     }
 
-    /// Fewer than 3 bytes must produce a ProtocolError.
+    /// Fewer than 3 bytes must produce a `ProtocolError`.
     #[test]
     fn test_cmd_key_version_too_short() {
         let device = MockDevice::new(vec![Ok(vec![1, 0])]);

@@ -84,8 +84,8 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 /// Sign a firmware hex file with the given key.
 ///
 /// Generates two signatures for different bootloader versions (matching Python reference):
-///   - v1: signed over region using APPLICATION_END_PAGE=19 (bootloaders <=2.5.3)
-///   - v2: signed over region using APPLICATION_END_PAGE=20 (bootloaders >2.5.3)
+///   - v1: signed over region using `APPLICATION_END_PAGE=19` (bootloaders <=2.5.3)
+///   - v2: signed over region using `APPLICATION_END_PAGE=20` (bootloaders >2.5.3)
 ///
 /// The firmware field in the output JSON is the base64 of the HEX FILE TEXT,
 /// not the binary, matching the Python reference implementation.

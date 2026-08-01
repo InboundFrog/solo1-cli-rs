@@ -14,10 +14,10 @@ use crate::vlog;
 const CHUNK_SIZE: usize = 256;
 
 /// Write `firmware` to the device in 256-byte chunks starting at `base_addr`,
-/// then send CMD_DONE with `signature` so the bootloader verifies and reboots.
+/// then send `CMD_DONE` with `signature` so the bootloader verifies and reboots.
 ///
 /// The device must already be in bootloader mode. `finalize_msg` is printed
-/// between the write loop and CMD_DONE (callers use different wording).
+/// between the write loop and `CMD_DONE` (callers use different wording).
 pub fn write_firmware(
     hid: &impl HidDevice,
     base_addr: u32,

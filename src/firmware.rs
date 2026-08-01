@@ -38,7 +38,7 @@ impl FirmwareJson {
 
     /// Decode firmware to a flat binary with its base flash address.
     ///
-    /// The official SoloKeys firmware JSONs store Intel HEX text in the `firmware`
+    /// The official `SoloKeys` firmware JSONs store Intel HEX text in the `firmware`
     /// field (base64-encoded). This method detects that and parses it correctly.
     /// Raw binary (from our own `cmd_sign`) is also handled.
     ///
@@ -179,7 +179,7 @@ pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -
 }
 
 /// Parse an Intel HEX file into a flat binary buffer.
-/// Returns (base_address, bytes).
+/// Returns (`base_address`, bytes).
 pub fn parse_hex_file(path: &Path) -> Result<(u32, Vec<u8>)> {
     let content = std::fs::read_to_string(path)?;
     parse_hex_string(&content)
@@ -203,7 +203,7 @@ pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
 /// HEX content can arrive from the network (the firmware JSON downloaded by
 /// `update`), and the span determines the allocation size when flattening to
 /// a binary. Solo flash is only 256 KiB, so 16 MiB is generous while still
-/// preventing a crafted ExtendedLinearAddress record from forcing a multi-GB
+/// preventing a crafted `ExtendedLinearAddress` record from forcing a multi-GB
 /// allocation.
 const MAX_FIRMWARE_SPAN: u32 = 16 * 1024 * 1024;
 
@@ -270,7 +270,7 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
 }
 
 /// Convert Intel HEX records to a flat binary.
-/// Returns (base_address, bytes).
+/// Returns (`base_address`, bytes).
 pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
     let mut segments = hex_records_to_segments(records)?;
 
@@ -315,7 +315,7 @@ pub const HACKER_ATTESTATION_KEY_HEX: &str =
     "1b2626ecc8f69b0f69e34fb236d76466ba12ac16c3ab5750ba064e8b90e02448";
 
 /// Default Solo Hacker attestation certificate (DER bytes).
-/// From operations.py hacker_attestation_cert.
+/// From operations.py `hacker_attestation_cert`.
 pub const HACKER_ATTESTATION_CERT: &[u8] = &[
     0x30, 0x82, 0x02, 0xe9, 0x30, 0x82, 0x02, 0x8e, 0xa0, 0x03, 0x02, 0x01, 0x02, 0x02, 0x01, 0x01,
     0x30, 0x0a, 0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x04, 0x03, 0x02, 0x30, 0x81, 0x82, 0x31,
@@ -369,7 +369,7 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
 /// Write the boot-authorisation bytes into the byte map.
 ///
 /// Sets the two-byte marker at `flash_addr(application_end_page - 1)` to
-/// `0x41 0x41` ('A' 'A'), then writes the 8-byte AUTH_WORD at `auth_word_addr`:
+/// `0x41 0x41` ('A' 'A'), then writes the 8-byte `AUTH_WORD` at `auth_word_addr`:
 /// bytes 0–3 are `0x00` (authorise boot) and bytes 4–7 are `0xFF` (enable
 /// bootloader).
 fn patch_auth_word(byte_map: &mut HashMap<u32, u8>, app_end_page_start: u32, auth_word_addr: u32) {
@@ -425,20 +425,20 @@ fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u
 ///
 /// Matches the Python reference (operations.py mergehex) which:
 /// 1. Merges all input HEX files (later ones override earlier on overlap)
-/// 2. Sets boot authorization bytes at AUTH_WORD_ADDR
-/// 3. Patches attestation key, device settings, cert size, and cert at ATTEST_ADDR
+/// 2. Sets boot authorization bytes at `AUTH_WORD_ADDR`
+/// 3. Patches attestation key, device settings, cert size, and cert at `ATTEST_ADDR`
 ///
-/// If no attestation_key/cert files are provided, uses the default hacker
+/// If no `attestation_key/cert` files are provided, uses the default hacker
 /// attestation key and cert. Both must be provided or both must be None.
 ///
-/// Layout constants (APPLICATION_END_PAGE_COUNT=20, default for new bootloaders):
-///   APPLICATION_END_PAGE = 128 - 20 = 108
-///   AUTH_WORD_ADDR = flash_addr(108) - 8 = 0x080367F8
-///   ATTEST_ADDR = flash_addr(128 - 15) = flash_addr(113) = 0x08038800
+/// Layout constants (`APPLICATION_END_PAGE_COUNT=20`, default for new bootloaders):
+///   `APPLICATION_END_PAGE` = 128 - 20 = 108
+///   `AUTH_WORD_ADDR` = `flash_addr(108)` - 8 = 0x080367F8
+///   `ATTEST_ADDR` = `flash_addr(128` - 15) = `flash_addr(113)` = 0x08038800
 ///
-/// Attestation layout at ATTEST_ADDR:
+/// Attestation layout at `ATTEST_ADDR`:
 ///   [+0]:  32 bytes attestation key
-///   [+32]:  8 bytes device settings (little-endian u64: 0xAA551E7900000000 | lock_byte)
+///   [+32]:  8 bytes device settings (little-endian u64: 0xAA551E7900000000 | `lock_byte`)
 ///   [+40]:  8 bytes cert size (little-endian u64)
 ///   [+48]:  N bytes certificate
 pub fn merge_hex_files(
@@ -599,16 +599,16 @@ pub fn flash_addr(page: u32) -> u32 {
     FLASH_BASE + page * FLASH_PAGE_SIZE
 }
 
-/// Extract the firmware bytes to sign for a specific APPLICATION_END_PAGE value.
+/// Extract the firmware bytes to sign for a specific `APPLICATION_END_PAGE` value.
 ///
 /// The signing region is:
 ///   START = first address in the hex file
-///   END = flash_addr(FLASH_PAGES - app_end_page) - 8
-///   bytes = hex_data[START .. END]  (padded with 0xFF for gaps)
+///   END = `flash_addr(FLASH_PAGES` - `app_end_page`) - 8
+///   bytes = `hex_data`[START .. END]  (padded with 0xFF for gaps)
 ///
 /// Two versions exist:
-///   app_end_page=19: for bootloaders <=2.5.3 (APPLICATION_END_PAGE_COUNT=19)
-///   app_end_page=20: for bootloaders >2.5.3  (APPLICATION_END_PAGE_COUNT=20)
+///   `app_end_page=19`: for bootloaders <=2.5.3 (`APPLICATION_END_PAGE_COUNT=19`)
+///   `app_end_page=20`: for bootloaders >2.5.3  (`APPLICATION_END_PAGE_COUNT=20`)
 pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) -> Result<Vec<u8>> {
     let content = std::fs::read_to_string(hex_path)?;
     let records: Vec<Record> = ihex::Reader::new(&content)
@@ -649,11 +649,11 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
     Ok(binary)
 }
 
-/// Create a FirmwareJson from the hex file text and both versioned signatures.
+/// Create a `FirmwareJson` from the hex file text and both versioned signatures.
 ///
 /// The firmware field contains the base64 of the HEX FILE TEXT (not binary),
 /// matching the Python reference which does:
-///   fw = base64.b64encode(open(hex_file, "r").read().encode())
+///   fw = `base64.b64encode(open(hex_file`, "`r").read().encode()`)
 pub fn create_firmware_json_versioned(
     hex_path: &Path,
     sig_v1: &[u8],
@@ -684,7 +684,7 @@ pub fn create_firmware_json_versioned(
     })
 }
 
-/// Create a FirmwareJson from firmware bytes and a signature (legacy single-version form).
+/// Create a `FirmwareJson` from firmware bytes and a signature (legacy single-version form).
 pub fn create_firmware_json(firmware: &[u8], signature: &[u8]) -> FirmwareJson {
     FirmwareJson {
         firmware: websafe_b64_encode(firmware),

@@ -29,7 +29,7 @@ struct AttestationData {
 /// Key 0x03 of that map is `attStmt`, which must contain an `x5c` array
 /// whose first element is the leaf certificate as a byte string.
 ///
-/// Per WebAuthn §8.2 the packed attestation `alg` must be -7 (ES256); any
+/// Per `WebAuthn` §8.2 the packed attestation `alg` must be -7 (ES256); any
 /// other algorithm is an error because Solo keys only attest with ES256 and
 /// this code cannot verify anything else.
 fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
@@ -115,13 +115,13 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
 
 /// Verify key authenticity via attestation certificate and signature.
 ///
-/// Sends a CTAP2 makeCredential (0x01) request via CTAPHID_CBOR, extracts the
+/// Sends a CTAP2 makeCredential (0x01) request via `CTAPHID_CBOR`, extracts the
 /// DER-encoded attestation certificate from attStmt.x5c[0], SHA-256 fingerprints
 /// it, and compares against known fingerprints in crypto.rs.
 ///
 /// The certificate fingerprint alone is not sufficient: a counterfeit device
 /// can replay a copied genuine certificate.  The packed attestation signature
-/// (`attStmt.sig` over `authData || clientDataHash`, WebAuthn §8.2) is
+/// (`attStmt.sig` over `authData || clientDataHash`, `WebAuthn` §8.2) is
 /// therefore verified against the certificate's public key, proving the
 /// device actually possesses the attestation private key.  If the signature
 /// is missing or invalid, the device is reported as failed regardless of the
@@ -291,7 +291,7 @@ mod tests {
         (cert.der().to_vec(), auth_data, sig.as_bytes().to_vec())
     }
 
-    /// The fixed clientDataHash cmd_verify uses.
+    /// The fixed clientDataHash `cmd_verify` uses.
     fn verify_client_data_hash() -> Vec<u8> {
         Sha256::digest(b"solokeys_verify_test").to_vec()
     }
@@ -420,7 +420,7 @@ mod tests {
     // ── cmd_verify end-to-end with MockDevice ────────────────────────────
 
     /// getInfo response: status 0x00 + empty CBOR map (no clientPin option,
-    /// so cmd_verify skips the PIN flow).
+    /// so `cmd_verify` skips the PIN flow).
     fn get_info_response() -> Vec<u8> {
         vec![0x00, 0xA0]
     }

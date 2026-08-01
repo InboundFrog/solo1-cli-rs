@@ -44,7 +44,7 @@ pub struct VerifyOutput {
     pub device_name: Option<String>,
     /// SHA-256 of the full certificate DER bytes.
     pub fingerprint: String,
-    /// SHA-256 of the SubjectPublicKeyInfo (SPKI) only — stable across certificate re-issuance.
+    /// SHA-256 of the `SubjectPublicKeyInfo` (SPKI) only — stable across certificate re-issuance.
     pub spki_fingerprint: String,
     /// Whether the attestation certificate's validity period has expired.
     /// A genuine device may still have an expired cert; expiry is reported as

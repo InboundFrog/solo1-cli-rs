@@ -45,7 +45,7 @@ pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
 ];
 
 /// Generate a new ECDSA P-256 key pair.
-/// Returns (private_key_pem, public_key_pem).
+/// Returns (`private_key_pem`, `public_key_pem`).
 pub fn generate_keypair() -> Result<(String, String)> {
     let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
     let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
@@ -97,7 +97,7 @@ pub enum AttestationResult {
     /// The certificate fingerprint matched a known genuine consumer device.
     GenuineConsumer(&'static str),
     /// The certificate fingerprint matched a developer or non-production device.
-    /// These devices are real SoloKeys builds but are not genuine consumer hardware.
+    /// These devices are real `SoloKeys` builds but are not genuine consumer hardware.
     /// This variant is included for developer convenience and does **not** indicate
     /// that the device is a genuine end-user product.
     DeveloperDevice(&'static str),
@@ -105,7 +105,7 @@ pub enum AttestationResult {
     Unknown,
 }
 
-/// Check whether a DER-encoded attestation certificate matches a known SoloKeys fingerprint.
+/// Check whether a DER-encoded attestation certificate matches a known `SoloKeys` fingerprint.
 ///
 /// ## What this check does
 ///
@@ -118,13 +118,13 @@ pub enum AttestationResult {
 ///
 /// - **No certificate chain validation.** The attestation certificate is not
 ///   verified against a trusted root CA.  Chain validation is a FIDO requirement
-///   for full attestation verification (see CTAP2 §8.1 and WebAuthn §6.5.3).
+///   for full attestation verification (see CTAP2 §8.1 and `WebAuthn` §6.5.3).
 /// - **No validity date check.** An expired attestation certificate will still
 ///   match if its full DER bytes are identical to the known fingerprint.
 /// - **No revocation check.** There is no CRL or OCSP query.
 /// - **Fingerprints cover the full certificate DER, not just the public key.**
 ///   Any change to the certificate — e.g., updated validity dates or extensions —
-///   will cause a mismatch even for a device with a genuine SoloKeys attestation
+///   will cause a mismatch even for a device with a genuine `SoloKeys` attestation
 ///   key.  Newer firmware builds may produce certificates whose fingerprints are
 ///   not yet listed here.
 ///
@@ -187,7 +187,7 @@ pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate fr
 ///
 /// Unlike `sha256_hex(cert_der)` (which fingerprints the entire certificate),
 /// this function fingerprints only the `SubjectPublicKeyInfo` structure inside
-/// the TBSCertificate.  Two certificates for the same attestation key but with
+/// the `TBSCertificate`.  Two certificates for the same attestation key but with
 /// different validity dates or extensions will produce the **same** SPKI
 /// fingerprint and **different** full-DER fingerprints.
 ///
@@ -238,7 +238,7 @@ pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Verify a packed-attestation ECDSA signature (WebAuthn §8.2, ES256 only).
+/// Verify a packed-attestation ECDSA signature (`WebAuthn` §8.2, ES256 only).
 ///
 /// Checks that `sig_der` is a valid DER-encoded ECDSA P-256 signature, made by
 /// the key certified in `cert_der`, over the message

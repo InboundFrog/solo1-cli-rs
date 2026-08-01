@@ -126,7 +126,7 @@ pub fn ctap2_request(cmd: u8, payload: &Value) -> Result<Vec<u8>> {
     Ok(request)
 }
 
-/// Build a CTAP2 request and exchange it over CTAPHID_CBOR, returning the raw response.
+/// Build a CTAP2 request and exchange it over `CTAPHID_CBOR`, returning the raw response.
 pub fn ctap2_call(hid: &impl HidDevice, cmd: u8, payload: &Value) -> Result<Vec<u8>> {
     let request = ctap2_request(cmd, payload)?;
     hid.send_recv(CTAPHID_CBOR, &request)
@@ -215,7 +215,7 @@ pub fn extract_cose_coord(cose_pairs: &[(Value, Value)], key: i64) -> Result<Vec
     crate::cbor::require_bytes(cose_pairs, key, "COSE key")
 }
 
-/// Parse a COSE_Key map (EC2 / P-256) into a `p256::PublicKey`.
+/// Parse a `COSE_Key` map (EC2 / P-256) into a `p256::PublicKey`.
 ///
 /// Extracts the x (-2) and y (-3) coordinates, validates their length, and
 /// assembles the uncompressed SEC1 point.
@@ -238,7 +238,7 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
 /// Perform ECDH against `dev_pub_key` with the given platform scalar.
 ///
 /// Returns the PIN/UV Auth Protocol One shared secret (SHA-256 of the ECDH
-/// x-coordinate) together with the platform public key wrapped as a COSE_Key
+/// x-coordinate) together with the platform public key wrapped as a `COSE_Key`
 /// CBOR map suitable for the `keyAgreement` request field.
 ///
 /// Production callers must use a freshly generated random scalar (see
@@ -308,7 +308,7 @@ pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
 ///
 /// Steps:
 ///   1. getKeyAgreement (subcommand 0x02) → device P-256 public key
-///   2. Generate ephemeral P-256 keypair, ECDH → shared_secret
+///   2. Generate ephemeral P-256 keypair, ECDH → `shared_secret`
 ///   3. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
 ///   4. getPINToken (subcommand 0x05) → decrypt response → pin token bytes
 pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {

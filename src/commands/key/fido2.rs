@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 /// Create a FIDO2 credential with hmac-secret extension.
 ///
-/// Sends a CTAP2 makeCredential (0x01) request via CTAPHID_CBOR with:
+/// Sends a CTAP2 makeCredential (0x01) request via `CTAPHID_CBOR` with:
 ///   - clientDataHash: SHA-256 of 32 random bytes
 ///   - rp: {"id": host, "name": host}
 ///   - user: {"id": user bytes, "name": user, "displayName": user}
@@ -149,12 +149,12 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
 ///
 /// Performs steps 1–6 of the hmac-secret protocol:
 ///   1. Compute salt = SHA-256(challenge)
-///   2–4. ECDH with device key → shared_secret + ephemeral COSE public key
+///   2–4. ECDH with device key → `shared_secret` + ephemeral COSE public key
 ///   5. saltEnc = AES-256-CBC(key=shared_secret, IV=0x00×16, data=salt)
 ///   6. saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
 ///
 /// Returns the hmac-secret extension map `{1: keyAgreement, 2: saltEnc, 3: saltAuth}`
-/// and the shared_secret needed to decrypt the authenticator's response.
+/// and the `shared_secret` needed to decrypt the authenticator's response.
 fn prepare_hmac_secret_input(
     dev_pub_key: &p256::PublicKey,
     challenge: &str,
@@ -198,7 +198,7 @@ fn prepare_hmac_secret_input_with_scalar(
 ///        rpId, clientDataHash, allowList[credentialId],
 ///        extensions: {"hmac-secret": {1: ephemeralPub, 2: saltEnc, 3: saltAuth}}
 ///   8. Parse authData from response; if ED flag set, decrypt the hmac-secret output:
-///        output = AES-256-CBC-decrypt(shared_secret, IV=0x00*16, encrypted_output)
+///        output = AES-256-CBC-decrypt(shared_secret, IV=0x00*16, `encrypted_output`)
 ///   9. Print output as hex
 pub fn cmd_challenge_response(
     hid: &impl HidDevice,

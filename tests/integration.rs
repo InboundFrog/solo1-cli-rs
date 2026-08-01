@@ -54,7 +54,7 @@ fn test_version_hardware() {
 // Hardware-less tests: firmware signing and mergehex
 // ============================================================
 
-/// Test that firmware_bytes_to_sign_for_version produces different sizes for v1 and v2.
+/// Test that `firmware_bytes_to_sign_for_version` produces different sizes for v1 and v2.
 #[test]
 fn test_firmware_sign_versioned_regions_differ() {
     use solo1::firmware::{FLASH_PAGES, FLASH_PAGE_SIZE};
@@ -114,7 +114,7 @@ fn test_firmware_sign_versioned_regions_differ() {
     );
 }
 
-/// Test that the AUTH_WORD_ADDR calculation matches the Python reference.
+/// Test that the `AUTH_WORD_ADDR` calculation matches the Python reference.
 #[test]
 fn test_mergehex_auth_word_address() {
     use solo1::firmware::flash_addr;
@@ -146,7 +146,7 @@ fn test_mergehex_auth_word_address() {
     assert_eq!(attest_addr, 0x08038800, "ATTEST_ADDR should be 0x08038800");
 }
 
-/// Test that version_matches_constraint handles the "=" operator correctly.
+/// Test that `version_matches_constraint` handles the "=" operator correctly.
 #[test]
 fn test_version_constraint_equals() {
     use solo1::firmware::{version_matches_constraint, FirmwareVersion};
@@ -356,7 +356,7 @@ fn test_known_fingerprints_validity() {
     assert!(names.contains(&"Valid Solo with firmware from SoloKeys."));
 }
 
-/// Test flash_addr calculation.
+/// Test `flash_addr` calculation.
 #[test]
 fn test_flash_addr_calculation() {
     use solo1::firmware::flash_addr;

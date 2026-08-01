@@ -149,7 +149,7 @@ fn send_cred_mgmt(
 
 /// Send a credMgmt (0x0A) subcommand with no authentication parameters.
 ///
-/// Used for the *GetNext* subcommands (0x03 enumerateRPsGetNextRP,
+/// Used for the *`GetNext`* subcommands (0x03 enumerateRPsGetNextRP,
 /// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
 fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
     let cm_cbor = int_map([(0x01i64, cbor_int(subcommand as i64))]);
@@ -321,7 +321,7 @@ fn enumerate_credentials_for_rp(
 /// Protocol:
 ///   1. Prompt for PIN, derive PIN token via clientPIN (0x06):
 ///      a. getKeyAgreement (subcommand 0x02) → device COSE key
-///      b. Generate ephemeral P-256 keypair, ECDH → shared_secret = SHA-256(x)
+///      b. Generate ephemeral P-256 keypair, ECDH → `shared_secret` = SHA-256(x)
 ///      c. pinHashEnc = AES-256-CBC(shared_secret, IV=0, SHA-256(pin)[0..16])
 ///      d. getPINToken (subcommand 0x05) → decrypt response → pinToken (32 bytes)
 ///   2. enumerateRPsBegin (credMgmt 0x0A subcommand 0x02):
@@ -524,8 +524,8 @@ mod tests {
         assert!(hex::decode(b64).is_err(), "credential ID is not valid hex");
     }
 
-    /// deleteCredential subCommandParams must use key 0x02 (CM_subCommandCred)
-    /// for the credential descriptor, not key 0x01 (CM_subCommandRpId).
+    /// deleteCredential subCommandParams must use key 0x02 (`CM_subCommandCred`)
+    /// for the credential descriptor, not key 0x01 (`CM_subCommandRpId`).
     /// Key 0x01 with a map value causes the Solo1 firmware CBOR iterator to hang.
     #[test]
     fn delete_sub_command_params_uses_key_0x02() {

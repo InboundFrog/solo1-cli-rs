@@ -155,7 +155,7 @@ impl DfuDevice {
         }
     }
 
-    /// Download one chunk via DFU_DNLOAD.
+    /// Download one chunk via `DFU_DNLOAD`.
     pub fn dnload_chunk(&mut self, data: &[u8]) -> Result<()> {
         vlog!(
             "DFU_DNLOAD: transaction={} len={}",

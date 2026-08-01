@@ -135,7 +135,7 @@ mod tests {
         );
     }
 
-    /// Device timeout propagates as SoloError::Timeout.
+    /// Device timeout propagates as `SoloError::Timeout`.
     #[test]
     fn test_cmd_rng_hexbytes_timeout() {
         let device = MockDevice::new(vec![]);

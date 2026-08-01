@@ -1,4 +1,4 @@
-/// Solo HID device communication — SoloHid, SoloDevice, list_solo_devices.
+/// Solo HID device communication — `SoloHid`, `SoloDevice`, `list_solo_devices`.
 use std::time::{Duration, Instant};
 
 use hidapi::{HidApi, HidDevice as HidApiDevice};
@@ -86,7 +86,7 @@ impl SoloHid {
         Ok(hid)
     }
 
-    /// Send a CTAPHID_INIT to get a channel ID.
+    /// Send a `CTAPHID_INIT` to get a channel ID.
     fn init(&mut self) -> Result<()> {
         // Generate a random nonce
         let nonce: [u8; 8] = rand::random();
@@ -253,7 +253,7 @@ impl SoloHid {
 
     /// Send a vendor (bootloader) command packet and return the response payload.
     ///
-    /// Packet format: [cmd(1)] [addr(3) LE] [TAG(4)] [length_be(2)] [data]
+    /// Packet format: [cmd(1)] [addr(3) LE] [TAG(4)] [`length_be(2)`] [data]
     ///
     /// The bootloader responds with [status(1)] [payload...]. This method checks
     /// the status byte and strips it, returning only the payload on success.

@@ -244,7 +244,7 @@ pub enum CredentialCommands {
         /// User ID / username
         #[arg(long)]
         user: String,
-        /// Prompt text (use empty string to suppress, outputting only the credential_id)
+        /// Prompt text (use empty string to suppress, outputting only the `credential_id`)
         #[arg(
             long,
             default_value = "Touch your authenticator to generate a credential..."

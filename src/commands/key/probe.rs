@@ -7,8 +7,8 @@ use crate::error::{Result, SoloError};
 
 /// Run a hash probe on the device.
 ///
-/// Sends a CBOR-encoded command to CMD_PROBE (0x70):
-///   {"subcommand": hash_type_str, "data": file_bytes}
+/// Sends a CBOR-encoded command to `CMD_PROBE` (0x70):
+///   {"subcommand": `hash_type_str`, "data": `file_bytes`}
 ///
 /// Valid hash types (case-insensitive input, sent as canonical form):
 ///   SHA256, SHA512, RSA2048, Ed25519
@@ -75,7 +75,7 @@ fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
 ///
 /// Protocol:
 ///   1. SHA-256 the file contents → clientDataHash
-///   2. getAssertion (0x02) with rp_id, clientDataHash, allowList[credential_id]
+///   2. getAssertion (0x02) with `rp_id`, clientDataHash, allowList[`credential_id`]
 ///   3. Extract signature (key 0x03) from the CBOR response
 ///   4. Save raw signature bytes to `{filename}.sig`
 ///   5. Print signature hex to stdout
@@ -185,7 +185,7 @@ mod tests {
         }
     }
 
-    /// cmd_probe must reject an unknown hash type before touching the file or device.
+    /// `cmd_probe` must reject an unknown hash type before touching the file or device.
     #[test]
     fn test_cmd_probe_rejects_unknown_hash_type() {
         use crate::device::mock::MockDevice;
