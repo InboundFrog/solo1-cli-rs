@@ -348,13 +348,13 @@ mod tests {
 
     #[test]
     fn test_sign_and_verify_firmware() {
+        use p256::ecdsa::{signature::Verifier, DerSignature, VerifyingKey};
         let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
         let firmware = b"fake firmware data for testing";
         let sig_der = sign_firmware(&signing_key, firmware).unwrap();
         assert!(!sig_der.is_empty());
 
         // Verify using p256
-        use p256::ecdsa::{signature::Verifier, DerSignature, VerifyingKey};
         let vk = VerifyingKey::from(&signing_key);
         let hash = Sha256::digest(firmware);
         let sig = DerSignature::try_from(sig_der.as_slice()).unwrap();

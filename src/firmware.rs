@@ -448,6 +448,9 @@ pub fn merge_hex_files(
     attestation_key: Option<&Path>,
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
+    // APPLICATION_END_PAGE_COUNT = 20 (default, for new bootloader)
+    const APPLICATION_END_PAGE_COUNT: u32 = 20;
+
     // Validate that key and cert are either both provided or both None
     if attestation_key.is_some() != attestation_cert.is_some() {
         return Err(SoloError::FirmwareError(
@@ -482,8 +485,6 @@ pub fn merge_hex_files(
         HACKER_ATTESTATION_CERT.to_vec()
     };
 
-    // APPLICATION_END_PAGE_COUNT = 20 (default, for new bootloader)
-    const APPLICATION_END_PAGE_COUNT: u32 = 20;
     let application_end_page = FLASH_PAGES - APPLICATION_END_PAGE_COUNT; // = 108
 
     eprintln!("app end page: {application_end_page}");

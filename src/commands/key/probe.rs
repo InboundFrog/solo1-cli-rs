@@ -15,6 +15,7 @@ use crate::error::{Result, SoloError};
 ///
 /// File must be <= 6144 bytes.
 pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Result<()> {
+    use ciborium::value::Value;
     // Normalize hash type to the canonical form expected by the device
     let hash_type_str = normalize_hash_type(hash_type).ok_or_else(|| {
         SoloError::DeviceError(format!(
@@ -32,7 +33,6 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
     }
 
     // CBOR-encode: {"subcommand": hash_type_str, "data": file_bytes}
-    use ciborium::value::Value;
     let cbor_val = Value::Map(vec![
         (
             Value::Text("subcommand".into()),
@@ -51,7 +51,9 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
         // First 64 bytes = signature (128 hex chars), rest = content
         if response.len() > 64 {
             println!("content: {:?}", &response[64..]);
-            let sig_hex = result_hex.get(..128.min(result_hex.len())).unwrap_or(result_hex.as_str());
+            let sig_hex = result_hex
+                .get(..128.min(result_hex.len()))
+                .unwrap_or(result_hex.as_str());
             println!("signature: {sig_hex}");
         }
     }

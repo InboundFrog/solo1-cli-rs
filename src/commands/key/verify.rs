@@ -124,6 +124,7 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
 /// is missing or invalid, the device is reported as failed regardless of the
 /// fingerprint.
 pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
+    use crate::crypto::AttestationResult;
     use crate::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
 
     // clientDataHash: fixed 32-byte value (Solo does not verify it for attestation)
@@ -159,7 +160,6 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     let spki_fingerprint = crate::crypto::extract_spki_fingerprint(cert_der)
         .unwrap_or_else(|_| "(could not extract)".into());
 
-    use crate::crypto::AttestationResult;
     let result = check_attestation_fingerprint(cert_der);
 
     // Check certificate validity dates independently.  An expired cert on a
