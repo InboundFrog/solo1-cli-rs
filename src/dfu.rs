@@ -42,7 +42,7 @@ impl DfuStatus {
                 "DFU status response too short".into(),
             ));
         }
-        Ok(DfuStatus {
+        Ok(Self {
             status: bytes[0],
             poll_timeout_ms: u32::from(bytes[1])
                 | (u32::from(bytes[2]) << 8)
@@ -85,7 +85,7 @@ impl DfuDevice {
         handle
             .claim_interface(DFU_INTERFACE)
             .map_err(SoloError::UsbError)?;
-        Ok(DfuDevice {
+        Ok(Self {
             handle,
             transaction: 0,
         })

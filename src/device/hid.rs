@@ -77,7 +77,7 @@ impl SoloHid {
         let device = info.open_device(&api)?;
         device.set_blocking_mode(true)?;
 
-        let mut hid = SoloHid {
+        let mut hid = Self {
             device,
             channel_id: [0u8; 4],
             response_timeout: timeout,
@@ -286,14 +286,14 @@ impl SoloHid {
 
 impl crate::device::HidDevice for SoloHid {
     fn send_recv(&self, cmd: u8, data: &[u8]) -> Result<Vec<u8>> {
-        SoloHid::send_recv(self, cmd, data)
+        Self::send_recv(self, cmd, data)
     }
 
     fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
-        SoloHid::send_bootloader_cmd(self, cmd, addr, data)
+        Self::send_bootloader_cmd(self, cmd, addr, data)
     }
 
     fn send(&self, cmd: u8, data: &[u8]) -> Result<()> {
-        SoloHid::send(self, cmd, data)
+        Self::send(self, cmd, data)
     }
 }

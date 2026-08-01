@@ -51,7 +51,7 @@ impl CtapHidFrame {
             let cmd = byte4 & 0x7F;
             let bcnt = (u16::from(raw[5]) << 8) | u16::from(raw[6]);
             let data = raw[7..].to_vec();
-            Ok(CtapHidFrame {
+            Ok(Self {
                 channel_id,
                 payload: FramePayload::Init { cmd, bcnt, data },
             })
@@ -59,7 +59,7 @@ impl CtapHidFrame {
             // Continuation frame
             let seq = byte4 & 0x7F;
             let data = raw[5..].to_vec();
-            Ok(CtapHidFrame {
+            Ok(Self {
                 channel_id,
                 payload: FramePayload::Cont { seq, data },
             })

@@ -117,7 +117,7 @@ pub struct FirmwareVersion {
 
 impl FirmwareVersion {
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
-        FirmwareVersion {
+        Self {
             major,
             minor,
             patch,
@@ -140,7 +140,7 @@ impl FirmwareVersion {
         let patch = parts[2]
             .parse()
             .map_err(|_| SoloError::FirmwareError(format!("Invalid patch: {}", parts[2])))?;
-        Ok(FirmwareVersion {
+        Ok(Self {
             major,
             minor,
             patch,
