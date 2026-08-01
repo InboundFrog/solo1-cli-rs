@@ -46,6 +46,10 @@ pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
 
 /// Generate a new ECDSA P-256 key pair.
 /// Returns (`private_key_pem`, `public_key_pem`).
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if the generated private or public key
+/// cannot be PEM-encoded.
 pub fn generate_keypair() -> Result<(String, String)> {
     let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
     let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
@@ -60,6 +64,10 @@ pub fn generate_keypair() -> Result<(String, String)> {
 }
 
 /// Load a signing key from a PEM file path.
+///
+/// # Errors
+/// Returns an error if the file cannot be read, or its contents are not a valid
+/// PKCS#8 PEM-encoded P-256 signing key.
 pub fn load_signing_key(path: &Path) -> Result<SigningKey> {
     let pem = std::fs::read_to_string(path)?;
     SigningKey::from_pkcs8_pem(&pem)
@@ -68,6 +76,10 @@ pub fn load_signing_key(path: &Path) -> Result<SigningKey> {
 
 /// Sign the firmware bytes with the given key.
 /// Returns the DER-encoded signature bytes.
+///
+/// # Errors
+/// This function is currently infallible; the `Result` return type is retained
+/// for API stability with signing backends that can fail.
 pub fn sign_firmware(key: &SigningKey, firmware_bytes: &[u8]) -> Result<Vec<u8>> {
     use p256::ecdsa::signature::Signer;
     use p256::ecdsa::{DerSignature, Signature};
@@ -85,6 +97,9 @@ pub fn sha256_hex(data: &[u8]) -> String {
 }
 
 /// Compute SHA-256 of a file.
+///
+/// # Errors
+/// Returns an error if the file cannot be read.
 pub fn sha256_file(path: &Path) -> Result<Vec<u8>> {
     let data = std::fs::read(path)?;
     Ok(Sha256::digest(&data).to_vec())
@@ -194,6 +209,10 @@ pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate fr
 /// fingerprint and **different** full-DER fingerprints.
 ///
 /// This is the building block for future SPKI pinning (see TODO(0003) above).
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if `cert_der` is not a parseable X.509
+/// certificate, or its `SubjectPublicKeyInfo` cannot be re-encoded to DER.
 pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
     let cert = Certificate::from_der(cert_der)
         .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
@@ -216,6 +235,10 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
 ///
 /// This check uses the local system clock and does not contact any external
 /// time service.  Clock skew on the host may produce false positives.
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if the certificate cannot be parsed, has
+/// expired (now > `notAfter`), or is not yet valid (now < `notBefore`).
 pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
     let cert = Certificate::from_der(cert_der)
         .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
@@ -254,6 +277,11 @@ pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
 /// Returns `Ok(())` only if the signature verifies.  Any parse failure
 /// (certificate, public key, or signature DER) or signature mismatch returns
 /// `Err(SoloError::CryptoError(...))`.
+///
+/// # Errors
+/// Returns [`SoloError::CryptoError`] if the certificate, its public key, or the
+/// signature DER cannot be parsed, the message length overflows, or the
+/// signature does not verify.
 pub fn verify_attestation_signature(
     cert_der: &[u8],
     auth_data: &[u8],
@@ -298,6 +326,10 @@ pub fn websafe_b64_encode(data: &[u8]) -> String {
 }
 
 /// Websafe base64 decoding.
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if `s` is not valid websafe base64
+/// (RFC 4648 URL-safe, no padding).
 pub fn websafe_b64_decode(s: &str) -> Result<Vec<u8>> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;

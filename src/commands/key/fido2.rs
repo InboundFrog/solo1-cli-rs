@@ -19,6 +19,12 @@ use sha2::{Digest, Sha256};
 ///
 /// Parses the authData from the response to extract the credential ID,
 /// then prints it as hex for use with `challenge-response` and `sign-file`.
+///
+/// # Errors
+/// Returns an error if acquiring a PIN token fails, if the makeCredential
+/// request fails, or if the response is malformed (missing authData, the
+/// attested-credential-data flag is unset, or the authData is too short to
+/// contain the credential ID).
 pub fn cmd_make_credential(
     hid: &impl HidDevice,
     host: &str,
@@ -210,6 +216,13 @@ fn prepare_hmac_secret_input_with_scalar(
 ///   8. Parse authData from response; if ED flag set, decrypt the hmac-secret output:
 ///        output = AES-256-CBC-decrypt(shared_secret, IV=0x00*16, `encrypted_output`)
 ///   9. Print output as hex
+///
+/// # Errors
+/// Returns an error if `credential_id` is not valid hex, if key agreement or
+/// the getAssertion request fails, if the response is malformed (missing or
+/// short authData, the extensions-data flag is unset, or the hmac-secret
+/// output is missing or too short), or if decrypting the hmac-secret output
+/// fails.
 pub fn cmd_challenge_response(
     hid: &impl HidDevice,
     credential_id: &str,

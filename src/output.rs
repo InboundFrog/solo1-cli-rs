@@ -100,6 +100,9 @@ pub struct PingOutput {
 }
 
 /// Serialize `value` to pretty JSON and print to stdout.
+///
+/// # Errors
+/// Returns an error if `value` cannot be serialized to JSON.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     println!(
         "{}",

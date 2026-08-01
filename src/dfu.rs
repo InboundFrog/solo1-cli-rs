@@ -36,6 +36,10 @@ pub struct DfuStatus {
 }
 
 impl DfuStatus {
+    /// Parse a 6-byte `DFU_GETSTATUS` response.
+    ///
+    /// # Errors
+    /// Returns an error if the input is shorter than 6 bytes.
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         let bytes: [u8; 6] = bytes
             .get(..6)
@@ -59,6 +63,11 @@ impl DfuStatus {
 }
 
 /// Open the DFU device via libusb.
+///
+/// # Errors
+/// Returns an error if the libusb context cannot be created, the device list
+/// or a device descriptor cannot be read, opening the device fails, or no ST
+/// DFU device (PID 0xDF11) is present.
 pub fn open_dfu_device() -> Result<DeviceHandle<Context>> {
     let context = Context::new()?;
     let devices = context.devices()?;
@@ -81,6 +90,11 @@ pub struct DfuDevice {
 }
 
 impl DfuDevice {
+    /// Open the ST DFU device and claim its interface.
+    ///
+    /// # Errors
+    /// Returns an error if no ST DFU device is found, the device cannot be
+    /// opened, or the DFU interface cannot be claimed.
     pub fn open() -> Result<Self> {
         let handle = open_dfu_device()?;
         handle
@@ -122,6 +136,11 @@ impl DfuDevice {
         Ok(n)
     }
 
+    /// Query the current DFU status via `DFU_GETSTATUS`.
+    ///
+    /// # Errors
+    /// Returns an error if the USB control transfer fails or the status
+    /// response cannot be parsed.
     pub fn get_status(&self) -> Result<DfuStatus> {
         let mut buf = [0u8; 6];
         self.control_in(DFU_GETSTATUS, 0, &mut buf)?;
@@ -136,6 +155,10 @@ impl DfuDevice {
     }
 
     /// Wait while device is in DNBUSY state.
+    ///
+    /// # Errors
+    /// Returns an error if a status query fails or the device reports an error
+    /// status.
     pub fn wait_while_busy(&self) -> Result<DfuStatus> {
         loop {
             let status = self.get_status()?;
@@ -157,6 +180,10 @@ impl DfuDevice {
     }
 
     /// Download one chunk via `DFU_DNLOAD`.
+    ///
+    /// # Errors
+    /// Returns an error if the USB control transfer fails, the transaction
+    /// counter overflows, or the device reports an error while busy.
     pub fn dnload_chunk(&mut self, data: &[u8]) -> Result<()> {
         vlog!(
             "DFU_DNLOAD: transaction={} len={}",
@@ -173,6 +200,11 @@ impl DfuDevice {
     }
 
     /// Program a firmware binary to the device.
+    ///
+    /// # Errors
+    /// Returns an error if the chunk-size or offset arithmetic overflows, the
+    /// progress bar style is invalid, or downloading a chunk to the device
+    /// fails.
     pub fn program(&mut self, firmware: &[u8]) -> Result<()> {
         let chunk_size = usize::try_from(DFU_CHUNK_SIZE)
             .map_err(|_| SoloError::ProtocolError("DFU chunk size overflow".into()))?;

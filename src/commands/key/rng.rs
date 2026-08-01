@@ -4,6 +4,10 @@ use crate::device::{HidDevice, CMD_RNG};
 use crate::error::{Result, SoloError};
 
 /// Get N random bytes from the device, return as hex string.
+///
+/// # Errors
+/// Returns an error if `n` exceeds 255, if the device request fails, or if the
+/// device returns a shorter response than expected.
 pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
     if n > 255 {
         return Err(SoloError::ProtocolError(format!(
@@ -22,6 +26,10 @@ pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
 }
 
 /// Stream raw random bytes to stdout.
+///
+/// # Errors
+/// Loops indefinitely, returning an error if a device request fails or if
+/// writing to or flushing stdout fails.
 pub fn cmd_rng_raw(hid: &impl HidDevice) -> Result<()> {
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -39,6 +47,11 @@ pub fn cmd_rng_raw(hid: &impl HidDevice) -> Result<()> {
 /// of the entropy being added, rather than just writing bytes. The struct
 /// sent to the ioctl is: entropy_count (i32) | buf_size (i32) | data (bytes).
 /// entropy_count = count * 2 (2 bits per byte, pessimistic estimate).
+///
+/// # Errors
+/// Returns an error if the device request fails, if the entropy byte counts
+/// cannot be represented as `i32`, or if opening `/dev/random` or issuing the
+/// `RNDADDENTROPY` ioctl fails.
 #[cfg(target_os = "linux")]
 pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     use std::fs::File;
@@ -86,6 +99,11 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     Ok(())
 }
 
+/// Feed entropy to the kernel RNG (Linux only).
+///
+/// # Errors
+/// Always returns an error: feeding kernel entropy is unsupported on non-Linux
+/// platforms.
 #[cfg(not(target_os = "linux"))]
 pub const fn cmd_rng_feedkernel(_hid: &impl HidDevice) -> Result<()> {
     Err(SoloError::UnsupportedPlatform)

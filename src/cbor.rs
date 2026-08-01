@@ -3,6 +3,9 @@ use ciborium::value::Value;
 use crate::error::{Result, SoloError};
 
 /// Extract a CBOR map's key-value pairs, or return an error with context.
+///
+/// # Errors
+/// Returns an error if `v` is not a `Value::Map`.
 pub fn expect_map(v: Value, ctx: &str) -> Result<Vec<(Value, Value)>> {
     match v {
         Value::Map(pairs) => Ok(pairs),
@@ -55,6 +58,9 @@ pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a V
 }
 
 /// Require a value by integer key; error with context if missing.
+///
+/// # Errors
+/// Returns an error if no entry with integer key `key` is present.
 pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> Result<&'a Value> {
     find_int_key(pairs, key)
         .ok_or_else(|| SoloError::ProtocolError(format!("{ctx}: key {key} missing in CBOR map")))
@@ -62,6 +68,7 @@ pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> 
 
 /// Extract bytes from a required integer-keyed entry.
 ///
+/// # Errors
 /// Returns `Err` if the key is absent or if its value is not `Value::Bytes`.
 pub fn require_bytes(pairs: &[(Value, Value)], key: i64, ctx: &str) -> Result<Vec<u8>> {
     match require_int_key(pairs, key, ctx)? {

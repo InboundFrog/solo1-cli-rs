@@ -9,6 +9,10 @@ use crate::firmware::FirmwareVersion;
 use crate::output::{print_json, PingOutput};
 
 /// Get firmware version from the device.
+///
+/// # Errors
+/// Returns an error if the version query fails (device/transport error or
+/// timeout), the response is too short, or JSON serialization fails.
 pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::output::{print_json, VersionOutput};
 
@@ -37,6 +41,10 @@ pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion
 }
 
 /// Blink the LED on the device.
+///
+/// # Errors
+/// Returns an error if the wink command fails (device/transport error or
+/// timeout).
 pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
     hid.send_recv(CTAPHID_WINK, &[])?;
     println!("Winked!");
@@ -44,6 +52,11 @@ pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Send ping(s) and measure round-trip time.
+///
+/// # Errors
+/// Returns an error if a ping cannot be sent or received (device/transport
+/// error or timeout), the echoed data does not match what was sent, the ping
+/// index overflows, or JSON serialization fails.
 pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Result<()> {
     for i in 0..count {
         let start = Instant::now();
@@ -79,6 +92,10 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
 }
 
 /// Program a keyboard sequence (HID keyboard emulation).
+///
+/// # Errors
+/// Returns an error if the data exceeds 64 bytes or the keyboard command fails
+/// (device/transport error or timeout).
 pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
     if data.len() > 64 {
         return Err(SoloError::ProtocolError(
@@ -91,6 +108,10 @@ pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
 }
 
 /// Factory reset the device.
+///
+/// # Errors
+/// Returns an error if reading the confirmation from stdin fails or the reset
+/// command fails (device/transport error or timeout).
 pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
     if !common::confirm("Warning: Your credentials will be lost!!! Type 'yes' to confirm:")? {
         println!("Aborted.");
@@ -106,6 +127,11 @@ pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Permanently disable firmware updates on the device.
+///
+/// # Errors
+/// Returns an error if reading the confirmation from stdin fails or the
+/// disable-bootloader command fails (device/transport error or a non-zero
+/// bootloader status).
 pub fn cmd_disable_updates(hid: &impl HidDevice) -> Result<()> {
     use crate::device::CMD_DISABLE_BOOTLOADER;
     if !common::confirm(

@@ -26,6 +26,11 @@ const _: () = assert!(CHUNK_STRIDE == 256 && CHUNK_SIZE == 256);
 ///
 /// The device must already be in bootloader mode. `finalize_msg` is printed
 /// between the write loop and `CMD_DONE` (callers use different wording).
+///
+/// # Errors
+/// Returns an error if the firmware size cannot be represented for the progress
+/// bar, if the progress-bar template is invalid, or if any bootloader write or
+/// the final `CMD_DONE` command fails.
 pub fn write_firmware(
     hid: &impl HidDevice,
     base_addr: u32,
@@ -87,6 +92,10 @@ pub fn write_firmware(
 
 /// Program via the Solo bootloader (firmware.json format).
 /// The device must already be in bootloader mode when this is called.
+///
+/// # Errors
+/// Returns an error if the firmware JSON cannot be loaded or parsed, if
+/// selecting the signature fails, or if writing the firmware fails.
 pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Result<()> {
     vlog!("Loading firmware JSON: {:?}", firmware_json);
     let fw = FirmwareJson::from_file(firmware_json)?;
@@ -153,6 +162,10 @@ pub fn compute_chunk_addresses(flash_start: u32, firmware_len: usize) -> Vec<(u3
 }
 
 /// Program via ST DFU (firmware.hex format).
+///
+/// # Errors
+/// Returns an error if the HEX file cannot be parsed, if the DFU device cannot
+/// be opened, or if DFU programming fails.
 pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
     use crate::firmware::parse_hex_file;
 

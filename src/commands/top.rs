@@ -9,6 +9,10 @@ use crate::firmware::{
 };
 
 /// Print the library version.
+///
+/// # Errors
+/// Returns an error if serializing or writing the JSON output fails (JSON mode
+/// only).
 pub fn cmd_version(json: bool) -> Result<()> {
     if json {
         use crate::output::{print_json, CliVersionOutput};
@@ -24,6 +28,10 @@ pub fn cmd_version(json: bool) -> Result<()> {
 
 /// Generate an ECDSA P-256 keypair.
 /// Writes the private key to `output` (or stdout) and prints the public key.
+///
+/// # Errors
+/// Returns an error if keypair generation fails, writing the private key file
+/// fails, or JSON serialization fails.
 pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool) -> Result<()> {
     // Optionally seed additional entropy (informational; ring/p256 use OS RNG)
     if let Some(entropy_path) = entropy_file {
@@ -92,6 +100,11 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 /// not the binary, matching the Python reference implementation.
 ///
 /// Outputs JSON {firmware, signature, versions} to stdout.
+///
+/// # Errors
+/// Returns an error if the signing key cannot be loaded, the firmware hex
+/// cannot be read or parsed, signing fails, or building or serializing the
+/// output JSON fails.
 pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
     let signing_key = load_signing_key(key_path)?;
 
@@ -111,6 +124,10 @@ pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
 }
 
 /// Merge Intel HEX files into a single output.
+///
+/// # Errors
+/// Returns an error if reading or parsing the input hex files, merging them,
+/// or writing the output file fails.
 pub fn cmd_mergehex(
     inputs: &[PathBuf],
     output: &Path,
@@ -124,6 +141,10 @@ pub fn cmd_mergehex(
 }
 
 /// List connected Solo devices.
+///
+/// # Errors
+/// Returns an error if enumerating HID devices fails or JSON serialization
+/// fails.
 pub fn cmd_ls(json: bool) -> Result<()> {
     use crate::output::{print_json, DeviceInfo, ListOutput};
 

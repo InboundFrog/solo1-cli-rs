@@ -20,6 +20,9 @@ pub struct SoloDevice {
 }
 
 /// List all connected Solo HID devices.
+///
+/// # Errors
+/// Returns an error if the HID API cannot be initialized.
 pub fn list_solo_devices() -> Result<Vec<SoloDevice>> {
     let api = HidApi::new()?;
     let devices: Vec<SoloDevice> = api
@@ -53,6 +56,12 @@ impl SoloHid {
     /// `timeout` controls how long `send_recv` and `recv_response` wait for a
     /// device reply. The low-level CTAPHID init handshake always uses a fixed
     /// 5-second timeout regardless of this value.
+    ///
+    /// # Errors
+    /// Returns an error if the HID API cannot be initialized, no Solo device is
+    /// found, the requested serial does not match any device, multiple devices
+    /// are present when no serial is given, the device cannot be opened, or the
+    /// CTAPHID init handshake fails.
     pub fn open(serial: Option<&str>, timeout: Duration) -> Result<Self> {
         let api = HidApi::new()?;
         let devices: Vec<_> = api
@@ -122,12 +131,20 @@ impl SoloHid {
     }
 
     /// Send a command with payload, receive and return the response payload.
+    ///
+    /// # Errors
+    /// Returns an error if the command cannot be sent or no valid response is
+    /// received before the timeout.
     pub fn send_recv(&self, cmd: u8, data: &[u8]) -> Result<Vec<u8>> {
         self.send(cmd, data)?;
         self.recv_response(cmd, self.response_timeout)
     }
 
     /// Send a command with payload.
+    ///
+    /// # Errors
+    /// Returns an error if the payload cannot be framed or encoded, or writing
+    /// to the HID device fails.
     pub fn send(&self, cmd: u8, data: &[u8]) -> Result<()> {
         vlog!(
             "HID send: cmd=0x{:02X} len={} data={}",
@@ -188,6 +205,11 @@ impl SoloHid {
     }
 
     /// Receive a response for a given command, with timeout.
+    ///
+    /// # Errors
+    /// Returns an error if no response arrives before the timeout, the device
+    /// returns a CTAPHID error, a HID read fails, or the frames cannot be
+    /// reassembled.
     pub fn recv_response(&self, expected_cmd: u8, timeout: Duration) -> Result<Vec<u8>> {
         vlog!("HID recv: waiting for cmd=0x{:02X}", expected_cmd);
         let start = Instant::now();
@@ -286,6 +308,11 @@ impl SoloHid {
     ///
     /// The bootloader responds with [status(1)] [payload...]. This method checks
     /// the status byte and strips it, returning only the payload on success.
+    ///
+    /// # Errors
+    /// Returns an error if the packet cannot be built (data too long), the
+    /// command cannot be sent or received (device/transport error or timeout),
+    /// or the bootloader returns a non-zero status.
     pub fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
         vlog!(
             "bootloader cmd=0x{:02X} addr=0x{:08X} data_len={}",

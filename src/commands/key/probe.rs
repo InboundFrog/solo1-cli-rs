@@ -14,6 +14,11 @@ use crate::error::{Result, SoloError};
 ///   SHA256, SHA512, RSA2048, Ed25519
 ///
 /// File must be <= 6144 bytes.
+///
+/// # Errors
+/// Returns an error if `hash_type` is not a recognised hash type, if the file
+/// cannot be read, if the file exceeds 6144 bytes, or if the device request
+/// fails.
 pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Result<()> {
     use ciborium::value::Value;
     // Normalize hash type to the canonical form expected by the device
@@ -85,6 +90,11 @@ fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
 ///   3. Extract signature (key 0x03) from the CBOR response
 ///   4. Save raw signature bytes to `{filename}.sig`
 ///   5. Print signature hex to stdout
+///
+/// # Errors
+/// Returns an error if `credential_id` is not valid hex, if the file cannot be
+/// read, if the getAssertion request fails, if the response is missing the
+/// signature, or if writing the `.sig` file fails.
 pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path) -> Result<()> {
     use ciborium::value::Value;
 

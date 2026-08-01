@@ -9,6 +9,10 @@ use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
+///
+/// # Errors
+/// Returns an error if the getInfo request fails or its response is not a valid
+/// CBOR map, or if printing JSON output fails.
 pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::output::{print_json, CredentialInfoOutput};
     use ciborium::value::Value;
@@ -332,6 +336,11 @@ fn enumerate_credentials_for_rp(
 ///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || CBOR({0x01: rpIdHash}))[0..16]
 ///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
 ///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
+///
+/// # Errors
+/// Returns an error if no PIN is set on the device, if acquiring a PIN token
+/// fails, if any credential-management request fails, or if a response is
+/// malformed.
 pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::output::{print_json, CredentialEntry, CredentialListOutput};
     use base64::Engine as _;
@@ -401,6 +410,13 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 /// the matching credential ID; exactly one match is required.
 ///
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
+///
+/// # Errors
+/// Returns an error if no PIN is set on the device, if acquiring a PIN token
+/// fails, if `credential_id` is not valid base64, if neither `credential_id`
+/// nor a `host`+`user` pair is supplied, if no credential matches or more than
+/// one matches, if reading the confirmation prompt fails, or if the
+/// deleteCredential command is rejected by the device.
 pub fn cmd_credential_rm(
     hid: &impl HidDevice,
     credential_id: Option<&str>,

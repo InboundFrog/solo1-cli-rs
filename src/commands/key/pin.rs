@@ -12,6 +12,12 @@ use crate::error::{Result, SoloError};
 ///   5. AES-256-CBC encrypt padded new PIN → newPinEnc
 ///   6. HMAC-SHA-256(shared_secret, newPinEnc || pinHashEnc)[0..16] → pinUvAuthParam
 ///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
+///
+/// # Errors
+/// Returns an error if reading the device version fails, if a PIN prompt cannot
+/// be read, if the new PINs do not match, if either PIN is shorter than 4
+/// characters, if key agreement or encryption fails, or if the changePin
+/// command is rejected by the device.
 pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
     let old_pin = rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?;
@@ -64,6 +70,12 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 ///   4. AES-256-CBC encrypt padded PIN → newPinEnc
 ///   5. HMAC-SHA-256(shared_secret, newPinEnc)[0..16] → pinUvAuthParam
 ///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
+///
+/// # Errors
+/// Returns an error if reading the device version fails, if a PIN prompt cannot
+/// be read, if the new PINs do not match, if the PIN is shorter than 4
+/// characters, if key agreement or encryption fails, or if the setPin command
+/// is rejected by the device.
 pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
     let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;

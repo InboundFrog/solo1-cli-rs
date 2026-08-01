@@ -123,6 +123,12 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
 /// device actually possesses the attestation private key.  If the signature
 /// is missing or invalid, the device is reported as failed regardless of the
 /// fingerprint.
+///
+/// # Errors
+/// Returns an error if acquiring a PIN token fails, if the makeCredential
+/// request fails, or if the attestation cannot be extracted from the response
+/// (missing attStmt or x5c certificate, or an unsupported attestation
+/// algorithm).
 pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     use crate::crypto::AttestationResult;
     use crate::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};

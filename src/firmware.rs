@@ -26,12 +26,20 @@ pub struct VersionedSignature {
 
 impl FirmwareJson {
     /// Load from a JSON file.
+    ///
+    /// # Errors
+    /// Returns an error if the file cannot be read, or its contents are not
+    /// valid `FirmwareJson` JSON.
     pub fn from_file(path: &Path) -> Result<Self> {
         let data = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&data)?)
     }
 
     /// Decode the raw bytes from the firmware field (may be Intel HEX text or binary).
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if the `firmware` field is not valid
+    /// websafe base64.
     pub fn firmware_bytes(&self) -> Result<Vec<u8>> {
         websafe_b64_decode(&self.firmware)
     }
@@ -43,6 +51,12 @@ impl FirmwareJson {
     /// Raw binary (from our own `cmd_sign`) is also handled.
     ///
     /// Returns `(base_address, binary_bytes)`.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if the `firmware` field is not valid
+    /// websafe base64, the embedded Intel HEX text is not valid UTF-8, or the
+    /// HEX cannot be parsed (malformed record, 32-bit address overflow, or an
+    /// address span exceeding [`MAX_FIRMWARE_SPAN`]).
     pub fn firmware_binary(&self) -> Result<(u32, Vec<u8>)> {
         let bytes = websafe_b64_decode(&self.firmware)?;
         // Intel HEX files always start with ':'
@@ -57,12 +71,20 @@ impl FirmwareJson {
     }
 
     /// Decode the signature from the websafe base64 field.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if the `signature` field is not valid
+    /// websafe base64.
     pub fn signature_bytes(&self) -> Result<Vec<u8>> {
         websafe_b64_decode(&self.signature)
     }
 
     /// Select the appropriate signature based on firmware version.
     /// Version constraint format: "<=2.5.3" or ">2.5.3"
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if a version constraint string is
+    /// malformed, or the selected signature is not valid websafe base64.
     pub fn signature_for_version(&self, version: &FirmwareVersion) -> Result<Vec<u8>> {
         if self.versions.is_empty() {
             return self.signature_bytes();
@@ -76,6 +98,9 @@ impl FirmwareJson {
     }
 
     /// Serialize to JSON string.
+    ///
+    /// # Errors
+    /// Returns an error if the value cannot be serialized to JSON.
     pub fn to_json(&self) -> Result<String> {
         Ok(serde_json::to_string_pretty(self)?)
     }
@@ -87,6 +112,11 @@ impl FirmwareJson {
 /// Bootloaders <= 2.5.3 use the v1 signing region; later ones use v2.
 /// If the version query fails or returns no data, falls back to the default
 /// (latest) signature rather than incorrectly matching "<=2.5.3".
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if the bootloader version response is
+/// too short to parse, or if signature selection fails (a malformed version
+/// constraint, or a signature that is not valid websafe base64).
 pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
     match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
@@ -137,6 +167,12 @@ impl FirmwareVersion {
         }
     }
 
+    /// Parse a version string of the form `major.minor.patch` (an optional
+    /// leading `v` is stripped).
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if the string does not have exactly
+    /// three dot-separated components, or any component is not a valid `u32`.
     pub fn parse(s: &str) -> Result<Self> {
         let parts: Vec<&str> = s.trim_start_matches('v').split('.').collect();
         if parts.len() != 3 {
@@ -177,6 +213,11 @@ impl std::fmt::Display for FirmwareVersion {
 }
 
 /// Check if a version matches a constraint like "<=2.5.3" or ">2.5.3".
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if `constraint` has no recognised
+/// comparison prefix (`<=`, `>=`, `<`, `>`, `=`), or the version it contains
+/// cannot be parsed.
 pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -> Result<bool> {
     if let Some(rest) = constraint.strip_prefix("<=") {
         let bound = FirmwareVersion::parse(rest)?;
@@ -202,12 +243,21 @@ pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -
 
 /// Parse an Intel HEX file into a flat binary buffer.
 /// Returns (`base_address`, bytes).
+///
+/// # Errors
+/// Returns an error if the file cannot be read, or its Intel HEX content cannot
+/// be parsed (see [`parse_hex_string`]).
 pub fn parse_hex_file(path: &Path) -> Result<(u32, Vec<u8>)> {
     let content = std::fs::read_to_string(path)?;
     parse_hex_string(&content)
 }
 
 /// Parse Intel HEX content from a string.
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if the Intel HEX is malformed, contains
+/// no data records, has an address that overflows 32 bits, or spans more than
+/// [`MAX_FIRMWARE_SPAN`] bytes.
 pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
     let reader = ihex::Reader::new(content);
     let mut records: Vec<Record> = Vec::new();
@@ -303,6 +353,11 @@ fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
 
 /// Convert Intel HEX records to a flat binary.
 /// Returns (`base_address`, bytes).
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if the records contain no data, an
+/// absolute address overflows 32 bits, or the address span exceeds
+/// [`MAX_FIRMWARE_SPAN`] bytes.
 pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
     let mut segments = hex_records_to_segments(records)?;
 
@@ -535,6 +590,13 @@ fn patch_attestation(
 ///   [+32]:  8 bytes device settings (little-endian u64: 0xAA551E7900000000 | `lock_byte`)
 ///   [+40]:  8 bytes cert size (little-endian u64)
 ///   [+48]:  N bytes certificate
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if only one of `attestation_key` and
+/// `attestation_cert` is provided, an attestation key or certificate file
+/// cannot be read or is invalid (malformed hex key, or a certificate shorter
+/// than 100 bytes), an input HEX file cannot be read or parsed, an address
+/// overflows 32 bits, or the output file cannot be written.
 pub fn merge_hex_files(
     inputs: &[&Path],
     output: &Path,
@@ -759,6 +821,11 @@ pub const fn flash_addr(page: u32) -> u32 {
 /// Two versions exist:
 ///   `app_end_page=19`: for bootloaders <=2.5.3 (`APPLICATION_END_PAGE_COUNT=19`)
 ///   `app_end_page=20`: for bootloaders >2.5.3  (`APPLICATION_END_PAGE_COUNT=20`)
+///
+/// # Errors
+/// Returns [`SoloError::FirmwareError`] if the HEX file cannot be read or
+/// parsed, contains no data, `app_end_page` is larger than [`FLASH_PAGES`], the
+/// computed signing region is empty, or an address computation overflows.
 pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) -> Result<Vec<u8>> {
     let content = std::fs::read_to_string(hex_path)?;
     let records: Vec<Record> = ihex::Reader::new(&content)
@@ -830,6 +897,9 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
 /// The firmware field contains the base64 of the HEX FILE TEXT (not binary),
 /// matching the Python reference which does:
 ///   fw = `base64.b64encode(open(hex_file`, "`r").read().encode()`)
+///
+/// # Errors
+/// Returns an error if the HEX file cannot be read.
 pub fn create_firmware_json_versioned(
     hex_path: &Path,
     sig_v1: &[u8],
@@ -905,6 +975,10 @@ fn http_client() -> Result<reqwest::blocking::Client> {
 }
 
 /// Fetch the latest release info from GitHub.
+///
+/// # Errors
+/// Returns [`SoloError::NetworkError`] if the HTTP client cannot be built, the
+/// request fails, or the response body is not valid release JSON.
 pub fn fetch_latest_release() -> Result<GithubRelease> {
     let url = "https://api.github.com/repos/solokeys/solo1/releases/latest";
     let client = http_client()?;
@@ -919,6 +993,10 @@ pub fn fetch_latest_release() -> Result<GithubRelease> {
 }
 
 /// Download a URL to bytes.
+///
+/// # Errors
+/// Returns [`SoloError::NetworkError`] if the HTTP client cannot be built, the
+/// request fails, or the response body cannot be read.
 pub fn download_url(url: &str) -> Result<Vec<u8>> {
     let client = http_client()?;
     let resp = client

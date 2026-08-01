@@ -4,6 +4,9 @@ use crate::error::{Result, SoloError};
 ///
 /// Returns `Ok(true)` if the user typed "yes" (trimmed), `Ok(false)` for any
 /// other input, and `Err` only on I/O failure.
+///
+/// # Errors
+/// Returns an error if reading a line from standard input fails.
 pub fn confirm(prompt: &str) -> Result<bool> {
     println!("{prompt}");
     let mut input = String::new();

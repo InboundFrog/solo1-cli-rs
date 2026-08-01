@@ -6,6 +6,12 @@ use crate::firmware;
 use crate::vlog;
 
 /// Update the device firmware.
+///
+/// # Errors
+/// Returns an error if the firmware cannot be loaded from the given file or
+/// downloaded from GitHub, if the release contains no firmware asset, if the
+/// firmware JSON is malformed, if reconnecting in bootloader mode fails, if
+/// selecting the signature fails, or if writing the firmware fails.
 pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<()> {
     use crate::commands::program::write_firmware;
     use crate::crypto::sha256_hex;

@@ -59,6 +59,9 @@ impl CtapHidFrame {
     }
 
     /// Parse a 64-byte raw HID report (no report ID byte).
+    ///
+    /// # Errors
+    /// Returns an error if `raw` is shorter than the 7-byte frame header.
     pub fn parse(raw: &[u8]) -> Result<Self> {
         if raw.len() < 7 {
             return Err(SoloError::ProtocolError("HID frame too short".into()));
@@ -111,6 +114,7 @@ pub const CTAPHID_MAX_PAYLOAD: usize = 57 + 128 * 59;
 /// Build the list of HID frames needed to send `data` with command `cmd`
 /// on channel `cid`.
 ///
+/// # Errors
 /// Returns an error if `data` exceeds the CTAPHID maximum message size
 /// (7609 bytes), which would otherwise silently truncate the 16-bit
 /// `bcnt` field and overflow the 7-bit continuation sequence number.
@@ -175,6 +179,10 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
 }
 
 /// Reassemble received frames into a complete message payload.
+///
+/// # Errors
+/// Returns an error if `frames` is empty, if the first frame is not an init
+/// frame, or if a continuation position contains an init frame.
 pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     if frames.is_empty() {
         return Err(SoloError::ProtocolError("No frames to reassemble".into()));
@@ -212,6 +220,7 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
 /// Build a bootloader command packet.
 /// Address is encoded little-endian (lower 24 bits); firmware ORs 0x08000000 back in.
 ///
+/// # Errors
 /// Returns an error if `data` is longer than the 16-bit big-endian length
 /// field can express (65535 bytes), which would otherwise be silently
 /// truncated.
