@@ -51,7 +51,8 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
         // First 64 bytes = signature (128 hex chars), rest = content
         if response.len() > 64 {
             println!("content: {:?}", &response[64..]);
-            println!("signature: {}", &result_hex[..128.min(result_hex.len())]);
+            let sig_hex = result_hex.get(..128.min(result_hex.len())).unwrap_or(result_hex.as_str());
+            println!("signature: {sig_hex}");
         }
     }
 
