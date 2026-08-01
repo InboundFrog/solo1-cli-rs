@@ -516,7 +516,7 @@ pub fn merge_hex_files(
     patch_attestation(&mut byte_map, attest_addr, &key_bytes, &cert_bytes);
 
     // Convert byte_map back to sorted segments for HEX output
-    let mut addrs: Vec<u32> = byte_map.keys().cloned().collect();
+    let mut addrs: Vec<u32> = byte_map.keys().copied().collect();
     addrs.sort();
 
     let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
