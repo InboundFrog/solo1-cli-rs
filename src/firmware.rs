@@ -130,15 +130,14 @@ pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u
             fw.signature_for_version(&v)
         }
         Ok(resp) if !resp.is_empty() => {
-            let v = FirmwareVersion::new(
-                0,
-                0,
-                u32::from(
-                    *resp
-                        .first()
-                        .ok_or_else(|| SoloError::FirmwareError("empty version response".into()))?,
-                ),
-            );
+            let v =
+                FirmwareVersion::new(
+                    0,
+                    0,
+                    u32::from(*resp.first().ok_or_else(|| {
+                        SoloError::FirmwareError("empty version response".into())
+                    })?),
+                );
             println!("Bootloader version: {v}");
             fw.signature_for_version(&v)
         }
@@ -491,7 +490,10 @@ fn patch_auth_word(
 
     // Boot marker: flash_addr(APPLICATION_END_PAGE - 1) = 'A' 'A'
     byte_map.insert(app_end_page_start, 0x41);
-    byte_map.insert(app_end_page_start.checked_add(1).ok_or_else(overflow)?, 0x41);
+    byte_map.insert(
+        app_end_page_start.checked_add(1).ok_or_else(overflow)?,
+        0x41,
+    );
 
     // AUTH_WORD[0..3] = 0 (authorise boot)
     for i in 0..4u32 {
@@ -734,7 +736,8 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
             // Big-endian 2-byte encoding of the upper 16 address bits.
             let record_data = upper16.to_be_bytes();
             let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data)?;
-            writeln!(output, ":02000004{upper16:04X}{checksum:02X}").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
+            writeln!(output, ":02000004{upper16:04X}{checksum:02X}")
+                .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             current_upper = upper;
         }
 
@@ -761,11 +764,14 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
             let chunk_len = u8::try_from(chunk_size)
                 .map_err(|_| SoloError::FirmwareError("chunk length overflow".into()))?;
             let checksum = ihex_checksum(chunk_len, offset, 0x00, chunk)?;
-            write!(output, ":{chunk_size:02X}{offset:04X}00").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
+            write!(output, ":{chunk_size:02X}{offset:04X}00")
+                .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             for b in chunk {
-                write!(output, "{b:02X}").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
+                write!(output, "{b:02X}")
+                    .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             }
-            writeln!(output, "{checksum:02X}").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
+            writeln!(output, "{checksum:02X}")
+                .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
             pos = pos
                 .checked_add(chunk_size)
                 .ok_or_else(|| SoloError::FirmwareError("position overflow".into()))?;
@@ -773,7 +779,8 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
     }
 
     // EOF record
-    writeln!(output, ":00000001FF").map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
+    writeln!(output, ":00000001FF")
+        .map_err(|e| SoloError::FirmwareError(format!("HEX write error: {e}")))?;
     std::fs::write(path, output)?;
     Ok(())
 }
@@ -781,10 +788,18 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
 fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> Result<u8> {
     let overflow = || SoloError::FirmwareError("checksum accumulator overflow".into());
     let mut sum: u32 = 0;
-    sum = sum.checked_add(u32::from(byte_count)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(offset >> 8)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(offset & 0xFF)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(record_type)).ok_or_else(overflow)?;
+    sum = sum
+        .checked_add(u32::from(byte_count))
+        .ok_or_else(overflow)?;
+    sum = sum
+        .checked_add(u32::from(offset >> 8))
+        .ok_or_else(overflow)?;
+    sum = sum
+        .checked_add(u32::from(offset & 0xFF))
+        .ok_or_else(overflow)?;
+    sum = sum
+        .checked_add(u32::from(record_type))
+        .ok_or_else(overflow)?;
     for b in data {
         sum = sum.checked_add(u32::from(*b)).ok_or_else(overflow)?;
     }
@@ -868,11 +883,11 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
         if *addr >= end {
             continue;
         }
-        let offset = usize::try_from(
-            addr.checked_sub(start)
-                .ok_or_else(|| SoloError::FirmwareError("signing region offset underflow".into()))?,
-        )
-        .map_err(|_| SoloError::FirmwareError("signing region offset too large".into()))?;
+        let offset =
+            usize::try_from(addr.checked_sub(start).ok_or_else(|| {
+                SoloError::FirmwareError("signing region offset underflow".into())
+            })?)
+            .map_err(|_| SoloError::FirmwareError("signing region offset too large".into()))?;
         let copy_len = data.len().min(size.saturating_sub(offset));
         if copy_len > 0 {
             let copy_end = offset
@@ -881,11 +896,9 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
             binary
                 .get_mut(offset..copy_end)
                 .ok_or_else(|| SoloError::FirmwareError("signing region out of range".into()))?
-                .copy_from_slice(
-                    data.get(..copy_len).ok_or_else(|| {
-                        SoloError::FirmwareError("signing region source out of range".into())
-                    })?,
-                );
+                .copy_from_slice(data.get(..copy_len).ok_or_else(|| {
+                    SoloError::FirmwareError("signing region source out of range".into())
+                })?);
         }
     }
 

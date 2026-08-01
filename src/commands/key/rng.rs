@@ -14,8 +14,8 @@ pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
             "Number of bytes must be between 0 and 255, you passed {n}"
         )));
     }
-    let n_u8 = u8::try_from(n)
-        .map_err(|_| SoloError::ProtocolError("Byte count exceeds 255".into()))?;
+    let n_u8 =
+        u8::try_from(n).map_err(|_| SoloError::ProtocolError("Byte count exceeds 255".into()))?;
     let request = [n_u8];
     let response = hid.send_recv(CMD_RNG, &request)?;
     let take = response.len().min(n);

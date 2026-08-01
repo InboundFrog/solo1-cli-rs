@@ -119,9 +119,9 @@ impl SoloHid {
         }
         // Response: nonce[8] | channel_id[4] | ...
         self.channel_id.copy_from_slice(
-            response
-                .get(8..12)
-                .ok_or_else(|| SoloError::ProtocolError("CTAPHID_INIT response too short".into()))?,
+            response.get(8..12).ok_or_else(|| {
+                SoloError::ProtocolError("CTAPHID_INIT response too short".into())
+            })?,
         );
         vlog!(
             "CTAPHID_INIT: assigned channel_id {}",

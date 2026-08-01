@@ -183,9 +183,9 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
 /// Returns [`SoloError::MalformedResponse`] if `response` is empty, or
 /// [`SoloError::AuthenticatorError`] if the status byte is non-zero.
 pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
-    let &code = response.first().ok_or_else(|| {
-        SoloError::MalformedResponse(format!("Empty response from {context}"))
-    })?;
+    let &code = response
+        .first()
+        .ok_or_else(|| SoloError::MalformedResponse(format!("Empty response from {context}")))?;
     if code != 0x00 {
         let message = ctap2_status_message(code);
         return Err(SoloError::AuthenticatorError { code, message });
