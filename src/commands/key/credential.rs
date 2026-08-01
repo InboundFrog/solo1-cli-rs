@@ -45,7 +45,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     if let Some(Value::Map(m)) = find_int_key(&pairs, 0x04) {
         for (k, v) in m {
             if let (Value::Text(name), Value::Bool(b)) = (k, v) {
-                options.insert(name.to_string(), *b);
+                options.insert(name.clone(), *b);
             }
         }
     }
