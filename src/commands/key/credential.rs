@@ -24,7 +24,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     if let Some(Value::Array(v)) = find_int_key(&pairs, 0x01) {
         versions = extract_cbor_text_responses(v)
             .into_iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
     }
 
@@ -32,7 +32,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     if let Some(Value::Array(e)) = find_int_key(&pairs, 0x02) {
         extensions = extract_cbor_text_responses(e)
             .into_iter()
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
     }
 
@@ -104,7 +104,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     if !pin_uv_auth_protocols.is_empty() {
         let proto_strs: Vec<String> = pin_uv_auth_protocols
             .iter()
-            .map(|n| n.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         println!("PIN/UV auth protocols:          {}", proto_strs.join(", "));
     }

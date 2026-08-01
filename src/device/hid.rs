@@ -27,9 +27,9 @@ pub fn list_solo_devices() -> Result<Vec<SoloDevice>> {
         .filter(|d| d.vendor_id() == SOLO_VID && d.product_id() == SOLO_PID)
         .map(|d| SoloDevice {
             path: d.path().to_string_lossy().to_string(),
-            serial: d.serial_number().map(|s| s.to_string()),
-            product: d.product_string().map(|s| s.to_string()),
-            manufacturer: d.manufacturer_string().map(|s| s.to_string()),
+            serial: d.serial_number().map(std::string::ToString::to_string),
+            product: d.product_string().map(std::string::ToString::to_string),
+            manufacturer: d.manufacturer_string().map(std::string::ToString::to_string),
         })
         .collect();
     Ok(devices)

@@ -116,7 +116,7 @@ pub fn cmd_mergehex(
     attestation_key: Option<&Path>,
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
-    let input_refs: Vec<&Path> = inputs.iter().map(|p| p.as_path()).collect();
+    let input_refs: Vec<&Path> = inputs.iter().map(std::path::PathBuf::as_path).collect();
     merge_hex_files(&input_refs, output, attestation_key, attestation_cert)?;
     println!("Merged {} files into {:?}", inputs.len(), output);
     Ok(())
