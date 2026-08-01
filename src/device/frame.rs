@@ -276,7 +276,7 @@ mod tests {
             payload: FramePayload::Init {
                 cmd: 0x06, // CTAPHID_INIT without high bit
                 bcnt: 3,
-                data: data,
+                data,
             },
         };
         let encoded = frame.encode().unwrap();
@@ -306,7 +306,7 @@ mod tests {
         let data = vec![0x01, 0x02, 0x03];
         let frame = CtapHidFrame {
             channel_id: cid,
-            payload: FramePayload::Cont { seq: 2, data: data },
+            payload: FramePayload::Cont { seq: 2, data },
         };
         let encoded = frame.encode().unwrap();
         assert_eq!(encoded[5], 0x02); // seq, no high bit
