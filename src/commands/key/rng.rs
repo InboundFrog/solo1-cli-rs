@@ -58,7 +58,7 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     use std::os::unix::io::AsRawFd;
 
     const ENTROPY_INFO: &str = "/proc/sys/kernel/random/entropy_avail";
-    const RNDADDENTROPY: libc::c_ulong = 0x40085203;
+    const RNDADDENTROPY: libc::c_ulong = 0x4008_5203;
     const COUNT: usize = 64;
     const ENTROPY_BITS_PER_BYTE: i32 = 2;
 
