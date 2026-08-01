@@ -116,7 +116,7 @@ pub struct FirmwareVersion {
 }
 
 impl FirmwareVersion {
-    pub fn new(major: u32, minor: u32, patch: u32) -> Self {
+    pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
         FirmwareVersion {
             major,
             minor,
@@ -595,7 +595,7 @@ pub const FLASH_PAGES: u32 = 128;
 pub const FLASH_PAGE_SIZE: u32 = 2048;
 
 /// Compute the flash address for a given page number.
-pub fn flash_addr(page: u32) -> u32 {
+pub const fn flash_addr(page: u32) -> u32 {
     FLASH_BASE + page * FLASH_PAGE_SIZE
 }
 

@@ -10,7 +10,7 @@ use crate::device::{HidDevice, CTAPHID_CBOR};
 use crate::error::{Result, SoloError};
 
 /// Map a CTAP2 status byte to a human-readable description.
-pub fn ctap2_status_message(code: u8) -> &'static str {
+pub const fn ctap2_status_message(code: u8) -> &'static str {
     match code {
         0x01 => "invalid command",
         0x02 => "invalid parameter",

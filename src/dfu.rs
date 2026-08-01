@@ -52,7 +52,7 @@ impl DfuStatus {
         })
     }
 
-    pub fn is_ok(&self) -> bool {
+    pub const fn is_ok(&self) -> bool {
         self.status == 0x00
     }
 }

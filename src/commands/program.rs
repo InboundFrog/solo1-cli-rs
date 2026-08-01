@@ -107,7 +107,7 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 /// Compute the number of 256-byte chunks needed to cover `firmware_len` bytes.
 ///
 /// Used by `write_firmware` for the verbose chunk-count display.
-pub fn firmware_chunk_count(firmware_len: usize) -> usize {
+pub const fn firmware_chunk_count(firmware_len: usize) -> usize {
     firmware_len.div_ceil(CHUNK_SIZE)
 }
 

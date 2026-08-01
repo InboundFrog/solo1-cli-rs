@@ -70,7 +70,7 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn cmd_rng_feedkernel(_hid: &impl HidDevice) -> Result<()> {
+pub const fn cmd_rng_feedkernel(_hid: &impl HidDevice) -> Result<()> {
     Err(SoloError::UnsupportedPlatform)
 }
 
