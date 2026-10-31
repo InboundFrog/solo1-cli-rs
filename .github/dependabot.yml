@@ -1,15 +1,28 @@
+# Managed by repo-tools (bin/repo-dependabot). Local edits will be overwritten.
+# Customise via .github/repo-tools.conf instead: https://github.com/InboundFrog/repo-tools
 version: 2
 updates:
-  - package-ecosystem: cargo
-    directory: /
+  - package-ecosystem: github-actions
+    directories:
+      - '/'
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      github-actions:
+        patterns: ["*"]
+  - package-ecosystem: cargo
+    directories:
+      - '/'
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
     ignore:
-      # p256 0.13 / elliptic-curve 0.13 are still on rand_core 0.6.
-      # rand 0.9 brings rand_core 0.9 and breaks p256's CryptoRng /
-      # RngCore trait bounds. Stay on rand 0.8.x (patch-only) until
-      # the RustCrypto stack moves to rand_core 0.9 (p256 0.14+).
-      - dependency-name: rand
-        update-types:
-          - version-update:semver-major
-          - version-update:semver-minor
+      - dependency-name: 'rand'
+        update-types: ['version-update:semver-major', 'version-update:semver-minor']
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
