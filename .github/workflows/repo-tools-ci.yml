@@ -17,13 +17,15 @@ concurrency:
 
 jobs:
   rust:
-    uses: InboundFrog/repo-tools/.github/workflows/rust.yml@main
+    uses: InboundFrog/repo-tools/.github/workflows/rust.yml@500e0a8474bc5f01dc50320aa0ec4bb5e680c498 # v0.0.1
     strategy:
       fail-fast: false
       matrix:
         dir: ['.']
     with:
       working-directory: ${{ matrix.dir }}
+      apt-packages: 'libudev-dev libusb-1.0-0-dev pkg-config'
+      toolchain: '1.96'
 
   ci-ok:
     name: CI OK
