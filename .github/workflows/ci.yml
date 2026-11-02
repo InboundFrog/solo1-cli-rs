@@ -1,0 +1,41 @@
+# CI via the reusable workflows in InboundFrog/repo-tools:
+# https://github.com/InboundFrog/repo-tools (its README lists every input).
+# The `uses:` lines pin a release by commit SHA, with the tag in a comment, so
+# Dependabot proposes each newer release. Keep the final "CI OK" job: it is the
+# one check branch protection requires.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    uses: InboundFrog/repo-tools/.github/workflows/rust.yml@bf24833e55abb4f21a6061c41f045efb4963181d # v0.1.0
+    with:
+      working-directory: .
+      toolchain: "1.96"
+      # hidapi / libudev-sys link against these.
+      apt-packages: libudev-dev libusb-1.0-0-dev pkg-config
+
+  ci-ok:
+    name: CI OK
+    if: always()
+    needs: [rust]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<<"$NEEDS"
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<<"$NEEDS" >/dev/null
