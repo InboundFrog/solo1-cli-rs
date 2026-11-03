@@ -260,7 +260,7 @@ mod tests {
     fn test_addresses_empty_firmware() {
         // No bytes → no chunks → write loop never executes
         let chunks = compute_chunk_addresses(0x0800_5000, 0);
-        assert!(chunks.is_empty());
+        assert_eq!(chunks, [] as [(u32, usize); 0]);
     }
 
     #[test]

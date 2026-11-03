@@ -380,7 +380,7 @@ mod tests {
         let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
         let firmware = b"fake firmware data for testing";
         let sig_der = sign_firmware(&signing_key, firmware).unwrap();
-        assert!(!sig_der.is_empty());
+        assert_ne!(sig_der, [] as [u8; 0]);
 
         // Verify using p256
         let vk = VerifyingKey::from(&signing_key);

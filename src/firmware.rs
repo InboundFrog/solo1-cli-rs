@@ -1130,8 +1130,8 @@ mod tests {
         let firmware = b"test firmware";
         let signature = b"test signature";
         let fw = create_firmware_json(firmware, signature);
-        assert!(!fw.firmware.is_empty());
-        assert!(!fw.signature.is_empty());
+        assert_ne!(fw.firmware, "");
+        assert_ne!(fw.signature, "");
         assert_eq!(fw.firmware_bytes().unwrap(), firmware);
         assert_eq!(fw.signature_bytes().unwrap(), signature);
     }
