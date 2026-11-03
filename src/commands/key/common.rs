@@ -22,7 +22,7 @@ pub fn prompt_pin() -> Result<String> {
 /// Returns an error if [`prompt_pin`] fails, or propagates errors from the
 /// getPINToken flow.
 pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
-    crate::ctap2::get_pin_token(hid, &prompt_pin()?)
+    Ok(solo_ctap2::get_pin_token(hid, &prompt_pin()?)?)
 }
 
 /// Print `prompt` and require the user to type exactly "yes" to continue.

@@ -1,7 +1,7 @@
-use crate::cbor::{find_int_key, find_text_key};
-use crate::ctap2::parse_cbor_map_response;
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
+use solo_ctap2::cbor::{find_int_key, find_text_key};
+use solo_ctap2::parse_cbor_map_response;
 use solo_ctaphid::HidDevice;
 
 /// Attestation data extracted from a makeCredential response.
@@ -129,17 +129,15 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     let client_data_hash: Vec<u8> = Sha256::digest(b"solokeys_verify_test").to_vec();
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
-    let pin_uv_auth =
-        crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
+    let pin_uv_auth = solo_ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
 
     eprintln!("Please press the button on your Solo key");
 
     // makeCredential request with rp "solokeys.com" and user "verify"
-    let cbor_request =
-        crate::ctap2::build_make_credential("solokeys.com", "verify", &client_data_hash, pin_uv_auth, []);
+    let cbor_request = solo_ctap2::build_make_credential("solokeys.com", "verify", &client_data_hash, pin_uv_auth, []);
 
     // CTAP2 makeCredential (0x01)
-    let response = crate::ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
+    let response = solo_ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
 
     // Extract the attestation: certificate, authData, and signature
     let att = extract_attestation(&response)?;
@@ -227,8 +225,8 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
-    use crate::cbor::{cbor_bytes, cbor_int, cbor_text, int_map};
     use ciborium::value::Value;
+    use solo_ctap2::cbor::{cbor_bytes, cbor_int, cbor_text, int_map};
     use solo_ctaphid::mock::MockDevice;
 
     /// Build a raw makeCredential response: status 0x00 + CBOR map with

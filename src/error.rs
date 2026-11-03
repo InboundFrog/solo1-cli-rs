@@ -62,6 +62,22 @@ pub enum SoloError {
 
 pub type Result<T> = std::result::Result<T, SoloError>;
 
+impl From<solo_ctap2::Error> for SoloError {
+    /// Each CTAP2 error maps to the equivalent existing variant, so messages
+    /// and `matches!` checks are unchanged.
+    fn from(e: solo_ctap2::Error) -> Self {
+        match e {
+            solo_ctap2::Error::Transport(t) => t.into(),
+            solo_ctap2::Error::Authenticator { code, message } => Self::AuthenticatorError { code, message },
+            solo_ctap2::Error::CborSer(e) => Self::CborSerError(e),
+            solo_ctap2::Error::CborDe(e) => Self::CborDeError(e),
+            solo_ctap2::Error::MalformedResponse(m) => Self::MalformedResponse(m),
+            solo_ctap2::Error::Crypto(m) => Self::CryptoError(m),
+            solo_ctap2::Error::Protocol(m) => Self::ProtocolError(m),
+        }
+    }
+}
+
 impl From<solo_ctaphid::Error> for SoloError {
     /// Device-selection errors map to variants whose messages carry CLI
     /// guidance (udev rules, `--serial`); timeouts stay matchable as
@@ -94,6 +110,18 @@ mod tests {
     #[test]
     fn test_transport_timeout_stays_matchable() {
         let e = SoloError::from(solo_ctaphid::Error::Timeout);
+        assert!(matches!(e, SoloError::Timeout));
+    }
+
+    #[test]
+    fn test_ctap2_errors_map_to_existing_variants() {
+        let e = SoloError::from(solo_ctap2::Error::Authenticator {
+            code: 0x31,
+            message: "PIN blocked",
+        });
+        assert!(matches!(e, SoloError::AuthenticatorError { code: 0x31, .. }));
+
+        let e = SoloError::from(solo_ctap2::Error::Transport(solo_ctaphid::Error::Timeout));
         assert!(matches!(e, SoloError::Timeout));
     }
 

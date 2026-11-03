@@ -1,10 +1,10 @@
-use crate::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
 use crate::commands::key::common;
-use crate::ctap2::{
+use crate::error::{Result, SoloError};
+use solo_ctap2::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
+use solo_ctap2::{
     check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set, parse_cbor_map_response,
     parse_cbor_map_response_allow_empty, pin_uv_auth,
 };
-use crate::error::{Result, SoloError};
 use solo_ctaphid::{CTAPHID_CBOR, HidDevice};
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
@@ -147,7 +147,7 @@ fn send_cred_mgmt(
     entries.push((0x04, cbor_bytes(pin_uv))); // pinUvAuthParam
 
     let cm_cbor = int_map(entries);
-    ctap2_call(hid, 0x0A, &cm_cbor) // authenticatorCredentialManagement
+    Ok(ctap2_call(hid, 0x0A, &cm_cbor)?) // authenticatorCredentialManagement
 }
 
 /// Send a credMgmt (0x0A) subcommand with no authentication parameters.
@@ -156,7 +156,7 @@ fn send_cred_mgmt(
 /// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
 fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
     let cm_cbor = int_map([(0x01i64, cbor_int(i64::from(subcommand)))]);
-    ctap2_call(hid, 0x0A, &cm_cbor) // authenticatorCredentialManagement
+    Ok(ctap2_call(hid, 0x0A, &cm_cbor)?) // authenticatorCredentialManagement
 }
 
 /// Send enumerateRPsBegin (subcommand 0x02) then enumerateRPsGetNextRP
@@ -517,8 +517,8 @@ mod tests {
     /// Key 0x01 with a map value causes the Solo1 firmware CBOR iterator to hang.
     #[test]
     fn delete_sub_command_params_uses_key_0x02() {
-        use crate::cbor::{cbor_bytes, int_map};
         use ciborium::value::Value;
+        use solo_ctap2::cbor::{cbor_bytes, int_map};
 
         let cred_id_bytes = vec![0u8; 70];
         let cred_descriptor = Value::Map(vec![

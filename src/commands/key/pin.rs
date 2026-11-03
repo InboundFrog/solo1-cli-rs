@@ -1,5 +1,5 @@
-use crate::cbor::{cbor_bytes, cbor_int, int_map};
 use crate::error::{Result, SoloError};
+use solo_ctap2::cbor::{cbor_bytes, cbor_int, int_map};
 use solo_ctaphid::HidDevice;
 
 /// Change the existing PIN (prompts for old and new PIN).
@@ -31,8 +31,8 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
         return Err(SoloError::ProtocolError("PIN must be at least 4 characters".into()));
     }
 
-    let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
-    let session = crate::ctap2::ClientPinSession::new(&dev_pub_key)?;
+    let dev_pub_key = solo_ctap2::get_key_agreement(hid)?;
+    let session = solo_ctap2::ClientPinSession::new(&dev_pub_key)?;
 
     let pin_hash_enc = session.encrypt_pin_hash(&old_pin)?;
     let new_pin_enc = session.encrypt_pin(&new_pin)?;
@@ -51,8 +51,8 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     ]);
 
     // authenticatorClientPIN (0x06)
-    let change_pin_response = crate::ctap2::ctap2_call(hid, 0x06, &change_pin_cbor)?;
-    crate::ctap2::check_ctap_status(&change_pin_response, "changePin")?;
+    let change_pin_response = solo_ctap2::ctap2_call(hid, 0x06, &change_pin_cbor)?;
+    solo_ctap2::check_ctap_status(&change_pin_response, "changePin")?;
 
     println!("PIN changed successfully.");
     Ok(())
@@ -85,8 +85,8 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
         return Err(SoloError::ProtocolError("PIN must be at least 4 characters".into()));
     }
 
-    let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
-    let session = crate::ctap2::ClientPinSession::new(&dev_pub_key)?;
+    let dev_pub_key = solo_ctap2::get_key_agreement(hid)?;
+    let session = solo_ctap2::ClientPinSession::new(&dev_pub_key)?;
 
     let new_pin_enc = session.encrypt_pin(&new_pin)?;
     let pin_uv_auth_param = session.authenticate(&new_pin_enc)?;
@@ -100,8 +100,8 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     ]);
 
     // authenticatorClientPIN (0x06)
-    let set_pin_response = crate::ctap2::ctap2_call(hid, 0x06, &set_pin_cbor)?;
-    crate::ctap2::check_ctap_status(&set_pin_response, "setPin")?;
+    let set_pin_response = solo_ctap2::ctap2_call(hid, 0x06, &set_pin_cbor)?;
+    solo_ctap2::check_ctap_status(&set_pin_response, "setPin")?;
 
     println!("PIN set successfully.");
     Ok(())

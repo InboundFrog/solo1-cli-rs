@@ -1,8 +1,6 @@
-pub mod cbor;
 pub mod cli;
 pub mod commands;
 pub mod crypto;
-pub mod ctap2;
 pub mod dfu;
 pub mod error;
 pub mod firmware;

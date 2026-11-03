@@ -1,8 +1,8 @@
-use crate::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
-use crate::ctap2::{aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response};
 use crate::error::{Result, SoloError};
 use p256::elliptic_curve::Generate;
 use sha2::{Digest, Sha256};
+use solo_ctap2::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
+use solo_ctap2::{aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response};
 use solo_ctaphid::HidDevice;
 
 /// Create a FIDO2 credential with hmac-secret extension.
@@ -34,12 +34,11 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     // PIN prompt comes first; the touch prompt is printed after PIN entry.
-    let pin_uv_auth =
-        crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
+    let pin_uv_auth = solo_ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
 
     // makeCredential request with extensions {"hmac-secret": true} (0x06)
     // and options {"rk": true} (0x07) on top of the shared scaffolding.
-    let cbor_request = crate::ctap2::build_make_credential(
+    let cbor_request = solo_ctap2::build_make_credential(
         host,
         user,
         &client_data_hash,
@@ -55,7 +54,7 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     }
 
     // CTAP2 makeCredential (0x01)
-    let response = crate::ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
+    let response = solo_ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
 
     // First byte is CTAP2 status code; 0x00 = success
     let pairs = parse_cbor_map_response(&response, "makeCredential")?;
@@ -144,7 +143,7 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
         )));
     }
 
-    aes256_cbc_decrypt(shared_secret, encrypted)
+    Ok(aes256_cbc_decrypt(shared_secret, encrypted)?)
 }
 
 // TODO Cleanup doc - need to talk to Claude
@@ -182,7 +181,7 @@ fn prepare_hmac_secret_input_with_scalar(
     let salt_enc = aes256_cbc_encrypt(&shared_secret, &salt)?;
 
     // saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
-    let salt_auth = crate::ctap2::pin_uv_auth(&shared_secret, &salt_enc)?;
+    let salt_auth = solo_ctap2::pin_uv_auth(&shared_secret, &salt_enc)?;
 
     // hmac-secret extension input: {1: keyAgreement, 2: saltEnc, 3: saltAuth}
     let hmac_secret_ext = int_map([
@@ -225,7 +224,7 @@ pub fn cmd_challenge_response(
     let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
-    let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
+    let dev_pub_key = solo_ctap2::get_key_agreement(hid)?;
     let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&dev_pub_key, challenge)?;
 
     // ── Step 7: Build and send getAssertion request ───────────────────────────
@@ -253,7 +252,7 @@ pub fn cmd_challenge_response(
     eprintln!("Touch your authenticator to generate a response...");
 
     // CTAP2 getAssertion (0x02)
-    let ga_response = crate::ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
+    let ga_response = solo_ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
 
     // ── Step 8: Parse authData from getAssertion response ────────────────────
     let ga_pairs = parse_cbor_map_response(&ga_response, "getAssertion")?;
@@ -335,8 +334,8 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
-    use crate::ctap2::cose_to_public_key;
     use ciborium::value::Value;
+    use solo_ctap2::cose_to_public_key;
 
     /// Build a COSE key map (integer-keyed) from a `p256::PublicKey`.
     fn cose_pairs_from_pub(pub_key: &p256::PublicKey) -> Vec<(Value, Value)> {

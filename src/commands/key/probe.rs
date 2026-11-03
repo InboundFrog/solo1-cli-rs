@@ -124,15 +124,15 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
     ]);
 
     // CTAP2 getAssertion (0x02)
-    let ga_response = crate::ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
+    let ga_response = solo_ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
     check_ga_response(&ga_response, filename)
 }
 
 fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
-    use crate::cbor::find_int_key;
     use ciborium::value::Value;
+    use solo_ctap2::cbor::find_int_key;
 
-    let ga_pairs = crate::ctap2::parse_cbor_map_response(ga_response, "getAssertion")?;
+    let ga_pairs = solo_ctap2::parse_cbor_map_response(ga_response, "getAssertion")?;
 
     // 0x03: signature bytes
     let signature = match find_int_key(&ga_pairs, 0x03) {

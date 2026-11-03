@@ -2088,6 +2088,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "solo-ctap2"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "cbc",
+ "ciborium",
+ "hmac",
+ "p256",
+ "rand",
+ "sha2",
+ "solo-ctaphid",
+ "thiserror",
+]
+
+[[package]]
 name = "solo-ctaphid"
 version = "0.1.0"
 dependencies = [
@@ -2125,6 +2140,7 @@ dependencies = [
  "serde_json",
  "serialport",
  "sha2",
+ "solo-ctap2",
  "solo-ctaphid",
  "tempfile",
  "thiserror",

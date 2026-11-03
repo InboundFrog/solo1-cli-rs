@@ -2,7 +2,7 @@
 resolver = "2"
 members = [".", "crates/*"]
 # Build, lint and test every crate by default, not just the root package.
-default-members = [".", "crates/solo-ctaphid"]
+default-members = [".", "crates/solo-ctaphid", "crates/solo-ctap2"]
 
 [workspace.package]
 edition = "2021"
@@ -10,6 +10,7 @@ license = "MIT"
 
 [workspace.dependencies]
 # Workspace crates
+solo-ctap2 = { path = "crates/solo-ctap2" }
 solo-ctaphid = { path = "crates/solo-ctaphid" }
 
 # Third-party
@@ -78,6 +79,7 @@ name = "solo1"
 path = "src/main.rs"
 
 [dependencies]
+solo-ctap2.workspace = true
 solo-ctaphid.workspace = true
 
 aes.workspace = true
