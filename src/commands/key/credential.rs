@@ -1,11 +1,10 @@
 use crate::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
 use crate::commands::key::common;
 use crate::ctap2::{
-    check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set,
-    parse_cbor_map_response, parse_cbor_map_response_allow_empty, pin_uv_auth,
-    prompt_and_get_pin_token,
+    check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set, parse_cbor_map_response,
+    parse_cbor_map_response_allow_empty, pin_uv_auth, prompt_and_get_pin_token,
 };
-use crate::device::{HidDevice, CTAPHID_CBOR};
+use crate::device::{CTAPHID_CBOR, HidDevice};
 use crate::error::{Result, SoloError};
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
@@ -14,7 +13,7 @@ use crate::error::{Result, SoloError};
 /// Returns an error if the getInfo request fails or its response is not a valid
 /// CBOR map, or if printing JSON output fails.
 pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{print_json, CredentialInfoOutput};
+    use crate::output::{CredentialInfoOutput, print_json};
     use ciborium::value::Value;
     use std::collections::HashMap;
 
@@ -205,16 +204,8 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
 
         // rpIdHash at key 0x04 (32 bytes)
         let rp_id_hash: Vec<u8> = find_int_key(&rp_pairs, 0x04)
-            .and_then(|v| {
-                if let Value::Bytes(b) = v {
-                    Some(b.clone())
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                SoloError::MalformedResponse(format!("rpIdHash (0x04) missing for RP '{rp_id}'"))
-            })?;
+            .and_then(|v| if let Value::Bytes(b) = v { Some(b.clone()) } else { None })
+            .ok_or_else(|| SoloError::MalformedResponse(format!("rpIdHash (0x04) missing for RP '{rp_id}'")))?;
 
         if rp_id_hash.len() != 32 {
             return Err(SoloError::MalformedResponse(format!(
@@ -255,8 +246,7 @@ fn enumerate_credentials_for_rp(
     let rk_begin_auth = pin_uv_auth(pin_token, &rk_auth_msg)?;
 
     let rk_begin_resp = send_cred_mgmt(hid, 0x04, Some(rk_begin_params), rk_begin_auth)?;
-    let rk_begin_pairs =
-        parse_cbor_map_response_allow_empty(&rk_begin_resp, "enumerateCredentialsBegin")?;
+    let rk_begin_pairs = parse_cbor_map_response_allow_empty(&rk_begin_resp, "enumerateCredentialsBegin")?;
 
     if rk_begin_pairs.is_empty() {
         return Ok(vec![]);
@@ -269,10 +259,7 @@ fn enumerate_credentials_for_rp(
     let mut cred_responses = vec![rk_begin_pairs];
     for _ in 1..total_creds {
         let next_resp = send_cred_mgmt_next(hid, 0x05)?;
-        let next_pairs = parse_cbor_map_response_allow_empty(
-            &next_resp,
-            "enumerateCredentialsGetNextCredential",
-        )?;
+        let next_pairs = parse_cbor_map_response_allow_empty(&next_resp, "enumerateCredentialsGetNextCredential")?;
         cred_responses.push(next_pairs);
     }
 
@@ -342,7 +329,7 @@ fn enumerate_credentials_for_rp(
 /// fails, if any credential-management request fails, or if a response is
 /// malformed.
 pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{print_json, CredentialEntry, CredentialListOutput};
+    use crate::output::{CredentialEntry, CredentialListOutput, print_json};
     use base64::Engine as _;
 
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
@@ -361,9 +348,7 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     if rps.is_empty() {
         if json {
-            return print_json(&CredentialListOutput {
-                credentials: vec![],
-            });
+            return print_json(&CredentialListOutput { credentials: vec![] });
         }
         println!("No resident credentials on this device.");
         return Ok(());
@@ -383,21 +368,13 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
 
     if json {
-        return print_json(&CredentialListOutput {
-            credentials: entries,
-        });
+        return print_json(&CredentialListOutput { credentials: entries });
     }
 
-    println!(
-        "{:<32} {:<24} Credential ID (base64)",
-        "Relying Party", "Username"
-    );
+    println!("{:<32} {:<24} Credential ID (base64)", "Relying Party", "Username");
     println!("{}", "-".repeat(90));
     for entry in &entries {
-        println!(
-            "{:<32} {:<24} {}",
-            entry.rp_id, entry.user_name, entry.credential_id
-        );
+        println!("{:<32} {:<24} {}", entry.rp_id, entry.user_name, entry.credential_id);
     }
 
     Ok(())
@@ -443,18 +420,13 @@ pub fn cmd_credential_rm(
             .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {e}")))?;
         (bytes, id.to_string())
     } else {
-        let host = host.ok_or_else(|| {
-            SoloError::ProtocolError("host required when credential_id is absent".into())
-        })?;
-        let user = user.ok_or_else(|| {
-            SoloError::ProtocolError("user required when credential_id is absent".into())
-        })?;
+        let host = host.ok_or_else(|| SoloError::ProtocolError("host required when credential_id is absent".into()))?;
+        let user = user.ok_or_else(|| SoloError::ProtocolError("user required when credential_id is absent".into()))?;
 
         let rps = enumerate_rps(hid, pin_token)?;
         let matching_rp = rps.iter().find(|(rp_id, _)| rp_id == host);
-        let (_, rp_id_hash) = matching_rp.ok_or_else(|| {
-            SoloError::ProtocolError(format!("No credentials found for host '{host}'"))
-        })?;
+        let (_, rp_id_hash) =
+            matching_rp.ok_or_else(|| SoloError::ProtocolError(format!("No credentials found for host '{host}'")))?;
 
         let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
         let mut matches: Vec<Vec<u8>> = credentials
@@ -476,9 +448,7 @@ pub fn cmd_credential_rm(
     };
 
     // Confirmation prompt
-    if !common::confirm(&format!(
-        "Delete credential {display_label}?\nType 'yes' to confirm:"
-    ))? {
+    if !common::confirm(&format!("Delete credential {display_label}?\nType 'yes' to confirm:"))? {
         println!("Aborted.");
         return Ok(());
     }
@@ -493,10 +463,7 @@ pub fn cmd_credential_rm(
             ciborium::value::Value::Text("type".into()),
             ciborium::value::Value::Text("public-key".into()),
         ),
-        (
-            ciborium::value::Value::Text("id".into()),
-            cbor_bytes(cred_id_bytes),
-        ),
+        (ciborium::value::Value::Text("id".into()), cbor_bytes(cred_id_bytes)),
     ]);
     let del_params = int_map([(0x02i64, cred_descriptor)]);
     let mut del_params_cbor: Vec<u8> = Vec::new();
@@ -540,9 +507,7 @@ mod tests {
     #[test]
     fn credential_id_decodes_from_base64() {
         let b64 = "6T35dsdagAWH0ly+ogGh/TUM8cq3GbuYX9JAuUsDrRVTsRrEkdnTcSxj97jWz634bQV9CZ04Ikbb6ch/Ez7RZ4gbaA8AAA==";
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD.decode(b64).unwrap();
         assert_eq!(bytes.len(), 70); // Solo1 CredentialId is 70 bytes
         assert!(hex::decode(b64).is_err(), "credential ID is not valid hex");
     }
@@ -583,13 +548,7 @@ mod tests {
         };
         let keys: Vec<&str> = descriptor
             .iter()
-            .filter_map(|(k, _)| {
-                if let Value::Text(s) = k {
-                    Some(s.as_str())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(k, _)| if let Value::Text(s) = k { Some(s.as_str()) } else { None })
             .collect();
         assert!(keys.contains(&"type"), "descriptor must have 'type' field");
         assert!(keys.contains(&"id"), "descriptor must have 'id' field");

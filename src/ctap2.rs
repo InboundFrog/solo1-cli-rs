@@ -1,12 +1,12 @@
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use ciborium::value::Value;
 use hmac::{Hmac, KeyInit as _, Mac as _};
-use p256::elliptic_curve::Generate;
 use p256::Sec1Point as EncodedPoint;
+use p256::elliptic_curve::Generate;
 use sha2::{Digest as _, Sha256};
 
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
-use crate::device::{HidDevice, CTAPHID_CBOR};
+use crate::device::{CTAPHID_CBOR, HidDevice};
 use crate::error::{Result, SoloError};
 
 /// Map a CTAP2 status byte to a human-readable description.
@@ -93,25 +93,20 @@ pub fn aes256_cbc_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn to_aes_blocks(data: &[u8]) -> Result<Vec<aes::Block>> {
-    if data.is_empty() || !data.len().is_multiple_of(16) {
+    let (blocks, remainder) = data.as_chunks::<16>();
+
+    if blocks.is_empty() || !remainder.is_empty() {
         return Err(SoloError::CryptoError(format!(
             "AES-256-CBC input has unexpected length: {}",
             data.len()
         )));
     }
-    data.chunks_exact(16)
-        .map(|chunk| {
-            aes::Block::try_from(chunk)
-                .map_err(|_| SoloError::CryptoError("AES block must be 16 bytes".into()))
-        })
-        .collect()
+
+    Ok(blocks.iter().copied().map(aes::Block::from).collect())
 }
 
 fn from_aes_blocks(blocks: &[aes::Block]) -> Vec<u8> {
-    blocks
-        .iter()
-        .flat_map(|b| b.as_slice().iter().copied())
-        .collect()
+    blocks.iter().flat_map(|b| b.as_slice().iter().copied()).collect()
 }
 
 /// Query CTAP2 getInfo (0x04) and return whether a PIN has been set on the device.
@@ -166,13 +161,7 @@ pub fn create_key_agreement_cbor() -> Value {
 pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
     response_values
         .iter()
-        .filter_map(|v| {
-            if let Value::Text(s) = v {
-                Some(s.as_str())
-            } else {
-                None
-            }
-        })
+        .filter_map(|v| if let Value::Text(s) = v { Some(s.as_str()) } else { None })
         .collect()
 }
 
@@ -215,10 +204,7 @@ pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Va
 /// # Errors
 /// Returns an error if the status byte is missing or non-zero, the response is truncated,
 /// or the (non-empty) payload is not valid CBOR or not a map.
-pub fn parse_cbor_map_response_allow_empty(
-    response: &[u8],
-    context: &str,
-) -> Result<Vec<(Value, Value)>> {
+pub fn parse_cbor_map_response_allow_empty(response: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
     if response.len() == 1 {
         return Ok(vec![]);
@@ -246,9 +232,8 @@ fn parse_map_payload(payload: &[u8], context: &str) -> Result<Vec<(Value, Value)
 /// from the response.
 #[inline]
 pub fn find_key_agreement_response(response_pairs: &[(Value, Value)]) -> Result<&Value> {
-    find_int_key(response_pairs, 0x01).ok_or_else(|| {
-        SoloError::MalformedResponse("keyAgreement (0x01) missing in response".into())
-    })
+    find_int_key(response_pairs, 0x01)
+        .ok_or_else(|| SoloError::MalformedResponse("keyAgreement (0x01) missing in response".into()))
 }
 
 /// Extract a byte-valued coordinate from a COSE key map by its integer key.
@@ -340,9 +325,7 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
 
     let key_agreement = find_key_agreement_response(&resp_pairs)?;
     let Value::Map(cose_pairs) = key_agreement else {
-        return Err(SoloError::MalformedResponse(
-            "keyAgreement is not a CBOR map".into(),
-        ));
+        return Err(SoloError::MalformedResponse("keyAgreement is not a CBOR map".into()));
     };
 
     cose_to_public_key(cose_pairs)
@@ -395,7 +378,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
         _ => {
             return Err(SoloError::MalformedResponse(
                 "pinTokenEnc (0x02) missing from getPINToken response".into(),
-            ))
+            ));
         }
     };
 
@@ -473,8 +456,8 @@ pub fn build_make_credential(
 /// output is too short to truncate.
 pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
     type HmacSha256 = Hmac<Sha256>;
-    let mut hmac = HmacSha256::new_from_slice(key)
-        .map_err(|_| SoloError::CryptoError("HMAC key length invalid".into()))?;
+    let mut hmac =
+        HmacSha256::new_from_slice(key).map_err(|_| SoloError::CryptoError("HMAC key length invalid".into()))?;
     hmac.update(msg);
     let tag = hmac.finalize().into_bytes();
     let truncated = tag
@@ -614,8 +597,8 @@ mod tests {
 
         // Test encryption/decryption of a token (multi-block)
         let _encrypted = session.encrypt_pin_hash("123456").unwrap(); // 16 bytes
-                                                                      // encrypt_pin_hash is one-way in practice (we don't have a decrypt_pin_hash)
-                                                                      // but we can test decrypt_pin_token with any encrypted data.
+        // encrypt_pin_hash is one-way in practice (we don't have a decrypt_pin_hash)
+        // but we can test decrypt_pin_token with any encrypted data.
 
         // Let's test encrypt_pin (64 bytes)
         let pin = "123456";

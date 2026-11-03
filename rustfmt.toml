@@ -1,0 +1,33 @@
+# Go with the 2024 edition
+edition = "2024"
+style_edition = "2024"
+
+# Having the control expression inline I find harder to read, so break out
+# to a separate line in the call
+# Waiting on nightly
+#combine_control_expr = false
+
+# Use spaces instead of tabs
+hard_tabs = false
+
+# Format for my happiness
+max_width = 120
+newline_style = "Unix"
+# Waiting on nightly
+#normlize_comments = true
+#normalize_doc_attributes = true
+
+# Group imports and format alphabetically
+# Waiting on nightly
+#group_imports = "StdExternalCrate"
+reorder_imports = true
+reorder_modules = true
+
+# Use trailing commas to make diffs a little cleaner
+# Waiting on nightly
+#trailing_comma = "Vertical"
+
+# Format imports and struct fields vertically when long
+# Waiting on nightly
+#imports_granularity = "Crate"
+#struct_field_align_threshold = 20

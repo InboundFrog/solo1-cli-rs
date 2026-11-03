@@ -2,7 +2,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::device::{HidDevice, CMD_PROBE};
+use crate::device::{CMD_PROBE, HidDevice};
 use crate::error::{Result, SoloError};
 
 /// Run a hash probe on the device.
@@ -39,10 +39,7 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
 
     // CBOR-encode: {"subcommand": hash_type_str, "data": file_bytes}
     let cbor_val = Value::Map(vec![
-        (
-            Value::Text("subcommand".into()),
-            Value::Text(hash_type_str.into()),
-        ),
+        (Value::Text("subcommand".into()), Value::Text(hash_type_str.into())),
         (Value::Text("data".into()), Value::Bytes(file_bytes)),
     ]);
     let mut cbor_bytes = Vec::new();
@@ -142,7 +139,7 @@ fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
         _ => {
             return Err(SoloError::MalformedResponse(
                 "getAssertion response missing signature (key 0x03)".into(),
-            ))
+            ));
         }
     };
 
@@ -217,10 +214,7 @@ mod tests {
         // Empty queue: any device call would return Timeout, not DeviceError.
         let device = MockDevice::new(vec![]);
         let err = cmd_probe(&device, "md5", Path::new("/nonexistent")).unwrap_err();
-        assert!(
-            matches!(err, SoloError::DeviceError(_)),
-            "unexpected error: {err}"
-        );
+        assert!(matches!(err, SoloError::DeviceError(_)), "unexpected error: {err}");
         assert!(err.to_string().contains("Unknown hash type"));
     }
 
@@ -232,10 +226,7 @@ mod tests {
         let path = file.path();
 
         // status=0x00, map {0x03: bytes([0xAA, 0xBB])}
-        let ga_val = Value::Map(vec![(
-            Value::Integer(0x03u64.into()),
-            Value::Bytes(vec![0xAA, 0xBB]),
-        )]);
+        let ga_val = Value::Map(vec![(Value::Integer(0x03u64.into()), Value::Bytes(vec![0xAA, 0xBB]))]);
         let mut ga_response = vec![0x00u8];
         ciborium::ser::into_writer(&ga_val, &mut ga_response).unwrap();
 

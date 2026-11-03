@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crate::device::{HidDevice, CMD_RNG};
+use crate::device::{CMD_RNG, HidDevice};
 use crate::error::{Result, SoloError};
 
 /// Get N random bytes from the device, return as hex string.
@@ -14,8 +14,7 @@ pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
             "Number of bytes must be between 0 and 255, you passed {n}"
         )));
     }
-    let n_u8 =
-        u8::try_from(n).map_err(|_| SoloError::ProtocolError("Byte count exceeds 255".into()))?;
+    let n_u8 = u8::try_from(n).map_err(|_| SoloError::ProtocolError("Byte count exceeds 255".into()))?;
     let request = [n_u8];
     let response = hid.send_recv(CMD_RNG, &request)?;
     let take = response.len().min(n);
@@ -65,8 +64,7 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     let before = std::fs::read_to_string(ENTROPY_INFO).unwrap_or_else(|_| "unknown".into());
     println!("Entropy before: 0x{}", before.trim());
 
-    let count_u8 =
-        u8::try_from(COUNT).map_err(|_| SoloError::ProtocolError("Count exceeds 255".into()))?;
+    let count_u8 = u8::try_from(COUNT).map_err(|_| SoloError::ProtocolError("Count exceeds 255".into()))?;
     let request = [count_u8];
     let response = hid.send_recv(CMD_RNG, &request)?;
     let take = response.len().min(COUNT);
@@ -79,8 +77,8 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
         .checked_add(data.len())
         .ok_or_else(|| SoloError::ProtocolError("Entropy buffer capacity overflow".into()))?;
     let mut buf = Vec::with_capacity(capacity);
-    let buf_size: i32 = i32::try_from(data.len())
-        .map_err(|_| SoloError::ProtocolError("Entropy buffer size overflow".into()))?;
+    let buf_size: i32 =
+        i32::try_from(data.len()).map_err(|_| SoloError::ProtocolError("Entropy buffer size overflow".into()))?;
     let entropy_count: i32 = buf_size
         .checked_mul(ENTROPY_BITS_PER_BYTE)
         .ok_or_else(|| SoloError::ProtocolError("Entropy count overflow".into()))?;
@@ -173,10 +171,7 @@ mod tests {
         let err = cmd_rng_hexbytes(&device, 256).unwrap_err();
         assert!(matches!(err, SoloError::ProtocolError(_)));
         let msg = err.to_string();
-        assert!(
-            msg.contains("256"),
-            "error should mention the bad value: {msg}"
-        );
+        assert!(msg.contains("256"), "error should mention the bad value: {msg}");
     }
 
     /// Device timeout propagates as `SoloError::Timeout`.
@@ -194,8 +189,6 @@ mod tests {
         let device = MockDevice::new(vec![Ok(rng_bytes)]);
         let hex = cmd_rng_hexbytes(&device, 3).unwrap();
         assert_eq!(hex, "abcdef");
-        assert!(hex
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
+        assert!(hex.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit()));
     }
 }

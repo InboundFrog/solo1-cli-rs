@@ -9,9 +9,7 @@ use crate::error::{Result, SoloError};
 pub fn expect_map(v: Value, ctx: &str) -> Result<Vec<(Value, Value)>> {
     match v {
         Value::Map(pairs) => Ok(pairs),
-        _ => Err(SoloError::ProtocolError(format!(
-            "{ctx}: expected a CBOR map"
-        ))),
+        _ => Err(SoloError::ProtocolError(format!("{ctx}: expected a CBOR map"))),
     }
 }
 
@@ -62,8 +60,7 @@ pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a V
 /// # Errors
 /// Returns an error if no entry with integer key `key` is present.
 pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> Result<&'a Value> {
-    find_int_key(pairs, key)
-        .ok_or_else(|| SoloError::ProtocolError(format!("{ctx}: key {key} missing in CBOR map")))
+    find_int_key(pairs, key).ok_or_else(|| SoloError::ProtocolError(format!("{ctx}: key {key} missing in CBOR map")))
 }
 
 /// Extract bytes from a required integer-keyed entry.
@@ -73,9 +70,7 @@ pub fn require_int_key<'a>(pairs: &'a [(Value, Value)], key: i64, ctx: &str) -> 
 pub fn require_bytes(pairs: &[(Value, Value)], key: i64, ctx: &str) -> Result<Vec<u8>> {
     match require_int_key(pairs, key, ctx)? {
         Value::Bytes(b) => Ok(b.clone()),
-        _ => Err(SoloError::ProtocolError(format!(
-            "{ctx}: key {key} is not bytes"
-        ))),
+        _ => Err(SoloError::ProtocolError(format!("{ctx}: key {key} is not bytes"))),
     }
 }
 
@@ -145,14 +140,8 @@ mod tests {
             (Value::Text("name".into()), Value::Bytes(vec![0x01])),
             (Value::Integer(1i64.into()), Value::Text("ignored".into())),
         ];
-        assert_eq!(
-            find_text_key(&pairs, "id"),
-            Some(&Value::Text("abc".into()))
-        );
-        assert_eq!(
-            find_text_key(&pairs, "name"),
-            Some(&Value::Bytes(vec![0x01]))
-        );
+        assert_eq!(find_text_key(&pairs, "id"), Some(&Value::Text("abc".into())));
+        assert_eq!(find_text_key(&pairs, "name"), Some(&Value::Bytes(vec![0x01])));
         assert_eq!(find_text_key(&pairs, "missing"), None);
     }
 

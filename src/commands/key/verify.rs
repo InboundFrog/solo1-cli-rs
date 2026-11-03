@@ -77,11 +77,7 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
             Some(Value::Bytes(b)) => b.clone(),
             _ => return Err(SoloError::MalformedResponse("x5c[0] is not bytes".into())),
         },
-        _ => {
-            return Err(SoloError::MalformedResponse(
-                "attStmt missing x5c array".into(),
-            ))
-        }
+        _ => return Err(SoloError::MalformedResponse("attStmt missing x5c array".into())),
     };
 
     Ok(AttestationData {
@@ -99,13 +95,9 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
 /// authData is treated as a verification failure, never a pass.
 fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -> bool {
     match (&att.auth_data, &att.sig) {
-        (Some(auth_data), Some(sig)) => crate::crypto::verify_attestation_signature(
-            &att.cert_der,
-            auth_data,
-            client_data_hash,
-            sig,
-        )
-        .is_ok(),
+        (Some(auth_data), Some(sig)) => {
+            crate::crypto::verify_attestation_signature(&att.cert_der, auth_data, client_data_hash, sig).is_ok()
+        }
         _ => false,
     }
 }
@@ -142,13 +134,8 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     eprintln!("Please press the button on your Solo key");
 
     // makeCredential request with rp "solokeys.com" and user "verify"
-    let cbor_request = crate::ctap2::build_make_credential(
-        "solokeys.com",
-        "verify",
-        &client_data_hash,
-        pin_uv_auth,
-        [],
-    );
+    let cbor_request =
+        crate::ctap2::build_make_credential("solokeys.com", "verify", &client_data_hash, pin_uv_auth, []);
 
     // CTAP2 makeCredential (0x01)
     let response = crate::ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
@@ -163,8 +150,8 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     let signature_valid = attestation_signature_valid(&att, &client_data_hash);
 
     let fingerprint = sha256_hex(cert_der);
-    let spki_fingerprint = crate::crypto::extract_spki_fingerprint(cert_der)
-        .unwrap_or_else(|_| "(could not extract)".into());
+    let spki_fingerprint =
+        crate::crypto::extract_spki_fingerprint(cert_der).unwrap_or_else(|_| "(could not extract)".into());
 
     let result = check_attestation_fingerprint(cert_der);
 
@@ -174,7 +161,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     let cert_expired = check_cert_validity(cert_der).is_err();
 
     if json {
-        use crate::output::{print_json, VerifyOutput};
+        use crate::output::{VerifyOutput, print_json};
         let (device_type, device_name) = if signature_valid {
             match &result {
                 AttestationResult::GenuineConsumer(n) => ("genuine", Some(n.to_string())),
@@ -217,14 +204,10 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
             println!("OK: Genuine SoloKeys device: {name}");
         }
         AttestationResult::DeveloperDevice(name) => {
-            println!(
-                "WARNING: Developer/non-production device: {name}. Not a genuine consumer key."
-            );
+            println!("WARNING: Developer/non-production device: {name}. Not a genuine consumer key.");
         }
         AttestationResult::Unknown => {
-            println!(
-                "FAILED: Could not verify device authenticity. Certificate fingerprint not recognised."
-            );
+            println!("FAILED: Could not verify device authenticity. Certificate fingerprint not recognised.");
         }
     }
 
@@ -284,7 +267,7 @@ mod tests {
     ///
     /// Returns `(cert_der, auth_data, sig_der)`.
     fn make_signed_attestation(client_data_hash: &[u8]) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
-        use p256::ecdsa::{signature::Signer, DerSignature, SigningKey};
+        use p256::ecdsa::{DerSignature, SigningKey, signature::Signer};
         use p256::pkcs8::DecodePrivateKey;
         use rcgen::{CertificateParams, KeyPair};
 
@@ -292,8 +275,7 @@ mod tests {
         let cert = CertificateParams::default()
             .self_signed(&key_pair)
             .expect("self_signed failed");
-        let signing_key =
-            SigningKey::from_pkcs8_pem(&key_pair.serialize_pem()).expect("key load failed");
+        let signing_key = SigningKey::from_pkcs8_pem(&key_pair.serialize_pem()).expect("key load failed");
 
         let auth_data: Vec<u8> = (0u8..37).collect();
         let mut message = auth_data.clone();
@@ -314,8 +296,7 @@ mod tests {
     fn extract_attestation_full_response() {
         let hash = verify_client_data_hash();
         let (cert_der, auth_data, sig) = make_signed_attestation(&hash);
-        let resp =
-            build_make_credential_response(Some(&auth_data), Some(-7), Some(&sig), Some(&cert_der));
+        let resp = build_make_credential_response(Some(&auth_data), Some(-7), Some(&sig), Some(&cert_der));
 
         let att = extract_attestation(&resp).expect("extraction should succeed");
         assert_eq!(att.cert_der, cert_der);
@@ -340,8 +321,7 @@ mod tests {
 
     #[test]
     fn extract_attestation_rejects_missing_alg() {
-        let resp =
-            build_make_credential_response(Some(b"authdata"), None, Some(b"sig"), Some(b"cert"));
+        let resp = build_make_credential_response(Some(b"authdata"), None, Some(b"sig"), Some(b"cert"));
         assert!(extract_attestation(&resp).is_err());
     }
 
@@ -441,8 +421,7 @@ mod tests {
     fn cmd_verify_succeeds_with_valid_attestation() {
         let hash = verify_client_data_hash();
         let (cert_der, auth_data, sig) = make_signed_attestation(&hash);
-        let mc_resp =
-            build_make_credential_response(Some(&auth_data), Some(-7), Some(&sig), Some(&cert_der));
+        let mc_resp = build_make_credential_response(Some(&auth_data), Some(-7), Some(&sig), Some(&cert_der));
         let device = MockDevice::new(vec![Ok(get_info_response()), Ok(mc_resp)]);
         assert!(cmd_verify(&device, true).is_ok());
     }
@@ -454,8 +433,7 @@ mod tests {
         let hash = verify_client_data_hash();
         let (cert_der, auth_data, mut sig) = make_signed_attestation(&hash);
         *sig.last_mut().unwrap() ^= 0x01;
-        let mc_resp =
-            build_make_credential_response(Some(&auth_data), Some(-7), Some(&sig), Some(&cert_der));
+        let mc_resp = build_make_credential_response(Some(&auth_data), Some(-7), Some(&sig), Some(&cert_der));
         let device = MockDevice::new(vec![Ok(get_info_response()), Ok(mc_resp)]);
         assert!(cmd_verify(&device, true).is_ok());
     }

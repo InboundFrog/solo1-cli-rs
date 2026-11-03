@@ -10,9 +10,7 @@ use crate::error::{Result, SoloError};
 pub fn confirm(prompt: &str) -> Result<bool> {
     println!("{prompt}");
     let mut input = String::new();
-    std::io::stdin()
-        .read_line(&mut input)
-        .map_err(SoloError::IoError)?;
+    std::io::stdin().read_line(&mut input).map_err(SoloError::IoError)?;
     Ok(is_confirmed(&input))
 }
 

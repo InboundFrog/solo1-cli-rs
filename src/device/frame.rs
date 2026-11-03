@@ -126,8 +126,8 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
             CTAPHID_MAX_PAYLOAD
         )));
     }
-    let bcnt = u16::try_from(data.len())
-        .map_err(|_| SoloError::ProtocolError("CTAPHID payload length exceeds u16".into()))?;
+    let bcnt =
+        u16::try_from(data.len()).map_err(|_| SoloError::ProtocolError("CTAPHID payload length exceeds u16".into()))?;
     let mut frames = Vec::new();
 
     // First (init) frame: up to 57 bytes of payload
@@ -162,9 +162,7 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
                     seq,
                     data: data
                         .get(offset..end)
-                        .ok_or_else(|| {
-                            SoloError::ProtocolError("CTAPHID slice out of range".into())
-                        })?
+                        .ok_or_else(|| SoloError::ProtocolError("CTAPHID slice out of range".into()))?
                         .to_vec(),
                 },
             });
@@ -192,11 +190,7 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
         .ok_or_else(|| SoloError::ProtocolError("No frames to reassemble".into()))?;
     let (cmd, bcnt, first_data) = match &first.payload {
         FramePayload::Init { cmd, bcnt, data } => (*cmd, usize::from(*bcnt), data.clone()),
-        FramePayload::Cont { .. } => {
-            return Err(SoloError::ProtocolError(
-                "First frame is not an init frame".into(),
-            ))
-        }
+        FramePayload::Cont { .. } => return Err(SoloError::ProtocolError("First frame is not an init frame".into())),
     };
 
     let mut payload = first_data;
@@ -207,9 +201,7 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
         match &frame.payload {
             FramePayload::Cont { data, .. } => payload.extend_from_slice(data),
             FramePayload::Init { .. } => {
-                return Err(SoloError::ProtocolError(
-                    "Unexpected init frame in continuation".into(),
-                ))
+                return Err(SoloError::ProtocolError("Unexpected init frame in continuation".into()));
             }
         }
     }

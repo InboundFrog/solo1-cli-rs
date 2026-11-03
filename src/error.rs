@@ -2,7 +2,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum SoloError {
-    #[error("No Solo device found. On Linux, ensure udev rules are installed:\n  https://github.com/solokeys/solo1/blob/master/udev/70-solokeys-access.rules")]
+    #[error(
+        "No Solo device found. On Linux, ensure udev rules are installed:\n  https://github.com/solokeys/solo1/blob/master/udev/70-solokeys-access.rules"
+    )]
     NoSoloFound,
 
     #[error("Multiple Solo devices found. Run `solo1 ls` to list serial numbers, then use `--serial <serial>`.")]

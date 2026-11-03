@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use hidapi::{HidApi, HidDevice as HidApiDevice};
 
 use crate::device::frame::{
-    build_bootloader_packet, build_ctaphid_frames, reassemble_frames, CtapHidFrame, FramePayload,
+    CtapHidFrame, FramePayload, build_bootloader_packet, build_ctaphid_frames, reassemble_frames,
 };
 use crate::device::protocol::{CMD_BOOT, CTAPHID_BROADCAST_CID, CTAPHID_INIT, SOLO_PID, SOLO_VID};
 use crate::error::{Result, SoloError};
@@ -32,9 +32,7 @@ pub fn list_solo_devices() -> Result<Vec<SoloDevice>> {
             path: d.path().to_string_lossy().to_string(),
             serial: d.serial_number().map(std::string::ToString::to_string),
             product: d.product_string().map(std::string::ToString::to_string),
-            manufacturer: d
-                .manufacturer_string()
-                .map(std::string::ToString::to_string),
+            manufacturer: d.manufacturer_string().map(std::string::ToString::to_string),
         })
         .collect();
     Ok(devices)
@@ -113,20 +111,15 @@ impl SoloHid {
 
         let response = self.recv_response(CTAPHID_INIT, Duration::from_secs(5))?;
         if response.len() < 12 {
-            return Err(SoloError::ProtocolError(
-                "CTAPHID_INIT response too short".into(),
-            ));
+            return Err(SoloError::ProtocolError("CTAPHID_INIT response too short".into()));
         }
         // Response: nonce[8] | channel_id[4] | ...
         self.channel_id.copy_from_slice(
-            response.get(8..12).ok_or_else(|| {
-                SoloError::ProtocolError("CTAPHID_INIT response too short".into())
-            })?,
+            response
+                .get(8..12)
+                .ok_or_else(|| SoloError::ProtocolError("CTAPHID_INIT response too short".into()))?,
         );
-        vlog!(
-            "CTAPHID_INIT: assigned channel_id {}",
-            hex::encode(self.channel_id)
-        );
+        vlog!("CTAPHID_INIT: assigned channel_id {}", hex::encode(self.channel_id));
         Ok(())
     }
 
@@ -226,13 +219,9 @@ impl SoloHid {
             };
 
             // Skip frames not for our channel (unless this is INIT response on broadcast)
-            let for_us =
-                frame.channel_id == self.channel_id || frame.channel_id == CTAPHID_BROADCAST_CID;
+            let for_us = frame.channel_id == self.channel_id || frame.channel_id == CTAPHID_BROADCAST_CID;
             if !for_us {
-                vlog!(
-                    "HID recv: ignoring frame for channel {}",
-                    hex::encode(frame.channel_id)
-                );
+                vlog!("HID recv: ignoring frame for channel {}", hex::encode(frame.channel_id));
                 continue;
             }
 
@@ -243,9 +232,7 @@ impl SoloHid {
                         // CTAPHID_ERROR
                         let code = data.first().copied().unwrap_or(0);
                         vlog!("HID recv: CTAPHID_ERROR code=0x{:02X}", code);
-                        return Err(SoloError::ProtocolError(format!(
-                            "CTAPHID error: {code:02x}"
-                        )));
+                        return Err(SoloError::ProtocolError(format!("CTAPHID error: {code:02x}")));
                     }
                     vlog!(
                         "HID recv: init frame cmd=0x{:02X} bcnt={} first_data={}",
@@ -271,9 +258,9 @@ impl SoloHid {
                     if let Some(tb) = total_bcnt {
                         frames.push(frame.clone());
                         if let FramePayload::Cont { data, .. } = &frame.payload {
-                            collected = collected.checked_add(data.len()).ok_or_else(|| {
-                                SoloError::ProtocolError("response length overflow".into())
-                            })?;
+                            collected = collected
+                                .checked_add(data.len())
+                                .ok_or_else(|| SoloError::ProtocolError("response length overflow".into()))?;
                         }
                         if collected >= tb {
                             break;

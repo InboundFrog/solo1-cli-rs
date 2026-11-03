@@ -13,7 +13,7 @@
 ///
 /// Tests marked `#[ignore]` require actual hardware (a Solo 1 device plugged in).
 /// Run hardware tests with: `cargo test -- --ignored`
-use solo1::device::{list_solo_devices, SoloHid};
+use solo1::device::{SoloHid, list_solo_devices};
 
 /// Test that we can list devices (returns empty list without hardware, not an error).
 #[test]
@@ -23,22 +23,16 @@ fn test_list_devices_no_hardware() {
     let result = list_solo_devices();
     // We don't assert a particular count because hardware may or may not be present.
     // We just verify it doesn't error out.
-    assert!(
-        result.is_ok(),
-        "list_solo_devices should not fail: {result:?}"
-    );
+    assert!(result.is_ok(), "list_solo_devices should not fail: {result:?}");
 }
 
 /// Ping the device (requires hardware).
 #[test]
 #[ignore = "requires connected hardware"]
 fn test_ping_hardware() {
-    let hid = SoloHid::open(None, std::time::Duration::from_secs(30))
-        .expect("Failed to open Solo device");
+    let hid = SoloHid::open(None, std::time::Duration::from_secs(30)).expect("Failed to open Solo device");
     let data = b"hello";
-    let response = hid
-        .send_recv(solo1::device::CTAPHID_PING, data)
-        .expect("Ping failed");
+    let response = hid.send_recv(solo1::device::CTAPHID_PING, data).expect("Ping failed");
     assert_eq!(response, data, "Ping response should match sent data");
 }
 
@@ -46,19 +40,12 @@ fn test_ping_hardware() {
 #[test]
 #[ignore = "requires connected hardware"]
 fn test_version_hardware() {
-    let hid = SoloHid::open(None, std::time::Duration::from_secs(30))
-        .expect("Failed to open Solo device");
+    let hid = SoloHid::open(None, std::time::Duration::from_secs(30)).expect("Failed to open Solo device");
     let response = hid
         .send_recv(solo1::device::CMD_GET_VERSION, &[])
         .expect("Version command failed");
-    assert!(
-        response.len() >= 3,
-        "Version response should be at least 3 bytes"
-    );
-    println!(
-        "Firmware version: {}.{}.{}",
-        response[0], response[1], response[2]
-    );
+    assert!(response.len() >= 3, "Version response should be at least 3 bytes");
+    println!("Firmware version: {}.{}.{}", response[0], response[1], response[2]);
 }
 
 // ============================================================
@@ -68,7 +55,7 @@ fn test_version_hardware() {
 /// Test that `firmware_bytes_to_sign_for_version` produces different sizes for v1 and v2.
 #[test]
 fn test_firmware_sign_versioned_regions_differ() {
-    use solo1::firmware::{FLASH_PAGES, FLASH_PAGE_SIZE};
+    use solo1::firmware::{FLASH_PAGE_SIZE, FLASH_PAGES};
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -135,30 +122,19 @@ fn test_mergehex_auth_word_address() {
 
     // flash_addr(108) = 0x08000000 + 108 * 2048 = 0x08000000 + 0x36000 = 0x08036000
     // auth_word_addr = 0x08036000 - 8 = 0x08035FF8
-    assert_eq!(
-        flash_addr(108),
-        0x0803_6000,
-        "flash_addr(108) should be 0x08036000"
-    );
-    assert_eq!(
-        auth_word_addr, 0x0803_5FF8,
-        "AUTH_WORD_ADDR should be 0x08035FF8"
-    );
+    assert_eq!(flash_addr(108), 0x0803_6000, "flash_addr(108) should be 0x08036000");
+    assert_eq!(auth_word_addr, 0x0803_5FF8, "AUTH_WORD_ADDR should be 0x08035FF8");
 
     // ATTEST_ADDR = flash_addr(PAGES - 15) = flash_addr(113)
     let attest_addr = flash_addr(128 - 15);
-    assert_eq!(
-        flash_addr(113),
-        0x0803_8800,
-        "flash_addr(113) should be 0x08038800"
-    );
+    assert_eq!(flash_addr(113), 0x0803_8800, "flash_addr(113) should be 0x08038800");
     assert_eq!(attest_addr, 0x0803_8800, "ATTEST_ADDR should be 0x08038800");
 }
 
 /// Test that `version_matches_constraint` handles the "=" operator correctly.
 #[test]
 fn test_version_constraint_equals() {
-    use solo1::firmware::{version_matches_constraint, FirmwareVersion};
+    use solo1::firmware::{FirmwareVersion, version_matches_constraint};
 
     let v = FirmwareVersion::new(2, 5, 3);
     assert!(version_matches_constraint(&v, "=2.5.3").unwrap());
@@ -201,9 +177,7 @@ fn test_mergehex_key_cert_must_both_be_provided() {
 
     // Create a minimal HEX file
     let mut tmp_hex = NamedTempFile::new().unwrap();
-    tmp_hex
-        .write_all(b":020000040800F2\n:00000001FF\n")
-        .unwrap();
+    tmp_hex.write_all(b":020000040800F2\n:00000001FF\n").unwrap();
     tmp_hex.flush().unwrap();
 
     let tmp_out = NamedTempFile::new().unwrap();
@@ -248,10 +222,7 @@ fn test_mergehex_default_attestation() {
     // Output should be a valid HEX file (non-empty, starts with ':')
     let output = std::fs::read_to_string(tmp_out.path()).unwrap();
     assert!(!output.is_empty(), "output HEX file should not be empty");
-    assert!(
-        output.starts_with(':'),
-        "output should be a valid Intel HEX file"
-    );
+    assert!(output.starts_with(':'), "output should be a valid Intel HEX file");
 
     // Verify the attestation data is present in the output.
     // ATTEST_ADDR = flash_addr(113) = 0x08038800
@@ -284,14 +255,8 @@ fn test_firmware_sign_versioned_json_structure() {
 
     // Should have 2 version entries
     assert_eq!(fw_json.versions.len(), 2, "should have 2 version entries");
-    assert!(
-        fw_json.versions.contains_key("<=2.5.3"),
-        "should have <=2.5.3 entry"
-    );
-    assert!(
-        fw_json.versions.contains_key(">2.5.3"),
-        "should have >2.5.3 entry"
-    );
+    assert!(fw_json.versions.contains_key("<=2.5.3"), "should have <=2.5.3 entry");
+    assert!(fw_json.versions.contains_key(">2.5.3"), "should have >2.5.3 entry");
 
     // The default signature should be v2
     let sig_v2_decoded = fw_json.signature_bytes().unwrap();
@@ -300,20 +265,14 @@ fn test_firmware_sign_versioned_json_structure() {
     // Firmware field should be base64 of the HEX FILE TEXT (not binary)
     let fw_bytes = fw_json.firmware_bytes().unwrap();
     let fw_text = String::from_utf8(fw_bytes).unwrap();
-    assert!(
-        fw_text.starts_with(':'),
-        "firmware field should be base64 of hex text"
-    );
-    assert!(
-        fw_text.contains("FF"),
-        "firmware field should contain hex data"
-    );
+    assert!(fw_text.starts_with(':'), "firmware field should be base64 of hex text");
+    assert!(fw_text.contains("FF"), "firmware field should contain hex data");
 }
 
 /// Test device frame reassembly handles truncation.
 #[test]
 fn test_reassemble_frames_truncation() {
-    use solo1::device::{reassemble_frames, CtapHidFrame, FramePayload};
+    use solo1::device::{CtapHidFrame, FramePayload, reassemble_frames};
 
     let cid = [0x01u8, 0x02, 0x03, 0x04];
 
@@ -339,20 +298,11 @@ fn test_reassemble_frames_truncation() {
 fn test_known_fingerprints_validity() {
     use solo1::crypto::KNOWN_FINGERPRINTS;
 
-    assert_eq!(
-        KNOWN_FINGERPRINTS.len(),
-        6,
-        "should have exactly 6 known fingerprints"
-    );
+    assert_eq!(KNOWN_FINGERPRINTS.len(), 6, "should have exactly 6 known fingerprints");
 
     for (fp, name) in KNOWN_FINGERPRINTS {
-        let bytes = hex::decode(fp)
-            .unwrap_or_else(|_| panic!("fingerprint for '{name}' should be valid hex"));
-        assert_eq!(
-            bytes.len(),
-            32,
-            "fingerprint for '{name}' should be 32 bytes"
-        );
+        let bytes = hex::decode(fp).unwrap_or_else(|_| panic!("fingerprint for '{name}' should be valid hex"));
+        assert_eq!(bytes.len(), 32, "fingerprint for '{name}' should be 32 bytes");
     }
 
     // Verify specific expected fingerprints
