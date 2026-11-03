@@ -1,7 +1,7 @@
-/// Solo 1 bootloader command packets, sent over CTAPHID as `CMD_BOOT`.
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use crate::solo1::protocol::{CMD_BOOT, CMD_DONE, CMD_WRITE, SOLO_TAG};
+/// Solo 1 bootloader command packets, sent over CTAPHID as `CMD_BOOT`.
+use solo_ctaphid::HidDevice;
 
 /// Build a bootloader command packet.
 /// Address is encoded little-endian (lower 24 bits); firmware ORs 0x08000000 back in.
@@ -182,7 +182,7 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
-    use crate::device::mock::MockDevice;
+    use solo_ctaphid::mock::MockDevice;
 
     #[test]
     fn test_bootloader_packet() {

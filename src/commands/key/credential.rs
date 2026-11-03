@@ -4,8 +4,8 @@ use crate::ctap2::{
     check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set, parse_cbor_map_response,
     parse_cbor_map_response_allow_empty, pin_uv_auth,
 };
-use crate::device::{CTAPHID_CBOR, HidDevice};
 use crate::error::{Result, SoloError};
+use solo_ctaphid::{CTAPHID_CBOR, HidDevice};
 
 /// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
 ///

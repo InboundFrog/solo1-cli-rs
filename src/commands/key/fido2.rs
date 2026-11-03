@@ -1,9 +1,9 @@
 use crate::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
 use crate::ctap2::{aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response};
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use p256::elliptic_curve::Generate;
 use sha2::{Digest, Sha256};
+use solo_ctaphid::HidDevice;
 
 /// Create a FIDO2 credential with hmac-secret extension.
 ///

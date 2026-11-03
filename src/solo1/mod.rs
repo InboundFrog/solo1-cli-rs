@@ -4,8 +4,8 @@ pub mod protocol;
 
 use std::time::Duration;
 
-use crate::device::{DeviceFilter, HidDeviceInfo, HidTransport, list_devices};
 use crate::error::Result;
+use solo_ctaphid::{DeviceFilter, HidDeviceInfo, HidTransport, list_devices};
 
 /// Matches a Solo 1 running firmware or the Solo bootloader.
 pub const DEVICE_FILTER: DeviceFilter = DeviceFilter::UsbId {
@@ -18,7 +18,7 @@ pub const DEVICE_FILTER: DeviceFilter = DeviceFilter::UsbId {
 /// # Errors
 /// Returns an error if the HID API cannot be initialized.
 pub fn list_solo_devices() -> Result<Vec<HidDeviceInfo>> {
-    list_devices(DEVICE_FILTER)
+    Ok(list_devices(DEVICE_FILTER)?)
 }
 
 /// Open a Solo 1 by serial number (or the only one present if `None`).
@@ -26,5 +26,5 @@ pub fn list_solo_devices() -> Result<Vec<HidDeviceInfo>> {
 /// # Errors
 /// See [`HidTransport::open`].
 pub fn open(serial: Option<&str>, timeout: Duration) -> Result<HidTransport> {
-    HidTransport::open(DEVICE_FILTER, serial, timeout)
+    Ok(HidTransport::open(DEVICE_FILTER, serial, timeout)?)
 }

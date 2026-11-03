@@ -6,8 +6,8 @@ use p256::elliptic_curve::Generate;
 use sha2::{Digest as _, Sha256};
 
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
-use crate::device::{CTAPHID_CBOR, HidDevice};
 use crate::error::{Result, SoloError};
+use solo_ctaphid::{CTAPHID_CBOR, HidDevice};
 
 /// Map a CTAP2 status byte to a human-readable description.
 #[must_use]
@@ -93,16 +93,16 @@ pub fn aes256_cbc_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn to_aes_blocks(data: &[u8]) -> Result<Vec<aes::Block>> {
-    let (blocks, remainder) = data.as_chunks::<16>();
+    let (chunks, remainder) = data.as_chunks::<16>();
 
-    if blocks.is_empty() || !remainder.is_empty() {
+    if chunks.is_empty() || !remainder.is_empty() {
         return Err(SoloError::CryptoError(format!(
             "AES-256-CBC input has unexpected length: {}",
             data.len()
         )));
     }
 
-    Ok(blocks.iter().copied().map(aes::Block::from).collect())
+    Ok(chunks.iter().copied().map(aes::Block::from).collect())
 }
 
 fn from_aes_blocks(blocks: &[aes::Block]) -> Vec<u8> {
@@ -144,7 +144,7 @@ pub fn ctap2_request(cmd: u8, payload: &Value) -> Result<Vec<u8>> {
 /// transport errors from the device.
 pub fn ctap2_call(hid: &impl HidDevice, cmd: u8, payload: &Value) -> Result<Vec<u8>> {
     let request = ctap2_request(cmd, payload)?;
-    hid.send_recv(CTAPHID_CBOR, &request)
+    Ok(hid.send_recv(CTAPHID_CBOR, &request)?)
 }
 
 #[inline]

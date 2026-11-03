@@ -1,19 +1,18 @@
-[package]
-name = "solo1"
-version = "0.2.1"
+[workspace]
+resolver = "2"
+members = [".", "crates/*"]
+# Build, lint and test every crate by default, not just the root package.
+default-members = [".", "crates/solo-ctaphid"]
+
+[workspace.package]
 edition = "2021"
-description = "CLI tool for interacting with SoloKeys Solo 1 hardware security keys"
 license = "MIT"
 
-[lib]
-name = "solo1"
-path = "src/lib.rs"
+[workspace.dependencies]
+# Workspace crates
+solo-ctaphid = { path = "crates/solo-ctaphid" }
 
-[[bin]]
-name = "solo1"
-path = "src/main.rs"
-
-[dependencies]
+# Third-party
 aes = "0.9"
 base64 = "0.23"
 cbc = { version = "0.2", features = ["alloc"] }
@@ -26,6 +25,7 @@ hidapi = "2"
 hmac = "0.13"
 ihex = "3"
 indicatif = "0.18"
+libc = "0.2"
 log = "0.4"
 p256 = { version = "0.14", features = ["ecdsa", "pem", "pkcs8", "ecdh"] }
 rand = "0.10.2"
@@ -39,15 +39,12 @@ sha2 = "0.11"
 thiserror = "2"
 x509-cert = "0.3"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
-
-[dev-dependencies]
-tempfile = "3"
+# Dev-only
 rcgen = "0.14"
+tempfile = "3"
 time = "0.3"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 # Deny panics
@@ -64,3 +61,57 @@ panic_in_result_fn = "deny"
 panic = "deny"
 exit = "deny"
 as_conversions = "deny"
+
+[package]
+name = "solo1"
+version = "0.2.1"
+description = "CLI tool for interacting with SoloKeys Solo 1 hardware security keys"
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "solo1"
+path = "src/lib.rs"
+
+[[bin]]
+name = "solo1"
+path = "src/main.rs"
+
+[dependencies]
+solo-ctaphid.workspace = true
+
+aes.workspace = true
+base64.workspace = true
+cbc.workspace = true
+ciborium.workspace = true
+clap.workspace = true
+ctrlc.workspace = true
+digest.workspace = true
+hex.workspace = true
+hmac.workspace = true
+ihex.workspace = true
+indicatif.workspace = true
+log.workspace = true
+p256.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rpassword.workspace = true
+rusb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serialport.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+x509-cert.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+solo-ctaphid = { workspace = true, features = ["test-util"] }
+rcgen.workspace = true
+tempfile.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true

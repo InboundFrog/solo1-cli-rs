@@ -2,9 +2,9 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use crate::solo1::protocol::CMD_PROBE;
+use solo_ctaphid::HidDevice;
 
 /// Run a hash probe on the device.
 ///
@@ -211,7 +211,7 @@ mod tests {
     /// `cmd_probe` must reject an unknown hash type before touching the file or device.
     #[test]
     fn test_cmd_probe_rejects_unknown_hash_type() {
-        use crate::device::mock::MockDevice;
+        use solo_ctaphid::mock::MockDevice;
         // Empty queue: any device call would return Timeout, not DeviceError.
         let device = MockDevice::new(vec![]);
         let err = cmd_probe(&device, "md5", Path::new("/nonexistent")).unwrap_err();

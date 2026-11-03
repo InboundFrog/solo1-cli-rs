@@ -1,6 +1,6 @@
 use crate::cbor::{cbor_bytes, cbor_int, int_map};
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+use solo_ctaphid::HidDevice;
 
 /// Change the existing PIN (prompts for old and new PIN).
 ///

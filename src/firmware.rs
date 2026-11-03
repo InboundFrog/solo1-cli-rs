@@ -7,10 +7,10 @@ use ihex::Record;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::{websafe_b64_decode, websafe_b64_encode};
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use crate::solo1::bootloader::bootloader_cmd;
 use crate::solo1::protocol::CMD_VERSION;
+use solo_ctaphid::HidDevice;
 
 /// The firmware JSON format used by the Solo 1 bootloader.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1007,7 +1007,7 @@ mod tests {
 
     #[test]
     fn test_read_bootloader_version_three_bytes() {
-        use crate::device::mock::MockDevice;
+        use solo_ctaphid::mock::MockDevice;
         // Bootloader responses start with a 0x00 status byte.
         let device = MockDevice::new(vec![Ok(vec![0x00, 2, 5, 3])]);
         assert_eq!(read_bootloader_version(&device), Some(FirmwareVersion::new(2, 5, 3)));
@@ -1015,14 +1015,14 @@ mod tests {
 
     #[test]
     fn test_read_bootloader_version_one_byte() {
-        use crate::device::mock::MockDevice;
+        use solo_ctaphid::mock::MockDevice;
         let device = MockDevice::new(vec![Ok(vec![0x00, 7])]);
         assert_eq!(read_bootloader_version(&device), Some(FirmwareVersion::new(0, 0, 7)));
     }
 
     #[test]
     fn test_read_bootloader_version_empty_or_error_is_none() {
-        use crate::device::mock::MockDevice;
+        use solo_ctaphid::mock::MockDevice;
         let device = MockDevice::new(vec![Ok(vec![0x00])]);
         assert_eq!(read_bootloader_version(&device), None);
         let device = MockDevice::new(vec![Ok(vec![0x01])]);

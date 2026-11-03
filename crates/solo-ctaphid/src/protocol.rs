@@ -2,7 +2,7 @@
 //
 // Everything here is device-neutral. Vendor command codes and USB
 // identifiers for specific authenticators live in their device modules
-// (e.g. `crate::solo1::protocol`).
+// (e.g. `solo1::protocol`).
 
 // HID report size
 pub const HID_REPORT_SIZE: usize = 64;

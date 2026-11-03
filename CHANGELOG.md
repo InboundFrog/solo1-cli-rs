@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split the device-neutral CTAPHID transport from Solo 1 vendor commands: the `HidDevice` trait no longer has `send_bootloader_cmd` (now `solo1::bootloader::bootloader_cmd`), Solo 1 USB IDs and vendor command codes moved to `solo1::protocol`, and device lookup takes a `DeviceFilter`.
 - Library modules no longer do terminal I/O: the PIN prompt moved from `ctap2` to the CLI (`maybe_pin_uv_auth` takes a PIN callback), firmware and DFU writes report progress through callbacks, `select_signature` is split into `read_bootloader_version` and `FirmwareJson::signature_for_bootloader`, and the GitHub release client moved to `github.rs`.
 - Verbose output goes through the `log` facade instead of a global flag and the `vlog!` macro. `--verbose` shows debug records from this project's crates; other crates only show warnings and errors.
+- The repository is now a Cargo workspace. Dependency versions and the clippy lint set are shared through `[workspace.dependencies]` and `[workspace.lints]`.
+- The CTAPHID transport is its own crate, `crates/solo-ctaphid`, with its own error type. `MockDevice` is available to other crates' tests through its `test-util` feature.
 
 ## [0.2.1] - 2026-04-14
 

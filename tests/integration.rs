@@ -32,7 +32,7 @@ fn test_list_devices_no_hardware() {
 fn test_ping_hardware() {
     let hid = open(None, std::time::Duration::from_secs(30)).expect("Failed to open Solo device");
     let data = b"hello";
-    let response = hid.send_recv(solo1::device::CTAPHID_PING, data).expect("Ping failed");
+    let response = hid.send_recv(solo_ctaphid::CTAPHID_PING, data).expect("Ping failed");
     assert_eq!(response, data, "Ping response should match sent data");
 }
 
@@ -272,7 +272,7 @@ fn test_firmware_sign_versioned_json_structure() {
 /// Test device frame reassembly handles truncation.
 #[test]
 fn test_reassemble_frames_truncation() {
-    use solo1::device::{CtapHidFrame, FramePayload, reassemble_frames};
+    use solo_ctaphid::{CtapHidFrame, FramePayload, reassemble_frames};
 
     let cid = [0x01u8, 0x02, 0x03, 0x04];
 

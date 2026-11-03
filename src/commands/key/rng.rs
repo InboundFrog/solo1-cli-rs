@@ -1,8 +1,8 @@
 use std::io::Write;
 
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use crate::solo1::protocol::CMD_RNG;
+use solo_ctaphid::HidDevice;
 
 /// Get N random bytes from the device, return as hex string.
 ///
@@ -120,8 +120,8 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
-    use crate::device::mock::MockDevice;
     use crate::error::SoloError;
+    use solo_ctaphid::mock::MockDevice;
 
     // ── cmd_rng_hexbytes ─────────────────────────────────────────────────────
 

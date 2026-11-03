@@ -1,11 +1,11 @@
 use std::time::Instant;
 
 use crate::commands::key::common;
-use crate::device::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 use crate::error::{Result, SoloError};
 use crate::firmware::FirmwareVersion;
 use crate::output::{PingOutput, print_json};
 use crate::solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
+use solo_ctaphid::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 
 /// Get firmware version from the device.
 ///
@@ -150,8 +150,8 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
-    use crate::device::mock::MockDevice;
     use crate::error::SoloError;
+    use solo_ctaphid::mock::MockDevice;
 
     // ── cmd_ping ────────────────────────────────────────────────────────────
 

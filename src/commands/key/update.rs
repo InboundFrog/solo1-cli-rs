@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+use solo_ctaphid::HidDevice;
 
 /// Update the device firmware.
 ///

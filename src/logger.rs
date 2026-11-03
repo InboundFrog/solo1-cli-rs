@@ -70,8 +70,8 @@ mod tests {
     fn test_own_targets_get_debug_only_when_verbose() {
         let quiet = StderrLogger { verbose: false };
         let loud = StderrLogger { verbose: true };
-        assert_eq!(quiet.max_level_for("solo1::device::hid"), LevelFilter::Warn);
-        assert_eq!(loud.max_level_for("solo1::device::hid"), LevelFilter::Debug);
+        assert_eq!(quiet.max_level_for("solo_ctaphid::hid"), LevelFilter::Warn);
+        assert_eq!(loud.max_level_for("solo_ctaphid::hid"), LevelFilter::Debug);
         assert_eq!(loud.max_level_for("solo_ctaphid"), LevelFilter::Debug);
     }
 

@@ -3,9 +3,9 @@ use std::time::{Duration, Instant};
 
 use hidapi::{DeviceInfo, HidApi, HidDevice as HidApiDevice};
 
-use crate::device::frame::{CtapHidFrame, FramePayload, build_ctaphid_frames, reassemble_frames};
-use crate::device::protocol::{CTAPHID_BROADCAST_CID, CTAPHID_INIT};
-use crate::error::{Result, SoloError};
+use crate::error::{Error, Result};
+use crate::frame::{CtapHidFrame, FramePayload, build_ctaphid_frames, reassemble_frames};
+use crate::protocol::{CTAPHID_BROADCAST_CID, CTAPHID_INIT};
 
 /// Selects which HID devices [`list_devices`] and [`HidTransport::open`] consider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,22 +79,22 @@ impl HidTransport {
         let devices: Vec<_> = api.device_list().filter(|d| filter.matches(d)).collect();
 
         if devices.is_empty() {
-            return Err(SoloError::NoSoloFound);
+            return Err(Error::NoDeviceFound);
         }
 
         let info = if let Some(sn) = serial {
             devices
                 .iter()
                 .find(|d| d.serial_number() == Some(sn))
-                .ok_or_else(|| SoloError::DeviceError(format!("No device with serial {sn}")))?
+                .ok_or_else(|| Error::Device(format!("No device with serial {sn}")))?
         } else {
             if devices.len() > 1 {
-                return Err(SoloError::NonUniqueDevice);
+                return Err(Error::NonUniqueDevice);
             }
             devices
                 .first()
                 .copied()
-                .ok_or_else(|| SoloError::DeviceError("No device available".into()))?
+                .ok_or_else(|| Error::Device("No device available".into()))?
         };
 
         let device = info.open_device(&api)?;
@@ -122,13 +122,13 @@ impl HidTransport {
 
         let response = self.recv_response(CTAPHID_INIT, Duration::from_secs(5))?;
         if response.len() < 12 {
-            return Err(SoloError::ProtocolError("CTAPHID_INIT response too short".into()));
+            return Err(Error::Protocol("CTAPHID_INIT response too short".into()));
         }
         // Response: nonce[8] | channel_id[4] | ...
         self.channel_id.copy_from_slice(
             response
                 .get(8..12)
-                .ok_or_else(|| SoloError::ProtocolError("CTAPHID_INIT response too short".into()))?,
+                .ok_or_else(|| Error::Protocol("CTAPHID_INIT response too short".into()))?,
         );
         log::debug!("CTAPHID_INIT: assigned channel_id {}", hex::encode(self.channel_id));
         Ok(())
@@ -176,7 +176,7 @@ impl HidTransport {
         let n = self
             .device
             .read_timeout(&mut buf, 500)
-            .map_err(|e| SoloError::DeviceError(format!("HID read error: {e}")))?;
+            .map_err(|e| Error::Device(format!("HID read error: {e}")))?;
 
         if n == 0 {
             return Ok(None);
@@ -186,23 +186,23 @@ impl HidTransport {
         // hidapi on most platforms does NOT include the report ID byte in the read buffer.
         let raw = buf
             .get(..n)
-            .ok_or_else(|| SoloError::ProtocolError("HID read length invalid".into()))?;
+            .ok_or_else(|| Error::Protocol("HID read length invalid".into()))?;
         // If first byte looks like a report ID (0x00), skip it
         let frame_bytes = if n >= 65
             && *raw
                 .first()
-                .ok_or_else(|| SoloError::ProtocolError("HID read buffer empty".into()))?
+                .ok_or_else(|| Error::Protocol("HID read buffer empty".into()))?
                 == 0
         {
             raw.get(1..65)
-                .ok_or_else(|| SoloError::ProtocolError("HID read buffer too short".into()))?
+                .ok_or_else(|| Error::Protocol("HID read buffer too short".into()))?
         } else if n >= 64 {
             raw.get(..64)
-                .ok_or_else(|| SoloError::ProtocolError("HID read buffer too short".into()))?
+                .ok_or_else(|| Error::Protocol("HID read buffer too short".into()))?
         } else {
             // pad to 64
             raw.get(..n)
-                .ok_or_else(|| SoloError::ProtocolError("HID read length invalid".into()))?
+                .ok_or_else(|| Error::Protocol("HID read length invalid".into()))?
         };
 
         Ok(Some(CtapHidFrame::parse(frame_bytes)?))
@@ -223,7 +223,7 @@ impl HidTransport {
 
         loop {
             if start.elapsed() > timeout {
-                return Err(SoloError::Timeout);
+                return Err(Error::Timeout);
             }
             let Some(frame) = self.read_frame()? else {
                 continue;
@@ -243,7 +243,7 @@ impl HidTransport {
                         // CTAPHID_ERROR
                         let code = data.first().copied().unwrap_or(0);
                         log::debug!("HID recv: CTAPHID_ERROR code=0x{code:02X}");
-                        return Err(SoloError::ProtocolError(format!("CTAPHID error: {code:02x}")));
+                        return Err(Error::Protocol(format!("CTAPHID error: {code:02x}")));
                     }
                     log::debug!(
                         "HID recv: init frame cmd=0x{:02X} bcnt={} first_data={}",
@@ -271,7 +271,7 @@ impl HidTransport {
                         if let FramePayload::Cont { data, .. } = &frame.payload {
                             collected = collected
                                 .checked_add(data.len())
-                                .ok_or_else(|| SoloError::ProtocolError("response length overflow".into()))?;
+                                .ok_or_else(|| Error::Protocol("response length overflow".into()))?;
                         }
                         if collected >= tb {
                             break;
@@ -301,7 +301,7 @@ impl HidTransport {
     }
 }
 
-impl crate::device::HidDevice for HidTransport {
+impl crate::HidDevice for HidTransport {
     fn send_recv(&self, cmd: u8, data: &[u8]) -> Result<Vec<u8>> {
         Self::send_recv(self, cmd, data)
     }

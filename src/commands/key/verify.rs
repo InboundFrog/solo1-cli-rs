@@ -1,8 +1,8 @@
 use crate::cbor::{find_int_key, find_text_key};
 use crate::ctap2::parse_cbor_map_response;
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use sha2::{Digest, Sha256};
+use solo_ctaphid::HidDevice;
 
 /// Attestation data extracted from a makeCredential response.
 ///
@@ -228,8 +228,8 @@ mod tests {
     )]
     use super::*;
     use crate::cbor::{cbor_bytes, cbor_int, cbor_text, int_map};
-    use crate::device::mock::MockDevice;
     use ciborium::value::Value;
+    use solo_ctaphid::mock::MockDevice;
 
     /// Build a raw makeCredential response: status 0x00 + CBOR map with
     /// fmt (0x01), authData (0x02), and attStmt (0x03).

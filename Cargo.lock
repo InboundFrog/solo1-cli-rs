@@ -2088,6 +2088,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "solo-ctaphid"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "hidapi",
+ "log",
+ "rand",
+ "thiserror",
+]
+
+[[package]]
 name = "solo1"
 version = "0.2.1"
 dependencies = [
@@ -2099,7 +2110,6 @@ dependencies = [
  "ctrlc",
  "digest",
  "hex",
- "hidapi",
  "hmac",
  "ihex",
  "indicatif",
@@ -2115,6 +2125,7 @@ dependencies = [
  "serde_json",
  "serialport",
  "sha2",
+ "solo-ctaphid",
  "tempfile",
  "thiserror",
  "time",

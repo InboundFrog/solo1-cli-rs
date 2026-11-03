@@ -3,7 +3,6 @@ pub mod cli;
 pub mod commands;
 pub mod crypto;
 pub mod ctap2;
-pub mod device;
 pub mod dfu;
 pub mod error;
 pub mod firmware;

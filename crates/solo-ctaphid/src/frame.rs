@@ -1,5 +1,5 @@
 /// CTAP HID frame types, encoding/decoding, and message assembly.
-use crate::error::{Result, SoloError};
+use crate::error::{Error, Result};
 
 /// A single 64-byte HID frame (init or continuation).
 #[derive(Debug, Clone)]
@@ -32,12 +32,12 @@ impl CtapHidFrame {
                 let n = data.len().min(57);
                 let end = 8usize
                     .checked_add(n)
-                    .ok_or_else(|| SoloError::ProtocolError("frame length overflow".into()))?;
+                    .ok_or_else(|| Error::Protocol("frame length overflow".into()))?;
                 let src = data
                     .get(..n)
-                    .ok_or_else(|| SoloError::ProtocolError("frame data too short".into()))?;
+                    .ok_or_else(|| Error::Protocol("frame data too short".into()))?;
                 buf.get_mut(8..end)
-                    .ok_or_else(|| SoloError::ProtocolError("frame buffer overflow".into()))?
+                    .ok_or_else(|| Error::Protocol("frame buffer overflow".into()))?
                     .copy_from_slice(src);
             }
             FramePayload::Cont { seq, data } => {
@@ -45,12 +45,12 @@ impl CtapHidFrame {
                 let n = data.len().min(59);
                 let end = 6usize
                     .checked_add(n)
-                    .ok_or_else(|| SoloError::ProtocolError("frame length overflow".into()))?;
+                    .ok_or_else(|| Error::Protocol("frame length overflow".into()))?;
                 let src = data
                     .get(..n)
-                    .ok_or_else(|| SoloError::ProtocolError("frame data too short".into()))?;
+                    .ok_or_else(|| Error::Protocol("frame data too short".into()))?;
                 buf.get_mut(6..end)
-                    .ok_or_else(|| SoloError::ProtocolError("frame buffer overflow".into()))?
+                    .ok_or_else(|| Error::Protocol("frame buffer overflow".into()))?
                     .copy_from_slice(src);
             }
         }
@@ -63,29 +63,29 @@ impl CtapHidFrame {
     /// Returns an error if `raw` is shorter than the 7-byte frame header.
     pub fn parse(raw: &[u8]) -> Result<Self> {
         if raw.len() < 7 {
-            return Err(SoloError::ProtocolError("HID frame too short".into()));
+            return Err(Error::Protocol("HID frame too short".into()));
         }
         let mut channel_id = [0u8; 4];
         channel_id.copy_from_slice(
             raw.get(..4)
-                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?,
+                .ok_or_else(|| Error::Protocol("HID frame too short".into()))?,
         );
         let byte4 = *raw
             .get(4)
-            .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
+            .ok_or_else(|| Error::Protocol("HID frame too short".into()))?;
         if byte4 & 0x80 != 0 {
             // Init frame
             let cmd = byte4 & 0x7F;
             let bcnt_hi = *raw
                 .get(5)
-                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
+                .ok_or_else(|| Error::Protocol("HID frame too short".into()))?;
             let bcnt_lo = *raw
                 .get(6)
-                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?;
+                .ok_or_else(|| Error::Protocol("HID frame too short".into()))?;
             let bcnt = u16::from_be_bytes([bcnt_hi, bcnt_lo]);
             let data = raw
                 .get(7..)
-                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?
+                .ok_or_else(|| Error::Protocol("HID frame too short".into()))?
                 .to_vec();
             Ok(Self {
                 channel_id,
@@ -96,7 +96,7 @@ impl CtapHidFrame {
             let seq = byte4 & 0x7F;
             let data = raw
                 .get(5..)
-                .ok_or_else(|| SoloError::ProtocolError("HID frame too short".into()))?
+                .ok_or_else(|| Error::Protocol("HID frame too short".into()))?
                 .to_vec();
             Ok(Self {
                 channel_id,
@@ -119,20 +119,19 @@ pub const CTAPHID_MAX_PAYLOAD: usize = 57 + 128 * 59;
 /// `bcnt` field and overflow the 7-bit continuation sequence number.
 pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<CtapHidFrame>> {
     if data.len() > CTAPHID_MAX_PAYLOAD {
-        return Err(SoloError::ProtocolError(format!(
+        return Err(Error::Protocol(format!(
             "CTAPHID payload too large: {} bytes (max {})",
             data.len(),
             CTAPHID_MAX_PAYLOAD
         )));
     }
-    let bcnt =
-        u16::try_from(data.len()).map_err(|_| SoloError::ProtocolError("CTAPHID payload length exceeds u16".into()))?;
+    let bcnt = u16::try_from(data.len()).map_err(|_| Error::Protocol("CTAPHID payload length exceeds u16".into()))?;
     let mut frames = Vec::new();
 
     // First (init) frame: up to 57 bytes of payload
     let first_data = if data.len() > 57 {
         data.get(..57)
-            .ok_or_else(|| SoloError::ProtocolError("CTAPHID payload too short".into()))?
+            .ok_or_else(|| Error::Protocol("CTAPHID payload too short".into()))?
             .to_vec()
     } else {
         data.to_vec()
@@ -153,7 +152,7 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
         while offset < data.len() {
             let end = offset
                 .checked_add(59)
-                .ok_or_else(|| SoloError::ProtocolError("CTAPHID offset overflow".into()))?
+                .ok_or_else(|| Error::Protocol("CTAPHID offset overflow".into()))?
                 .min(data.len());
             frames.push(CtapHidFrame {
                 channel_id: *cid,
@@ -161,14 +160,14 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
                     seq,
                     data: data
                         .get(offset..end)
-                        .ok_or_else(|| SoloError::ProtocolError("CTAPHID slice out of range".into()))?
+                        .ok_or_else(|| Error::Protocol("CTAPHID slice out of range".into()))?
                         .to_vec(),
                 },
             });
             offset = end;
             seq = seq
                 .checked_add(1)
-                .ok_or_else(|| SoloError::ProtocolError("CTAPHID sequence overflow".into()))?;
+                .ok_or_else(|| Error::Protocol("CTAPHID sequence overflow".into()))?;
         }
     }
 
@@ -182,26 +181,24 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
 /// frame, or if a continuation position contains an init frame.
 pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     if frames.is_empty() {
-        return Err(SoloError::ProtocolError("No frames to reassemble".into()));
+        return Err(Error::Protocol("No frames to reassemble".into()));
     }
     let first = frames
         .first()
-        .ok_or_else(|| SoloError::ProtocolError("No frames to reassemble".into()))?;
+        .ok_or_else(|| Error::Protocol("No frames to reassemble".into()))?;
     let (cmd, bcnt, first_data) = match &first.payload {
         FramePayload::Init { cmd, bcnt, data } => (*cmd, usize::from(*bcnt), data.clone()),
-        FramePayload::Cont { .. } => return Err(SoloError::ProtocolError("First frame is not an init frame".into())),
+        FramePayload::Cont { .. } => return Err(Error::Protocol("First frame is not an init frame".into())),
     };
 
     let mut payload = first_data;
     for frame in frames
         .get(1..)
-        .ok_or_else(|| SoloError::ProtocolError("frame index out of range".into()))?
+        .ok_or_else(|| Error::Protocol("frame index out of range".into()))?
     {
         match &frame.payload {
             FramePayload::Cont { data, .. } => payload.extend_from_slice(data),
-            FramePayload::Init { .. } => {
-                return Err(SoloError::ProtocolError("Unexpected init frame in continuation".into()));
-            }
+            FramePayload::Init { .. } => return Err(Error::Protocol("Unexpected init frame in continuation".into())),
         }
     }
     payload.truncate(bcnt);
@@ -344,6 +341,6 @@ mod tests {
         let cid = [0x01, 0x02, 0x03, 0x04];
         let data = vec![0x5A; CTAPHID_MAX_PAYLOAD + 1];
         let err = build_ctaphid_frames(&cid, 0x81, &data).unwrap_err();
-        assert!(matches!(err, SoloError::ProtocolError(_)));
+        assert!(matches!(err, Error::Protocol(_)));
     }
 }

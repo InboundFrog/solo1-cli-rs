@@ -1,5 +1,5 @@
-use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+use solo_ctaphid::HidDevice;
 
 /// Prompt for the device PIN without echoing it, rejecting an empty entry.
 ///

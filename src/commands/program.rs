@@ -4,11 +4,11 @@ use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::device::HidDevice;
 use crate::dfu::DfuDevice;
 use crate::error::{Result, SoloError};
 use crate::firmware::{self, FirmwareJson};
 use crate::solo1::bootloader;
+use solo_ctaphid::HidDevice;
 
 /// Write `firmware` to the device starting at `base_addr` with a progress bar,
 /// then send `CMD_DONE` with `signature` so the bootloader verifies and reboots.

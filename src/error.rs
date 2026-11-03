@@ -34,8 +34,9 @@ pub enum SoloError {
     #[error("This operation is not supported on this platform")]
     UnsupportedPlatform,
 
-    #[error("HID error: {0}")]
-    HidError(#[from] hidapi::HidError),
+    /// Any other CTAPHID transport error.
+    #[error(transparent)]
+    Transport(solo_ctaphid::Error),
 
     #[error("USB error: {0}")]
     UsbError(#[from] rusb::Error),
@@ -60,3 +61,46 @@ pub enum SoloError {
 }
 
 pub type Result<T> = std::result::Result<T, SoloError>;
+
+impl From<solo_ctaphid::Error> for SoloError {
+    /// Device-selection errors map to variants whose messages carry CLI
+    /// guidance (udev rules, `--serial`); timeouts stay matchable as
+    /// [`SoloError::Timeout`]. Everything else is passed through unchanged.
+    fn from(e: solo_ctaphid::Error) -> Self {
+        match e {
+            solo_ctaphid::Error::NoDeviceFound => Self::NoSoloFound,
+            solo_ctaphid::Error::NonUniqueDevice => Self::NonUniqueDevice,
+            solo_ctaphid::Error::Timeout => Self::Timeout,
+            other => Self::Transport(other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_transport_device_selection_errors_keep_cli_guidance() {
+        let e = SoloError::from(solo_ctaphid::Error::NoDeviceFound);
+        assert!(matches!(e, SoloError::NoSoloFound));
+        assert!(e.to_string().contains("udev"));
+
+        let e = SoloError::from(solo_ctaphid::Error::NonUniqueDevice);
+        assert!(matches!(e, SoloError::NonUniqueDevice));
+        assert!(e.to_string().contains("--serial"));
+    }
+
+    #[test]
+    fn test_transport_timeout_stays_matchable() {
+        let e = SoloError::from(solo_ctaphid::Error::Timeout);
+        assert!(matches!(e, SoloError::Timeout));
+    }
+
+    #[test]
+    fn test_other_transport_errors_pass_through() {
+        let e = SoloError::from(solo_ctaphid::Error::Protocol("bad frame".into()));
+        assert!(matches!(e, SoloError::Transport(_)));
+        assert_eq!(e.to_string(), "Protocol error: bad frame");
+    }
+}

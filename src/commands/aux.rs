@@ -1,8 +1,8 @@
-/// `program aux` subcommands: bootloader mode switching, reboot, DFU mode.
-use crate::device::HidDevice;
 use crate::error::Result;
 use crate::solo1::bootloader::bootloader_cmd;
 use crate::solo1::protocol::{CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION};
+/// `program aux` subcommands: bootloader mode switching, reboot, DFU mode.
+use solo_ctaphid::HidDevice;
 
 /// Enter bootloader mode (from firmware).
 /// Sends command 0x51 directly — no bootloader wrapper — as the firmware handles it.
