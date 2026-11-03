@@ -1,0 +1,32 @@
+[package]
+name = "solo1"
+version = "0.1.0"
+description = "SoloKeys Solo 1 support: vendor commands, bootloader, DFU, firmware and attestation"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+solo-ctaphid.workspace = true
+
+base64.workspace = true
+hex.workspace = true
+ihex.workspace = true
+log.workspace = true
+p256.workspace = true
+rand.workspace = true
+rusb.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+x509-cert.workspace = true
+
+[dev-dependencies]
+solo-ctaphid = { workspace = true, features = ["test-util"] }
+rcgen.workspace = true
+tempfile.workspace = true
+time.workspace = true
+
+[lints]
+workspace = true

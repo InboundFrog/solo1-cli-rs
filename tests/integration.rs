@@ -13,7 +13,7 @@
 ///
 /// Tests marked `#[ignore]` require actual hardware (a Solo 1 device plugged in).
 /// Run hardware tests with: `cargo test -- --ignored`
-use solo1::solo1::{list_solo_devices, open};
+use solo1::{list_solo_devices, open};
 
 /// Test that we can list devices (returns empty list without hardware, not an error).
 #[test]
@@ -42,7 +42,7 @@ fn test_ping_hardware() {
 fn test_version_hardware() {
     let hid = open(None, std::time::Duration::from_secs(30)).expect("Failed to open Solo device");
     let response = hid
-        .send_recv(solo1::solo1::protocol::CMD_GET_VERSION, &[])
+        .send_recv(solo1::protocol::CMD_GET_VERSION, &[])
         .expect("Version command failed");
     assert!(response.len() >= 3, "Version response should be at least 3 bytes");
     println!("Firmware version: {}.{}.{}", response[0], response[1], response[2]);

@@ -9,7 +9,7 @@ pub const SOLO_PID: u16 = 0xA2CA;
 pub const SOLO_DFU_PID: u16 = 0xDF11;
 
 // Solo bootloader commands, sent wrapped in a `CMD_BOOT` packet
-// (see `crate::solo1::bootloader`).
+// (see `crate::bootloader`).
 pub const CMD_WRITE: u8 = 0x40;
 pub const CMD_DONE: u8 = 0x41;
 pub const CMD_CHECK: u8 = 0x42;

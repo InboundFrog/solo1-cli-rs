@@ -2,10 +2,10 @@ use std::time::Instant;
 
 use crate::commands::key::common;
 use crate::error::{Result, SoloError};
-use crate::firmware::FirmwareVersion;
 use crate::output::{PingOutput, print_json};
-use crate::solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
 use solo_ctaphid::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
+use solo1::firmware::FirmwareVersion;
+use solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
 
 /// Get firmware version from the device.
 ///
@@ -126,7 +126,7 @@ pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
 /// disable-bootloader command fails (device/transport error or a non-zero
 /// bootloader status).
 pub fn cmd_disable_updates(hid: &impl HidDevice) -> Result<()> {
-    use crate::solo1::{bootloader::bootloader_cmd, protocol::CMD_DISABLE_BOOTLOADER};
+    use solo1::{bootloader::bootloader_cmd, protocol::CMD_DISABLE_BOOTLOADER};
     if !common::confirm(
         "WARNING: This will permanently disable firmware updates on this device!\nThis action cannot be undone. Type 'yes' to confirm:",
     )? {

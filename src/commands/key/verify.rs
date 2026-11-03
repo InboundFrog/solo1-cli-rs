@@ -96,7 +96,7 @@ fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
 fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -> bool {
     match (&att.auth_data, &att.sig) {
         (Some(auth_data), Some(sig)) => {
-            crate::crypto::verify_attestation_signature(&att.cert_der, auth_data, client_data_hash, sig).is_ok()
+            solo1::crypto::verify_attestation_signature(&att.cert_der, auth_data, client_data_hash, sig).is_ok()
         }
         _ => false,
     }
@@ -122,8 +122,8 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
 /// (missing attStmt or x5c certificate, or an unsupported attestation
 /// algorithm).
 pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::crypto::AttestationResult;
-    use crate::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
+    use solo1::crypto::AttestationResult;
+    use solo1::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
 
     // clientDataHash: fixed 32-byte value (Solo does not verify it for attestation)
     let client_data_hash: Vec<u8> = Sha256::digest(b"solokeys_verify_test").to_vec();
@@ -150,7 +150,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     let fingerprint = sha256_hex(cert_der);
     let spki_fingerprint =
-        crate::crypto::extract_spki_fingerprint(cert_der).unwrap_or_else(|_| "(could not extract)".into());
+        solo1::crypto::extract_spki_fingerprint(cert_der).unwrap_or_else(|_| "(could not extract)".into());
 
     let result = check_attestation_fingerprint(cert_der);
 

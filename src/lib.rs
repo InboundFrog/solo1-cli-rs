@@ -1,10 +1,6 @@
 pub mod cli;
 pub mod commands;
-pub mod crypto;
-pub mod dfu;
 pub mod error;
-pub mod firmware;
 pub mod github;
 pub mod logger;
 pub mod output;
-pub mod solo1;

@@ -1,4 +1,5 @@
-/// CTAP HID frame types, encoding/decoding, and message assembly.
+//! CTAP HID frame types, encoding/decoding, and message assembly.
+
 use crate::error::{Error, Result};
 
 /// A single 64-byte HID frame (init or continuation).

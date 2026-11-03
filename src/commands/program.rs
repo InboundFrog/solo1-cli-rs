@@ -4,11 +4,11 @@ use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::dfu::DfuDevice;
 use crate::error::{Result, SoloError};
-use crate::firmware::{self, FirmwareJson};
-use crate::solo1::bootloader;
 use solo_ctaphid::HidDevice;
+use solo1::bootloader;
+use solo1::dfu::DfuDevice;
+use solo1::firmware::{self, FirmwareJson};
 
 /// Write `firmware` to the device starting at `base_addr` with a progress bar,
 /// then send `CMD_DONE` with `signature` so the bootloader verifies and reboots.
@@ -55,7 +55,7 @@ pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u
         Some(v) => println!("Bootloader version: {v}"),
         None => println!("Could not read bootloader version; using default signature."),
     }
-    fw.signature_for_bootloader(version.as_ref())
+    Ok(fw.signature_for_bootloader(version.as_ref())?)
 }
 
 /// Program via the Solo bootloader (firmware.json format).
@@ -90,7 +90,7 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 /// Returns an error if the HEX file cannot be parsed, if the DFU device cannot
 /// be opened, or if DFU programming fails.
 pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
-    use crate::firmware::parse_hex_file;
+    use solo1::firmware::parse_hex_file;
 
     println!("Parsing firmware HEX file: {}", firmware_hex.display());
     let (base_addr, firmware_bytes) = parse_hex_file(firmware_hex)?;

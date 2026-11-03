@@ -1,10 +1,20 @@
-/// Solo 1 device support: USB identifiers, vendor commands and bootloader.
+//! Solo 1 device support: USB identifiers, vendor commands, the Solo
+//! bootloader and ST DFU, firmware files, and attestation checks.
+//!
+//! Solo 1 is built on an STM32L432. Generic CTAP2 operations live in
+//! `solo-ctap2`; this crate only holds what is specific to Solo 1.
+
 pub mod bootloader;
+pub mod crypto;
+pub mod dfu;
+pub mod error;
+pub mod firmware;
 pub mod protocol;
+
+pub use error::{Error, Result};
 
 use std::time::Duration;
 
-use crate::error::Result;
 use solo_ctaphid::{DeviceFilter, HidDeviceInfo, HidTransport, list_devices};
 
 /// Matches a Solo 1 running firmware or the Solo bootloader.

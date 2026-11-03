@@ -1,5 +1,6 @@
-/// Cryptographic utilities: key generation, signing, verification, and
-/// attestation fingerprint checking.
+//! Cryptographic utilities: key generation, signing, verification, and
+//! attestation fingerprint checking.
+
 use std::path::Path;
 
 use p256::{
@@ -12,7 +13,7 @@ use sha2::{Digest, Sha256};
 use x509_cert::Certificate;
 use x509_cert::der::{Decode, Encode};
 
-use crate::error::{Result, SoloError};
+use crate::error::{Error, Result};
 
 /// Known attestation certificate fingerprints (SHA-256 of DER cert bytes).
 /// These match the fingerprints checked in the Python reference (key.py verify command).
@@ -36,18 +37,18 @@ pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
 /// Returns (`private_key_pem`, `public_key_pem`).
 ///
 /// # Errors
-/// Returns [`SoloError::CryptoError`] if the generated private or public key
+/// Returns [`Error::Crypto`] if the generated private or public key
 /// cannot be PEM-encoded.
 pub fn generate_keypair() -> Result<(String, String)> {
     let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
     let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
     let private_pem = secret_key
         .to_pkcs8_pem(p256::pkcs8::LineEnding::LF)
-        .map_err(|e| SoloError::CryptoError(format!("PEM encode error: {e}")))?;
+        .map_err(|e| Error::Crypto(format!("PEM encode error: {e}")))?;
     let verifying_key = VerifyingKey::from(&signing_key);
     let public_pem = verifying_key
         .to_public_key_pem(p256::pkcs8::LineEnding::LF)
-        .map_err(|e| SoloError::CryptoError(format!("Public key PEM encode error: {e}")))?;
+        .map_err(|e| Error::Crypto(format!("Public key PEM encode error: {e}")))?;
     Ok((private_pem.to_string(), public_pem))
 }
 
@@ -58,7 +59,7 @@ pub fn generate_keypair() -> Result<(String, String)> {
 /// PKCS#8 PEM-encoded P-256 signing key.
 pub fn load_signing_key(path: &Path) -> Result<SigningKey> {
     let pem = std::fs::read_to_string(path)?;
-    SigningKey::from_pkcs8_pem(&pem).map_err(|e| SoloError::CryptoError(format!("Failed to load key: {e}")))
+    SigningKey::from_pkcs8_pem(&pem).map_err(|e| Error::Crypto(format!("Failed to load key: {e}")))
 }
 
 /// Sign the firmware bytes with the given key.
@@ -195,16 +196,15 @@ pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate fr
 /// This is the building block for future SPKI pinning (see TODO(0003) above).
 ///
 /// # Errors
-/// Returns [`SoloError::CryptoError`] if `cert_der` is not a parseable X.509
+/// Returns [`Error::Crypto`] if `cert_der` is not a parseable X.509
 /// certificate, or its `SubjectPublicKeyInfo` cannot be re-encoded to DER.
 pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
-    let cert =
-        Certificate::from_der(cert_der).map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
+    let cert = Certificate::from_der(cert_der).map_err(|e| Error::Crypto(format!("Certificate parse error: {e}")))?;
     let spki_der = cert
         .tbs_certificate()
         .subject_public_key_info()
         .to_der()
-        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {e}")))?;
+        .map_err(|e| Error::Crypto(format!("SPKI encode error: {e}")))?;
     Ok(sha256_hex(&spki_der))
 }
 
@@ -212,7 +212,7 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
 /// `notBefore`..=`notAfter` validity window.
 ///
 /// Returns `Ok(())` if the certificate is currently valid.
-/// Returns `Err(SoloError::CryptoError(...))` if:
+/// Returns `Err(Error::Crypto(...))` if:
 /// - The certificate has expired (now > notAfter).
 /// - The certificate is not yet valid (now < notBefore).
 /// - The certificate cannot be parsed.
@@ -221,11 +221,10 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
 /// time service.  Clock skew on the host may produce false positives.
 ///
 /// # Errors
-/// Returns [`SoloError::CryptoError`] if the certificate cannot be parsed, has
+/// Returns [`Error::Crypto`] if the certificate cannot be parsed, has
 /// expired (now > `notAfter`), or is not yet valid (now < `notBefore`).
 pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
-    let cert =
-        Certificate::from_der(cert_der).map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
+    let cert = Certificate::from_der(cert_der).map_err(|e| Error::Crypto(format!("Certificate parse error: {e}")))?;
 
     let validity = cert.tbs_certificate().validity();
     let now = std::time::SystemTime::now();
@@ -233,13 +232,13 @@ pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
     let not_after = validity.not_after.to_system_time();
 
     if now < not_before {
-        return Err(SoloError::CryptoError(format!(
+        return Err(Error::Crypto(format!(
             "Certificate is not yet valid (notBefore: {})",
             validity.not_before
         )));
     }
     if now > not_after {
-        return Err(SoloError::CryptoError(format!(
+        return Err(Error::Crypto(format!(
             "Certificate has expired (notAfter: {})",
             validity.not_after
         )));
@@ -260,10 +259,10 @@ pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
 ///
 /// Returns `Ok(())` only if the signature verifies.  Any parse failure
 /// (certificate, public key, or signature DER) or signature mismatch returns
-/// `Err(SoloError::CryptoError(...))`.
+/// `Err(Error::Crypto(...))`.
 ///
 /// # Errors
-/// Returns [`SoloError::CryptoError`] if the certificate, its public key, or the
+/// Returns [`Error::Crypto`] if the certificate, its public key, or the
 /// signature DER cannot be parsed, the message length overflows, or the
 /// signature does not verify.
 pub fn verify_attestation_signature(
@@ -274,30 +273,28 @@ pub fn verify_attestation_signature(
 ) -> Result<()> {
     use p256::ecdsa::{DerSignature, signature::Verifier};
 
-    let cert =
-        Certificate::from_der(cert_der).map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
+    let cert = Certificate::from_der(cert_der).map_err(|e| Error::Crypto(format!("Certificate parse error: {e}")))?;
     let spki_der = cert
         .tbs_certificate()
         .subject_public_key_info()
         .to_der()
-        .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {e}")))?;
+        .map_err(|e| Error::Crypto(format!("SPKI encode error: {e}")))?;
     let verifying_key = VerifyingKey::from_public_key_der(&spki_der)
-        .map_err(|e| SoloError::CryptoError(format!("Attestation public key is not ECDSA P-256: {e}")))?;
+        .map_err(|e| Error::Crypto(format!("Attestation public key is not ECDSA P-256: {e}")))?;
 
-    let sig =
-        DerSignature::try_from(sig_der).map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {e}")))?;
+    let sig = DerSignature::try_from(sig_der).map_err(|e| Error::Crypto(format!("Malformed DER signature: {e}")))?;
 
     let capacity = auth_data
         .len()
         .checked_add(client_data_hash.len())
-        .ok_or_else(|| SoloError::CryptoError("Attestation message length overflow".into()))?;
+        .ok_or_else(|| Error::Crypto("Attestation message length overflow".into()))?;
     let mut message = Vec::with_capacity(capacity);
     message.extend_from_slice(auth_data);
     message.extend_from_slice(client_data_hash);
 
     verifying_key
         .verify(&message, &sig)
-        .map_err(|_| SoloError::CryptoError("Attestation signature verification failed".into()))
+        .map_err(|_| Error::Crypto("Attestation signature verification failed".into()))
 }
 
 /// Websafe base64 encoding (RFC 4648 URL-safe, no padding).
@@ -311,14 +308,14 @@ pub fn websafe_b64_encode(data: &[u8]) -> String {
 /// Websafe base64 decoding.
 ///
 /// # Errors
-/// Returns [`SoloError::FirmwareError`] if `s` is not valid websafe base64
+/// Returns [`Error::Firmware`] if `s` is not valid websafe base64
 /// (RFC 4648 URL-safe, no padding).
 pub fn websafe_b64_decode(s: &str) -> Result<Vec<u8>> {
     use base64::Engine;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     URL_SAFE_NO_PAD
         .decode(s)
-        .map_err(|e| SoloError::FirmwareError(format!("Base64 decode error: {e}")))
+        .map_err(|e| Error::Firmware(format!("Base64 decode error: {e}")))
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
-use crate::error::{Result, SoloError};
-use crate::solo1::protocol::{CMD_BOOT, CMD_DONE, CMD_WRITE, SOLO_TAG};
-/// Solo 1 bootloader command packets, sent over CTAPHID as `CMD_BOOT`.
+//! Solo 1 bootloader command packets, sent over CTAPHID as `CMD_BOOT`.
+
+use crate::error::{Error, Result};
+use crate::protocol::{CMD_BOOT, CMD_DONE, CMD_WRITE, SOLO_TAG};
 use solo_ctaphid::HidDevice;
 
 /// Build a bootloader command packet.
@@ -12,7 +13,7 @@ use solo_ctaphid::HidDevice;
 /// truncated.
 pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
     if data.len() > usize::from(u16::MAX) {
-        return Err(SoloError::ProtocolError(format!(
+        return Err(Error::Protocol(format!(
             "Bootloader packet data too large: {} bytes (max {})",
             data.len(),
             u16::MAX
@@ -20,7 +21,7 @@ pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8
     }
     let capacity = 10usize
         .checked_add(data.len())
-        .ok_or_else(|| SoloError::ProtocolError("bootloader packet capacity overflow".into()))?;
+        .ok_or_else(|| Error::Protocol("bootloader packet capacity overflow".into()))?;
     let mut packet = Vec::with_capacity(capacity);
     packet.push(cmd);
     let [addr0, addr1, addr2, _] = addr.to_le_bytes();
@@ -28,8 +29,7 @@ pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8
     packet.push(addr1);
     packet.push(addr2);
     packet.extend_from_slice(&SOLO_TAG);
-    let len = u16::try_from(data.len())
-        .map_err(|_| SoloError::ProtocolError("bootloader packet length exceeds u16".into()))?;
+    let len = u16::try_from(data.len()).map_err(|_| Error::Protocol("bootloader packet length exceeds u16".into()))?;
     let [len_hi, len_lo] = len.to_be_bytes();
     packet.push(len_hi);
     packet.push(len_lo);
@@ -64,9 +64,7 @@ pub fn bootloader_cmd(hid: &impl HidDevice, cmd: u8, addr: u32, data: &[u8]) -> 
         return Ok(resp);
     };
     if status != 0x00 {
-        return Err(SoloError::ProtocolError(format!(
-            "Bootloader error status: 0x{status:02X}"
-        )));
+        return Err(Error::Protocol(format!("Bootloader error status: 0x{status:02X}")));
     }
     Ok(payload.to_vec())
 }
@@ -110,10 +108,10 @@ pub fn write_firmware_chunks(
     {
         let end = offset
             .checked_add(len)
-            .ok_or_else(|| SoloError::ProtocolError("chunk offset overflow".into()))?;
+            .ok_or_else(|| Error::Protocol("chunk offset overflow".into()))?;
         let chunk = firmware
             .get(offset..end)
-            .ok_or_else(|| SoloError::ProtocolError("chunk out of range".into()))?;
+            .ok_or_else(|| Error::Protocol("chunk out of range".into()))?;
         log::debug!("chunk #{} addr=0x{:08X} len={}", chunk_num, addr, chunk.len());
         let resp = bootloader_cmd(hid, CMD_WRITE, addr, chunk)?;
         if !resp.is_empty() {
@@ -219,7 +217,7 @@ mod tests {
     fn test_bootloader_packet_oversized_data_err() {
         let data = vec![0xA5; u16::MAX as usize + 1];
         let err = build_bootloader_packet(0x40, 0x0800_0000, &data).unwrap_err();
-        assert!(matches!(err, SoloError::ProtocolError(_)));
+        assert!(matches!(err, Error::Protocol(_)));
     }
 
     /// A zero status byte is stripped and the rest is returned.
@@ -235,7 +233,7 @@ mod tests {
     fn test_bootloader_cmd_error_status() {
         let device = MockDevice::new(vec![Ok(vec![0x0A])]);
         let err = bootloader_cmd(&device, 0x44, 0, &[]).unwrap_err();
-        assert!(matches!(err, SoloError::ProtocolError(m) if m.contains("0x0A")));
+        assert!(matches!(err, Error::Protocol(m) if m.contains("0x0A")));
     }
 
     /// An empty response is passed through unchanged.
@@ -250,7 +248,7 @@ mod tests {
     fn test_bootloader_cmd_timeout() {
         let device = MockDevice::new(vec![]);
         let err = bootloader_cmd(&device, 0x44, 0, &[]).unwrap_err();
-        assert!(matches!(err, SoloError::Timeout));
+        assert!(matches!(err, Error::Transport(solo_ctaphid::Error::Timeout)));
     }
 
     // compute_chunk_addresses is the sequence write_firmware_chunks iterates,

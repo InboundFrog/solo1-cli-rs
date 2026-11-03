@@ -62,6 +62,24 @@ pub enum SoloError {
 
 pub type Result<T> = std::result::Result<T, SoloError>;
 
+impl From<solo1::Error> for SoloError {
+    /// Each Solo 1 error maps to the equivalent existing variant, so messages
+    /// and `matches!` checks are unchanged.
+    fn from(e: solo1::Error) -> Self {
+        match e {
+            solo1::Error::Transport(t) => t.into(),
+            solo1::Error::Device(m) => Self::DeviceError(m),
+            solo1::Error::InvalidHex(e) => Self::InvalidHex(e),
+            solo1::Error::Firmware(m) => Self::FirmwareError(m),
+            solo1::Error::Usb(e) => Self::UsbError(e),
+            solo1::Error::Io(e) => Self::IoError(e),
+            solo1::Error::Json(e) => Self::JsonError(e),
+            solo1::Error::Crypto(m) => Self::CryptoError(m),
+            solo1::Error::Protocol(m) => Self::ProtocolError(m),
+        }
+    }
+}
+
 impl From<solo_ctap2::Error> for SoloError {
     /// Each CTAP2 error maps to the equivalent existing variant, so messages
     /// and `matches!` checks are unchanged.
@@ -123,6 +141,16 @@ mod tests {
 
         let e = SoloError::from(solo_ctap2::Error::Transport(solo_ctaphid::Error::Timeout));
         assert!(matches!(e, SoloError::Timeout));
+    }
+
+    #[test]
+    fn test_solo1_errors_map_to_existing_variants() {
+        let e = SoloError::from(solo1::Error::Firmware("bad image".into()));
+        assert!(matches!(e, SoloError::FirmwareError(_)));
+        assert_eq!(e.to_string(), "Firmware error: bad image");
+
+        let e = SoloError::from(solo1::Error::Transport(solo_ctaphid::Error::NoDeviceFound));
+        assert!(matches!(e, SoloError::NoSoloFound));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 resolver = "2"
 members = [".", "crates/*"]
 # Build, lint and test every crate by default, not just the root package.
-default-members = [".", "crates/solo-ctaphid", "crates/solo-ctap2"]
+default-members = [".", "crates/solo-ctaphid", "crates/solo-ctap2", "crates/solo1"]
 
 [workspace.package]
 edition = "2021"
@@ -12,6 +12,7 @@ license = "MIT"
 # Workspace crates
 solo-ctap2 = { path = "crates/solo-ctap2" }
 solo-ctaphid = { path = "crates/solo-ctaphid" }
+solo1 = { path = "crates/solo1" }
 
 # Third-party
 aes = "0.9"
@@ -20,7 +21,6 @@ cbc = { version = "0.2", features = ["alloc"] }
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
-digest = "0.11"
 hex = "0.4"
 hidapi = "2"
 hmac = "0.13"
@@ -64,14 +64,14 @@ exit = "deny"
 as_conversions = "deny"
 
 [package]
-name = "solo1"
+name = "solo-cli"
 version = "0.2.1"
-description = "CLI tool for interacting with SoloKeys Solo 1 hardware security keys"
+description = "CLI tool for interacting with SoloKeys hardware security keys"
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "solo1"
+name = "solo_cli"
 path = "src/lib.rs"
 
 [[bin]]
@@ -81,17 +81,14 @@ path = "src/main.rs"
 [dependencies]
 solo-ctap2.workspace = true
 solo-ctaphid.workspace = true
+solo1.workspace = true
 
-aes.workspace = true
 base64.workspace = true
-cbc.workspace = true
 ciborium.workspace = true
 clap.workspace = true
 ctrlc.workspace = true
-digest.workspace = true
 hex.workspace = true
 hmac.workspace = true
-ihex.workspace = true
 indicatif.workspace = true
 log.workspace = true
 p256.workspace = true
@@ -104,7 +101,6 @@ serde_json.workspace = true
 serialport.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-x509-cert.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true

@@ -2088,6 +2088,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "solo-cli"
+version = "0.2.1"
+dependencies = [
+ "base64",
+ "ciborium",
+ "clap",
+ "ctrlc",
+ "hex",
+ "hmac",
+ "indicatif",
+ "libc",
+ "log",
+ "p256",
+ "rand",
+ "rcgen",
+ "reqwest",
+ "rpassword",
+ "rusb",
+ "serde",
+ "serde_json",
+ "serialport",
+ "sha2",
+ "solo-ctap2",
+ "solo-ctaphid",
+ "solo1",
+ "tempfile",
+ "thiserror",
+ "time",
+]
+
+[[package]]
 name = "solo-ctap2"
 version = "0.1.0"
 dependencies = [
@@ -2115,32 +2146,19 @@ dependencies = [
 
 [[package]]
 name = "solo1"
-version = "0.2.1"
+version = "0.1.0"
 dependencies = [
- "aes",
  "base64",
- "cbc",
- "ciborium",
- "clap",
- "ctrlc",
- "digest",
  "hex",
- "hmac",
  "ihex",
- "indicatif",
- "libc",
  "log",
  "p256",
  "rand",
  "rcgen",
- "reqwest",
- "rpassword",
  "rusb",
  "serde",
  "serde_json",
- "serialport",
  "sha2",
- "solo-ctap2",
  "solo-ctaphid",
  "tempfile",
  "thiserror",

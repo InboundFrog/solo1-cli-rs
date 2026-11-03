@@ -1,8 +1,8 @@
 use std::io::Write;
 
 use crate::error::{Result, SoloError};
-use crate::solo1::protocol::CMD_RNG;
 use solo_ctaphid::HidDevice;
+use solo1::protocol::CMD_RNG;
 
 /// Get N random bytes from the device, return as hex string.
 ///

@@ -12,10 +12,10 @@ use solo_ctaphid::HidDevice;
 /// selecting the signature fails, or if writing the firmware fails.
 pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<()> {
     use crate::commands::program::{select_signature, write_firmware};
-    use crate::crypto::sha256_hex;
-    use crate::firmware::{FIRMWARE_RELEASES_REPO, FirmwareJson, is_firmware_asset};
     use crate::github::{download_url, fetch_latest_release};
-    use crate::solo1::protocol::CMD_ENTER_BOOT;
+    use solo1::crypto::sha256_hex;
+    use solo1::firmware::{FIRMWARE_RELEASES_REPO, FirmwareJson, is_firmware_asset};
+    use solo1::protocol::CMD_ENTER_BOOT;
 
     let fw_json = if let Some(path) = firmware_file {
         println!("Loading firmware from {}", path.display());
@@ -49,7 +49,7 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
 
     // Reconnect in bootloader mode
     println!("Reconnecting...");
-    let bl_hid = crate::solo1::open(None, std::time::Duration::from_secs(30))?;
+    let bl_hid = solo1::open(None, std::time::Duration::from_secs(30))?;
 
     // Query bootloader version to select the correct signature.
     let signature = select_signature(&bl_hid, &fw_json)?;

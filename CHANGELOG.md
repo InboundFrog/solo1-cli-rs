@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The repository is now a Cargo workspace. Dependency versions and the clippy lint set are shared through `[workspace.dependencies]` and `[workspace.lints]`.
 - The CTAPHID transport is its own crate, `crates/solo-ctaphid`, with its own error type. `MockDevice` is available to other crates' tests through its `test-util` feature.
 - CBOR helpers and the CTAP2 protocol code (status codes, clientPIN, key agreement, request builders) are their own crate, `crates/solo-ctap2`, with its own error type. `maybe_pin_uv_auth` is generic over the PIN callback's error type.
+- Solo 1 support (vendor commands, bootloader, ST DFU, firmware files, attestation fingerprints) is its own crate, `crates/solo1`, with its own error type. The root package is renamed `solo-cli` (library `solo_cli`) to free the `solo1` name; the binary is still `solo1`.
 
 ## [0.2.1] - 2026-04-14
 

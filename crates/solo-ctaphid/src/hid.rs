@@ -1,4 +1,5 @@
-/// CTAPHID transport over USB HID — `HidTransport`, `HidDeviceInfo`, `list_devices`.
+//! CTAPHID transport over USB HID — `HidTransport`, `HidDeviceInfo`, `list_devices`.
+
 use std::time::{Duration, Instant};
 
 use hidapi::{DeviceInfo, HidApi, HidDevice as HidApiDevice};
