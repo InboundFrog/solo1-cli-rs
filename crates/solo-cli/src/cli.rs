@@ -4,11 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
-#[command(
-    name = "solo",
-    about = "CLI tool for SoloKeys hardware security keys",
-    version
-)]
+#[command(name = "solo", about = "CLI tool for SoloKeys hardware security keys", version)]
 pub struct Cli {
     /// Enable verbose output (HID frames, DFU status, bootloader packets, etc.)
     #[arg(long, short = 'v', global = true)]

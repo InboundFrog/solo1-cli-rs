@@ -335,8 +335,7 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
         return Err(SoloError::ProtocolError(
-            "Credential management requires a PIN. Please set a PIN first with 'solo key set-pin'."
-                .into(),
+            "Credential management requires a PIN. Please set a PIN first with 'solo key set-pin'.".into(),
         ));
     }
 
@@ -406,8 +405,7 @@ pub fn cmd_credential_rm(
     // ── Pre-check: ensure a PIN has been set on the device ──────────────
     if !get_info_client_pin_set(hid)? {
         return Err(SoloError::ProtocolError(
-            "Credential management requires a PIN. Please set a PIN first with 'solo key set-pin'."
-                .into(),
+            "Credential management requires a PIN. Please set a PIN first with 'solo key set-pin'.".into(),
         ));
     }
 
