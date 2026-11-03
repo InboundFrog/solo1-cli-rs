@@ -23,6 +23,13 @@ pub const DEVICE_FILTER: DeviceFilter = DeviceFilter::UsbId {
     product_id: protocol::SOLO_PID,
 };
 
+/// Whether a USB vendor/product ID pair is a Solo 1 (firmware or Solo
+/// bootloader).
+#[must_use]
+pub const fn is_solo1(vendor_id: u16, product_id: u16) -> bool {
+    vendor_id == protocol::SOLO_VID && product_id == protocol::SOLO_PID
+}
+
 /// List all connected Solo 1 devices.
 ///
 /// # Errors

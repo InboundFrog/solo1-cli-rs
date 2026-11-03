@@ -3,7 +3,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum SoloError {
     #[error(
-        "No Solo device found. On Linux, ensure udev rules are installed:\n  https://github.com/solokeys/solo1/blob/master/udev/70-solokeys-access.rules"
+        "No Solo device found. On Linux, ensure udev rules are installed:\n  Solo 1: https://github.com/solokeys/solo1/blob/master/udev/70-solokeys-access.rules\n  Solo 2: https://github.com/solokeys/solo2-cli/blob/main/70-solo2.rules"
     )]
     NoSoloFound,
 
@@ -58,9 +58,21 @@ pub enum SoloError {
 
     #[error("Timeout waiting for device response")]
     Timeout,
+
+    #[error("`{command}` is not supported on {model} yet")]
+    Unsupported { command: &'static str, model: &'static str },
 }
 
 pub type Result<T> = std::result::Result<T, SoloError>;
+
+impl From<solo2::Error> for SoloError {
+    fn from(e: solo2::Error) -> Self {
+        match e {
+            solo2::Error::Transport(t) => t.into(),
+            solo2::Error::MalformedResponse(m) => Self::MalformedResponse(m),
+        }
+    }
+}
 
 impl From<solo1::Error> for SoloError {
     /// Each Solo 1 error maps to the equivalent existing variant, so messages

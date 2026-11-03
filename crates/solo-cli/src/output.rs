@@ -25,6 +25,7 @@ pub struct CredentialListOutput {
 
 #[derive(Serialize)]
 pub struct DeviceInfo {
+    pub model: String,
     pub path: String,
     pub serial: Option<String>,
     pub product: Option<String>,
@@ -233,6 +234,7 @@ mod tests {
     fn list_output_non_empty_serializes() {
         let out = ListOutput {
             devices: vec![DeviceInfo {
+                model: "Solo 2".into(),
                 path: "/dev/hid123".into(),
                 serial: Some("ABC-123".into()),
                 product: Some("SoloKeys Solo".into()),
@@ -241,6 +243,7 @@ mod tests {
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["devices"][0]["model"], "Solo 2");
         assert_eq!(v["devices"][0]["path"], "/dev/hid123");
         assert_eq!(v["devices"][0]["serial"], "ABC-123");
         assert_eq!(v["devices"][0]["product"], "SoloKeys Solo");

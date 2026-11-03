@@ -33,14 +33,14 @@ pub trait HidDevice {
 // CTAPHID protocol constants
 pub use protocol::{
     CTAPHID_BROADCAST_CID, CTAPHID_CBOR, CTAPHID_INIT, CTAPHID_MSG, CTAPHID_PING, CTAPHID_VENDOR_FIRST, CTAPHID_WINK,
-    HID_REPORT_SIZE,
+    FIDO_USAGE, FIDO_USAGE_PAGE, HID_REPORT_SIZE,
 };
 
 // Frame types and helpers
 pub use frame::{CTAPHID_MAX_PAYLOAD, CtapHidFrame, FramePayload, build_ctaphid_frames, reassemble_frames};
 
 // Device communication
-pub use hid::{DeviceFilter, HidDeviceInfo, HidTransport, list_devices};
+pub use hid::{DeviceFilter, HidDeviceInfo, HidIds, HidTransport, list_devices};
 
 pub use error::{Error, Result};
 

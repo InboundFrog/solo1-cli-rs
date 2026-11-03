@@ -1,0 +1,19 @@
+[package]
+name = "solo2"
+version = "0.1.0"
+description = "SoloKeys Solo 2 support: USB identifiers and admin-app vendor commands"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+solo-ctaphid.workspace = true
+
+hex.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+solo-ctaphid = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

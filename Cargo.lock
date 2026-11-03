@@ -2113,6 +2113,7 @@ dependencies = [
  "solo-ctap2",
  "solo-ctaphid",
  "solo1",
+ "solo2",
  "tempfile",
  "thiserror",
  "time",
@@ -2164,6 +2165,15 @@ dependencies = [
  "thiserror",
  "time",
  "x509-cert",
+]
+
+[[package]]
+name = "solo2"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "solo-ctaphid",
+ "thiserror",
 ]
 
 [[package]]

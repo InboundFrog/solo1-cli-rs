@@ -18,6 +18,7 @@ path = "src/main.rs"
 solo-ctap2.workspace = true
 solo-ctaphid.workspace = true
 solo1.workspace = true
+solo2.workspace = true
 
 base64.workspace = true
 ciborium.workspace = true

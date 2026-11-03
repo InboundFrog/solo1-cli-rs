@@ -25,6 +25,24 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// Get the firmware version from a Solo 2.
+///
+/// # Errors
+/// Returns an error if the version query fails (device/transport error or
+/// timeout), the response is not 4 bytes, or JSON serialization fails.
+pub fn cmd_key_version_solo2(hid: &impl HidDevice, json: bool) -> Result<()> {
+    use crate::output::VersionOutput;
+
+    let version = solo2::version(hid)?;
+    if json {
+        return print_json(&VersionOutput {
+            firmware_version: version.to_string(),
+        });
+    }
+    println!("Firmware version: {version}");
+    Ok(())
+}
+
 pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
     let response = hid.send_recv(CMD_GET_VERSION, &[])?;
     let [major, minor, patch, ..] = response.as_slice() else {

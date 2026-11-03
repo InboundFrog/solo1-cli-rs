@@ -1,6 +1,7 @@
 use clap::Parser;
 use solo_cli::cli::{AuxCommands, Cli, Commands, CredentialCommands, KeyCommands, ProgramCommands, RngCommands};
 use solo_cli::commands::{aux, key, program, top};
+use solo_cli::device::{Key, Model};
 use solo_cli::error;
 use solo_cli::output;
 
@@ -79,11 +80,14 @@ fn run_key_command(
     timeout: std::time::Duration,
 ) -> error::Result<()> {
     // Every key subcommand talks to a device, so open it once up front.
-    let hid = solo1::open(serial, timeout)?;
+    // Vendor commands are model-specific (Solo 1 and Solo 2 reuse codes), so
+    // those arms check the model first; CTAPHID and CTAP2 commands work on any.
+    let key = Key::open(serial, timeout)?;
+    let hid = &key.hid;
     match cmd {
         KeyCommands::Rng { command } => match command {
             RngCommands::Hexbytes { num } => {
-                let hex = key::cmd_rng_hexbytes(&hid, num)?;
+                let hex = key::cmd_rng_hexbytes(hid, num)?;
                 if json {
                     output::print_json(&output::RngOutput { bytes: hex })?;
                 } else {
@@ -91,10 +95,10 @@ fn run_key_command(
                 }
             }
             RngCommands::Raw => {
-                key::cmd_rng_raw(&hid)?;
+                key::cmd_rng_raw(hid)?;
             }
             RngCommands::Feedkernel => {
-                key::cmd_rng_feedkernel(&hid)?;
+                key::cmd_rng_feedkernel(hid)?;
             }
         },
 
@@ -103,78 +107,85 @@ fn run_key_command(
             challenge,
             host,
         } => {
-            key::cmd_challenge_response(&hid, &credential_id, &challenge, &host, json)?;
+            key::cmd_challenge_response(hid, &credential_id, &challenge, &host, json)?;
         }
 
         KeyCommands::Verify => {
-            key::cmd_verify(&hid, json)?;
+            // Attestation fingerprints are only known for Solo 1 so far.
+            key.require(Model::Solo1, "key verify")?;
+            key::cmd_verify(hid, json)?;
         }
 
-        KeyCommands::Version => {
-            key::cmd_key_version(&hid, json)?;
-        }
+        KeyCommands::Version => match key.model {
+            Model::Solo1 => key::cmd_key_version(hid, json)?,
+            Model::Solo2 => key::cmd_key_version_solo2(hid, json)?,
+        },
 
         KeyCommands::Wink => {
-            key::cmd_wink(&hid)?;
+            key::cmd_wink(hid)?;
         }
 
         KeyCommands::Ping { count, data } => {
             // Parse data as hex if it decodes cleanly, otherwise use as UTF-8 bytes
             let ping_data = hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec());
-            key::cmd_ping(&hid, count, &ping_data, json)?;
+            key::cmd_ping(hid, count, &ping_data, json)?;
         }
 
         KeyCommands::Keyboard { data } => {
-            key::cmd_keyboard(&hid, data.as_bytes())?;
+            key.require(Model::Solo1, "key keyboard")?;
+            key::cmd_keyboard(hid, data.as_bytes())?;
         }
 
         KeyCommands::Reset => {
-            key::cmd_reset(&hid)?;
+            key::cmd_reset(hid)?;
         }
 
         KeyCommands::ChangePin => {
-            key::cmd_change_pin(&hid)?;
+            key::cmd_change_pin(hid)?;
         }
 
         KeyCommands::SetPin => {
-            key::cmd_set_pin(&hid)?;
+            key::cmd_set_pin(hid)?;
         }
 
         KeyCommands::DisableUpdates => {
-            key::cmd_disable_updates(&hid)?;
+            key.require(Model::Solo1, "key disable-updates")?;
+            key::cmd_disable_updates(hid)?;
         }
 
         KeyCommands::Probe { hash_type, filename } => {
-            key::cmd_probe(&hid, &hash_type, &filename)?;
+            key.require(Model::Solo1, "key probe")?;
+            key::cmd_probe(hid, &hash_type, &filename)?;
         }
 
         KeyCommands::SignFile {
             credential_id,
             filename,
         } => {
-            key::cmd_sign_file(&hid, &credential_id, &filename)?;
+            key::cmd_sign_file(hid, &credential_id, &filename)?;
         }
 
         KeyCommands::Update { firmware } => {
-            key::cmd_update(&hid, firmware.as_deref())?;
+            key.require(Model::Solo1, "key update")?;
+            key::cmd_update(hid, firmware.as_deref())?;
         }
 
         KeyCommands::Credential { command } => match command {
             CredentialCommands::Info => {
-                key::credential::cmd_credential_info(&hid, json)?;
+                key::credential::cmd_credential_info(hid, json)?;
             }
             CredentialCommands::Ls => {
-                key::credential::cmd_credential_ls(&hid, json)?;
+                key::credential::cmd_credential_ls(hid, json)?;
             }
             CredentialCommands::Rm {
                 credential_id,
                 host,
                 user,
             } => {
-                key::credential::cmd_credential_rm(&hid, credential_id.as_deref(), host.as_deref(), user.as_deref())?;
+                key::credential::cmd_credential_rm(hid, credential_id.as_deref(), host.as_deref(), user.as_deref())?;
             }
             CredentialCommands::Create { host, user, prompt } => {
-                key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
+                key::cmd_make_credential(hid, &host, &user, &prompt, json)?;
             }
         },
     }

@@ -17,3 +17,7 @@ pub const CTAPHID_VENDOR_FIRST: u8 = 0x40;
 
 // Broadcast channel for CTAPHID_INIT
 pub const CTAPHID_BROADCAST_CID: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+
+// HID usage page and usage that identify a FIDO (CTAPHID) interface.
+pub const FIDO_USAGE_PAGE: u16 = 0xF1D0;
+pub const FIDO_USAGE: u16 = 0x01;

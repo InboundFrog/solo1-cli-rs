@@ -6,23 +6,34 @@ use solo1::protocol::CMD_RNG;
 
 /// Get N random bytes from the device, return as hex string.
 ///
+/// The RNG vendor command is 0x60 on both Solo 1 and Solo 2. Solo 1 honours
+/// the requested count; Solo 2 ignores it and always returns 57 bytes, so
+/// this keeps asking until it has `n` bytes.
+///
 /// # Errors
-/// Returns an error if `n` exceeds 255, if the device request fails, or if the
-/// device returns a shorter response than expected.
+/// Returns an error if `n` exceeds 255, if a device request fails, or if the
+/// device returns no data.
 pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
     if n > 255 {
         return Err(SoloError::ProtocolError(format!(
             "Number of bytes must be between 0 and 255, you passed {n}"
         )));
     }
-    let n_u8 = u8::try_from(n).map_err(|_| SoloError::ProtocolError("Byte count exceeds 255".into()))?;
-    let request = [n_u8];
-    let response = hid.send_recv(CMD_RNG, &request)?;
-    let take = response.len().min(n);
-    let slice = response
-        .get(..take)
-        .ok_or_else(|| SoloError::ProtocolError("RNG response slice out of range".into()))?;
-    Ok(hex::encode(slice))
+    let mut collected: Vec<u8> = Vec::with_capacity(n);
+    while collected.len() < n {
+        let remaining = n.saturating_sub(collected.len());
+        let request = [u8::try_from(remaining).map_err(|_| SoloError::ProtocolError("Byte count exceeds 255".into()))?];
+        let response = hid.send_recv(CMD_RNG, &request)?;
+        if response.is_empty() {
+            return Err(SoloError::ProtocolError("RNG returned no data".into()));
+        }
+        let take = response.len().min(remaining);
+        let slice = response
+            .get(..take)
+            .ok_or_else(|| SoloError::ProtocolError("RNG response slice out of range".into()))?;
+        collected.extend_from_slice(slice);
+    }
+    Ok(hex::encode(collected))
 }
 
 /// Stream raw random bytes to stdout.
@@ -161,6 +172,23 @@ mod tests {
         let device = MockDevice::new(vec![Ok(rng_bytes)]);
         let hex = cmd_rng_hexbytes(&device, 255).unwrap();
         assert_eq!(hex.len(), 510); // 255 bytes × 2 hex chars each
+    }
+
+    /// A device that returns fewer bytes than asked (Solo 2 always returns 57)
+    /// is queried again until `n` bytes are collected.
+    #[test]
+    fn test_cmd_rng_hexbytes_collects_across_responses() {
+        let device = MockDevice::new(vec![Ok(vec![0x01, 0x02, 0x03]), Ok(vec![0x04, 0x05, 0x06])]);
+        let hex = cmd_rng_hexbytes(&device, 5).unwrap();
+        assert_eq!(hex, "0102030405");
+    }
+
+    /// An empty response for a non-zero request is an error, not a hang.
+    #[test]
+    fn test_cmd_rng_hexbytes_empty_response_errors() {
+        let device = MockDevice::new(vec![Ok(vec![])]);
+        let err = cmd_rng_hexbytes(&device, 4).unwrap_err();
+        assert!(matches!(err, SoloError::ProtocolError(_)));
     }
 
     /// n > 255 must be rejected before any device communication.

@@ -34,9 +34,20 @@ The binary ends up at `target/release/solo`. (It used to be called `solo1`.)
 | `solo-ctaphid` | `crates/solo-ctaphid` | CTAPHID framing and the USB HID transport. Device-neutral. |
 | `solo-ctap2` | `crates/solo-ctap2` | CBOR helpers and CTAP2 protocol code (clientPIN, key agreement, request builders). Device-neutral. |
 | `solo1` | `crates/solo1` | Solo 1 vendor commands, bootloader, ST DFU, firmware files and attestation fingerprints. |
+| `solo2` | `crates/solo2` | Solo 2 USB IDs and admin-app vendor commands (version, uuid, locked, rng). |
 | `solo-cli` | `crates/solo-cli` | The `solo` binary: argument parsing, prompts, output, and firmware downloads. |
 
 Device crates build on `solo-ctaphid` (and `solo-ctap2` where they need CTAP2). Only `solo-cli` touches the terminal or the network.
+
+### Supported devices
+
+`solo ls` and every `solo key` command find both Solo 1 and Solo 2. On Solo 2,
+everything that is plain CTAPHID or CTAP2 works: `ping`, `wink`, `reset`, `set-pin`,
+`change-pin`, `credential …`, `challenge-response` and `sign-file`, as do `version`
+and `rng`. The rest of `solo key` (`verify`, `keyboard`, `probe`, `update`,
+`disable-updates`) is Solo 1 only for now; on a Solo 2 those commands stop with "not
+supported on Solo 2 yet" before sending anything. `solo program` only looks for Solo 1
+devices. Solo 2 firmware updates are not implemented. None of the Solo 2 support has been tested on hardware yet.
 
 ---
 

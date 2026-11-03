@@ -11,6 +11,7 @@ license = "MIT"
 solo-ctap2 = { path = "crates/solo-ctap2" }
 solo-ctaphid = { path = "crates/solo-ctaphid" }
 solo1 = { path = "crates/solo1" }
+solo2 = { path = "crates/solo2" }
 
 # Third-party
 aes = "0.9"

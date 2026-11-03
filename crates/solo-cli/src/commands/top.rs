@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use crate::error::Result;
 use solo1::crypto::{generate_keypair, load_signing_key, sign_firmware};
 use solo1::firmware::{create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_files};
-use solo1::list_solo_devices;
 
 /// Print the library version.
 ///
@@ -138,7 +137,7 @@ pub fn cmd_mergehex(
     Ok(())
 }
 
-/// List connected Solo devices.
+/// List connected Solo devices of every supported model.
 ///
 /// # Errors
 /// Returns an error if enumerating HID devices fails or JSON serialization
@@ -146,13 +145,14 @@ pub fn cmd_mergehex(
 pub fn cmd_ls(json: bool) -> Result<()> {
     use crate::output::{DeviceInfo, ListOutput, print_json};
 
-    let devices = list_solo_devices()?;
+    let devices = crate::device::list()?;
 
     if json {
         let out = ListOutput {
             devices: devices
                 .iter()
-                .map(|d| DeviceInfo {
+                .map(|(model, d)| DeviceInfo {
+                    model: model.name().into(),
                     path: d.path.clone(),
                     serial: d.serial.clone(),
                     product: d.product.clone(),
@@ -167,9 +167,10 @@ pub fn cmd_ls(json: bool) -> Result<()> {
         println!("No Solo devices found.");
     } else {
         println!("Found {} Solo device(s):", devices.len());
-        for dev in &devices {
+        for (model, dev) in &devices {
             println!(
-                "  Path: {}  Serial: {}  Product: {}",
+                "  Model: {}  Path: {}  Serial: {}  Product: {}",
+                model,
                 dev.path,
                 dev.serial.as_deref().unwrap_or("(none)"),
                 dev.product.as_deref().unwrap_or("(unknown)")
