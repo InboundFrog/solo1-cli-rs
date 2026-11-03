@@ -23,7 +23,7 @@ jobs:
     uses: InboundFrog/repo-tools/.github/workflows/rust.yml@bf24833e55abb4f21a6061c41f045efb4963181d # v0.1.0
     with:
       working-directory: .
-      toolchain: "1.96"
+      toolchain: "1.99"
       # hidapi / libudev-sys link against these.
       apt-packages: libudev-dev libusb-1.0-0-dev pkg-config
 
