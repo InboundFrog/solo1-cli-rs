@@ -1,0 +1,260 @@
+use std::path::Path;
+
+use sha2::{Digest, Sha256};
+
+use crate::error::{Result, SoloError};
+use solo_ctaphid::HidDevice;
+use solo1::protocol::CMD_PROBE;
+
+/// Run a hash probe on the device.
+///
+/// Sends a CBOR-encoded command to `CMD_PROBE` (0x70):
+///   {"subcommand": `hash_type_str`, "data": `file_bytes`}
+///
+/// Valid hash types (case-insensitive input, sent as canonical form):
+///   SHA256, SHA512, RSA2048, Ed25519
+///
+/// File must be <= 6144 bytes.
+///
+/// # Errors
+/// Returns an error if `hash_type` is not a recognised hash type, if the file
+/// cannot be read, if the file exceeds 6144 bytes, or if the device request
+/// fails.
+pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Result<()> {
+    use ciborium::value::Value;
+    // Normalize hash type to the canonical form expected by the device
+    let hash_type_str = normalize_hash_type(hash_type).ok_or_else(|| {
+        SoloError::DeviceError(format!(
+            "Unknown hash type: {}. Valid: SHA256, SHA512, RSA2048, Ed25519",
+            hash_type.to_lowercase()
+        ))
+    })?;
+
+    let file_bytes = std::fs::read(filename)?;
+    if file_bytes.len() > 6 * 1024 {
+        return Err(SoloError::DeviceError(format!(
+            "File too large: {} bytes (max 6144)",
+            file_bytes.len()
+        )));
+    }
+
+    // CBOR-encode: {"subcommand": hash_type_str, "data": file_bytes}
+    let cbor_val = Value::Map(vec![
+        (Value::Text("subcommand".into()), Value::Text(hash_type_str.into())),
+        (Value::Text("data".into()), Value::Bytes(file_bytes)),
+    ]);
+    let mut cbor_bytes = Vec::new();
+    ciborium::ser::into_writer(&cbor_val, &mut cbor_bytes)?;
+
+    let response = hid.send_recv(CMD_PROBE, &cbor_bytes)?;
+    let result_hex = hex::encode(&response);
+    println!("{result_hex}");
+
+    if hash_type_str == "Ed25519" {
+        // First 64 bytes = signature (128 hex chars), rest = content
+        if response.len() > 64 {
+            let content = response
+                .get(64..)
+                .ok_or_else(|| SoloError::ProtocolError("Probe response too short".into()))?;
+            println!("content: {content:?}");
+            let sig_hex = result_hex
+                .get(..128.min(result_hex.len()))
+                .unwrap_or(result_hex.as_str());
+            println!("signature: {sig_hex}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Normalize a probe hash type to the canonical form expected by the device.
+///
+/// Matching is case-insensitive. Returns `None` for unknown hash types.
+fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
+    match hash_type.to_lowercase().as_str() {
+        "sha256" => Some("SHA256"),
+        "sha512" => Some("SHA512"),
+        "rsa2048" => Some("RSA2048"),
+        "ed25519" => Some("Ed25519"),
+        _ => None,
+    }
+}
+
+/// Sign a file using CTAP2 getAssertion with the file's SHA-256 as clientDataHash.
+///
+/// Protocol:
+///   1. SHA-256 the file contents → clientDataHash
+///   2. getAssertion (0x02) with `rp_id`, clientDataHash, allowList[`credential_id`]
+///   3. Extract signature (key 0x03) from the CBOR response
+///   4. Save raw signature bytes to `{filename}.sig`
+///   5. Print signature hex to stdout
+///
+/// # Errors
+/// Returns an error if `credential_id` is not valid hex, if the file cannot be
+/// read, if the getAssertion request fails, if the response is missing the
+/// signature, or if writing the `.sig` file fails.
+pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path) -> Result<()> {
+    use ciborium::value::Value;
+
+    // Decode hex credential ID (same convention as cmd_challenge_response)
+    let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
+
+    // Read file and compute SHA-256 → use directly as clientDataHash
+    let data = std::fs::read(filename)?;
+    let file_hash: Vec<u8> = Sha256::digest(&data).to_vec();
+
+    println!("{}  {}", hex::encode(&file_hash), filename.display());
+    println!("Please press the button on your Solo key");
+
+    // Build CTAP2 getAssertion CBOR request map:
+    //   0x01: rpId  (must match the rp used at credential creation)
+    //   0x02: clientDataHash  (SHA-256 of file)
+    //   0x03: allowList  [{type: "public-key", id: cred_id_bytes}]
+    let rp_id = "solokeys.dev";
+    let get_assertion_cbor = Value::Map(vec![
+        (Value::Integer(0x01u64.into()), Value::Text(rp_id.into())),
+        (Value::Integer(0x02u64.into()), Value::Bytes(file_hash)),
+        (
+            Value::Integer(0x03u64.into()),
+            Value::Array(vec![Value::Map(vec![
+                (Value::Text("type".into()), Value::Text("public-key".into())),
+                (Value::Text("id".into()), Value::Bytes(cred_id_bytes)),
+            ])]),
+        ),
+    ]);
+
+    // CTAP2 getAssertion (0x02)
+    let ga_response = solo_ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
+    check_ga_response(&ga_response, filename)
+}
+
+fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
+    use ciborium::value::Value;
+    use solo_ctap2::cbor::find_int_key;
+
+    let ga_pairs = solo_ctap2::parse_cbor_map_response(ga_response, "getAssertion")?;
+
+    // 0x03: signature bytes
+    let signature = match find_int_key(&ga_pairs, 0x03) {
+        Some(Value::Bytes(b)) => b.clone(),
+        _ => {
+            return Err(SoloError::MalformedResponse(
+                "getAssertion response missing signature (key 0x03)".into(),
+            ));
+        }
+    };
+
+    // Save raw signature to {filename}.sig
+    let sig_path = {
+        let mut p = filename.as_os_str().to_owned();
+        p.push(".sig");
+        std::path::PathBuf::from(p)
+    };
+    println!("Saving signature to {}", sig_path.display());
+    std::fs::write(&sig_path, &signature)?;
+
+    // Print hex signature to stdout
+    println!("{}", hex::encode(&signature));
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_normalize_hash_type_known_types() {
+        let cases: &[(&str, &str)] = &[
+            ("sha256", "SHA256"),
+            ("SHA256", "SHA256"),
+            ("Sha256", "SHA256"),
+            ("sha512", "SHA512"),
+            ("SHA512", "SHA512"),
+            ("rsa2048", "RSA2048"),
+            ("RSA2048", "RSA2048"),
+            ("ed25519", "Ed25519"),
+            ("Ed25519", "Ed25519"),
+            ("ED25519", "Ed25519"),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                normalize_hash_type(input),
+                Some(*expected),
+                "hash type '{input}' should normalize to '{expected}'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_normalize_hash_type_unknown_types() {
+        for input in ["md5", "sha1", "blake3", ""] {
+            assert_eq!(
+                normalize_hash_type(input),
+                None,
+                "hash type '{input}' should be rejected"
+            );
+        }
+    }
+
+    /// `cmd_probe` must reject an unknown hash type before touching the file or device.
+    #[test]
+    fn test_cmd_probe_rejects_unknown_hash_type() {
+        use solo_ctaphid::mock::MockDevice;
+        // Empty queue: any device call would return Timeout, not DeviceError.
+        let device = MockDevice::new(vec![]);
+        let err = cmd_probe(&device, "md5", Path::new("/nonexistent")).unwrap_err();
+        assert!(matches!(err, SoloError::DeviceError(_)), "unexpected error: {err}");
+        assert!(err.to_string().contains("Unknown hash type"));
+    }
+
+    #[test]
+    fn test_check_ga_response_ok() {
+        use ciborium::value::Value;
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "test data").unwrap();
+        let path = file.path();
+
+        // status=0x00, map {0x03: bytes([0xAA, 0xBB])}
+        let ga_val = Value::Map(vec![(Value::Integer(0x03u64.into()), Value::Bytes(vec![0xAA, 0xBB]))]);
+        let mut ga_response = vec![0x00u8];
+        ciborium::ser::into_writer(&ga_val, &mut ga_response).unwrap();
+
+        let result = check_ga_response(&ga_response, path);
+        assert!(result.is_ok());
+
+        // Check if .sig file was created
+        let mut p = path.to_owned().into_os_string();
+        p.push(".sig");
+        let sig_path = std::path::PathBuf::from(p);
+        assert!(sig_path.exists());
+        let sig_data = std::fs::read(&sig_path).unwrap();
+        assert_eq!(sig_data, vec![0xAA, 0xBB]);
+        std::fs::remove_file(sig_path).unwrap();
+    }
+
+    #[test]
+    fn test_check_ga_response_error_status() {
+        let file = NamedTempFile::new().unwrap();
+        let path = file.path();
+        let ga_response = vec![0x01u8]; // error status
+        let result = check_ga_response(&ga_response, path);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, SoloError::AuthenticatorError { code: 0x01, .. }),
+            "unexpected error: {err}"
+        );
+    }
+}

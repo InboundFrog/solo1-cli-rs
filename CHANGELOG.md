@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Initial Solo 2 support (not yet tested on hardware). `solo ls` lists Solo 1 and Solo 2 keys with a model column, and `solo key` opens either. CTAPHID and CTAP2 commands work on both, as do `version` and `rng`; Solo 1-only commands refuse to run on a Solo 2 instead of sending a vendor command code that means something else there.
+- `crates/solo2`: Solo 2 USB IDs and admin-app vendor commands (version, uuid, locked, rng), with sources noted in the code.
+- `DeviceFilter` gains `Fido` (FIDO usage page), `AllOf` and `AnyOf`; `HidDeviceInfo` and `HidTransport` report the device's USB IDs.
+
+### Changed
+- `key rng hexbytes N` keeps reading until it has N bytes (Solo 2 returns a fixed 57 per request) and errors on an empty response.
+- Split the device-neutral CTAPHID transport from Solo 1 vendor commands: the `HidDevice` trait no longer has `send_bootloader_cmd` (now `solo1::bootloader::bootloader_cmd`), Solo 1 USB IDs and vendor command codes moved to `solo1::protocol`, and device lookup takes a `DeviceFilter`.
+- Library modules no longer do terminal I/O: the PIN prompt moved from `ctap2` to the CLI (`maybe_pin_uv_auth` takes a PIN callback), firmware and DFU writes report progress through callbacks, `select_signature` is split into `read_bootloader_version` and `FirmwareJson::signature_for_bootloader`, and the GitHub release client moved to `github.rs`.
+- Verbose output goes through the `log` facade instead of a global flag and the `vlog!` macro. `--verbose` shows debug records from this project's crates; other crates only show warnings and errors.
+- The repository is now a Cargo workspace. Dependency versions and the clippy lint set are shared through `[workspace.dependencies]` and `[workspace.lints]`.
+- The CTAPHID transport is its own crate, `crates/solo-ctaphid`, with its own error type. `MockDevice` is available to other crates' tests through its `test-util` feature.
+- CBOR helpers and the CTAP2 protocol code (status codes, clientPIN, key agreement, request builders) are their own crate, `crates/solo-ctap2`, with its own error type. `maybe_pin_uv_auth` is generic over the PIN callback's error type.
+- Solo 1 support (vendor commands, bootloader, ST DFU, firmware files, attestation fingerprints) is its own crate, `crates/solo1`, with its own error type. The root package is renamed `solo-cli` (library `solo_cli`) to free the `solo1` name; the binary is still `solo1`.
+- **Breaking:** the binary is renamed from `solo1` to `solo`, ahead of support for other SoloKeys devices. The CLI crate moved to `crates/solo-cli` and the root `Cargo.toml` is now a workspace-only manifest.
+
 ## [0.2.1] - 2026-04-14
 
 ### Added

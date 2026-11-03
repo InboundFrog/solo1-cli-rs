@@ -25,14 +25,36 @@ bootloader/DFU programming.
 cargo build --release
 ```
 
-The binary ends up at `target/release/solo1`.
+The binary ends up at `target/release/solo`. (It used to be called `solo1`.)
+
+### Workspace layout
+
+| Crate | Path | What it holds |
+|---|---|---|
+| `solo-ctaphid` | `crates/solo-ctaphid` | CTAPHID framing and the USB HID transport. Device-neutral. |
+| `solo-ctap2` | `crates/solo-ctap2` | CBOR helpers and CTAP2 protocol code (clientPIN, key agreement, request builders). Device-neutral. |
+| `solo1` | `crates/solo1` | Solo 1 vendor commands, bootloader, ST DFU, firmware files and attestation fingerprints. |
+| `solo2` | `crates/solo2` | Solo 2 USB IDs and admin-app vendor commands (version, uuid, locked, rng). |
+| `solo-cli` | `crates/solo-cli` | The `solo` binary: argument parsing, prompts, output, and firmware downloads. |
+
+Device crates build on `solo-ctaphid` (and `solo-ctap2` where they need CTAP2). Only `solo-cli` touches the terminal or the network.
+
+### Supported devices
+
+`solo ls` and every `solo key` command find both Solo 1 and Solo 2. On Solo 2,
+everything that is plain CTAPHID or CTAP2 works: `ping`, `wink`, `reset`, `set-pin`,
+`change-pin`, `credential …`, `challenge-response` and `sign-file`, as do `version`
+and `rng`. The rest of `solo key` (`verify`, `keyboard`, `probe`, `update`,
+`disable-updates`) is Solo 1 only for now; on a Solo 2 those commands stop with "not
+supported on Solo 2 yet" before sending anything. `solo program` only looks for Solo 1
+devices. Solo 2 firmware updates are not implemented. None of the Solo 2 support has been tested on hardware yet.
 
 ---
 
 ## Usage
 
 ```sh
-solo1 [OPTIONS] <COMMAND>
+solo [OPTIONS] <COMMAND>
 ```
 
 Global options:
@@ -51,89 +73,89 @@ Global options:
 ### Version
 
 ```sh
-solo1 version [--json]                   # Print library version
+solo version [--json]                   # Print library version
 ```
 
 ### Device discovery
 
 ```sh
-solo1 ls [--json]                        # List connected Solo devices
+solo ls [--json]                        # List connected Solo devices
 ```
 
-### Key commands (`solo1 key [--serial <SN>] [--udp]`)
+### Key commands (`solo key [--serial <SN>] [--udp]`)
 
 ```sh
-solo1 key version                           # Get firmware version
-solo1 key wink                              # Blink LED
-solo1 key ping [--count N] [--data HEX]     # Ping and measure RTT
-solo1 key rng hexbytes <N>                  # Print N random bytes as hex
-solo1 key rng raw                           # Stream raw entropy to stdout
-solo1 key rng feedkernel                    # Feed entropy to /dev/random (Linux)
-solo1 key verify                            # Verify key authenticity via attestation
-solo1 key reset                             # Factory reset (destructive)
-solo1 key set-pin                           # Set PIN on unpinned key
-solo1 key change-pin                        # Change existing PIN
-solo1 key disable-updates                   # Permanently disable firmware updates
-solo1 key keyboard <DATA>                   # Program keyboard sequence (max 64 bytes)
-solo1 key probe <HASH_TYPE> <FILE>          # Calculate hash on device (sha256|sha512|rsa2048|ed25519, file <=6144 bytes)
-solo1 key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential
-solo1 key update [--firmware FILE]          # Update firmware (downloads latest if omitted)
+solo key version                           # Get firmware version
+solo key wink                              # Blink LED
+solo key ping [--count N] [--data HEX]     # Ping and measure RTT
+solo key rng hexbytes <N>                  # Print N random bytes as hex
+solo key rng raw                           # Stream raw entropy to stdout
+solo key rng feedkernel                    # Feed entropy to /dev/random (Linux)
+solo key verify                            # Verify key authenticity via attestation
+solo key reset                             # Factory reset (destructive)
+solo key set-pin                           # Set PIN on unpinned key
+solo key change-pin                        # Change existing PIN
+solo key disable-updates                   # Permanently disable firmware updates
+solo key keyboard <DATA>                   # Program keyboard sequence (max 64 bytes)
+solo key probe <HASH_TYPE> <FILE>          # Calculate hash on device (sha256|sha512|rsa2048|ed25519, file <=6144 bytes)
+solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential
+solo key update [--firmware FILE]          # Update firmware (downloads latest if omitted)
 ```
 
 #### Credential management
 
 ```sh
-solo1 key credential info                # Get credential slot info
-solo1 key credential ls                  # List resident credentials
-solo1 key credential rm <ID>             # Remove credential by base64 ID
-solo1 key credential rm --host <HOST> --user <USER>
+solo key credential info                # Get credential slot info
+solo key credential ls                  # List resident credentials
+solo key credential rm <ID>             # Remove credential by base64 ID
+solo key credential rm --host <HOST> --user <USER>
                                          # Remove credential by relying party and username
-solo1 key credential create --host <HOST> --user <USER> [--prompt <TEXT>]
+solo key credential create --host <HOST> --user <USER> [--prompt <TEXT>]
                                          # Create FIDO2 credential with hmac-secret
 ```
 
 #### Challenge-response
 
 ```sh
-solo1 key challenge-response <CREDENTIAL_ID> <CHALLENGE> [--host <HOST>]
+solo key challenge-response <CREDENTIAL_ID> <CHALLENGE> [--host <HOST>]
 # HMAC-secret challenge-response using an existing credential
 # CREDENTIAL_ID: hex string from credential create output
 # CHALLENGE: string to hash
 # --host defaults to "solokeys.dev"
 ```
 
-### Programming commands (`solo1 program [--serial <SN>] [--udp]`)
+### Programming commands (`solo program [--serial <SN>] [--udp]`)
 
 ```sh
 # Flash firmware via Solo bootloader (device must be in bootloader mode)
-solo1 program bootloader <firmware.json>
+solo program bootloader <firmware.json>
 
 # Flash firmware via ST DFU
-solo1 program dfu <firmware.hex>
+solo program dfu <firmware.hex>
 
 # Auxiliary bootloader commands
-solo1 program aux enter-bootloader
-solo1 program aux leave-bootloader
-solo1 program aux enter-dfu
-solo1 program aux leave-dfu
-solo1 program aux reboot
-solo1 program aux bootloader-version
+solo program aux enter-bootloader
+solo program aux leave-bootloader
+solo program aux enter-dfu
+solo program aux leave-dfu
+solo program aux reboot
+solo program aux bootloader-version
 ```
 
 ### Firmware utilities
 
 ```sh
 # Generate ECDSA P-256 keypair (PEM)
-solo1 genkey [-o OUTPUT] [--entropy FILE] [--json]
+solo genkey [-o OUTPUT] [--entropy FILE] [--json]
 
 # Sign firmware HEX file, output JSON {firmware, signature}
-solo1 sign <KEY.pem> <firmware.hex>
+solo sign <KEY.pem> <firmware.hex>
 
 # Merge Intel HEX files
-solo1 mergehex -o OUTPUT [--attestation-key FILE] [--attestation-cert FILE] INPUT...
+solo mergehex -o OUTPUT [--attestation-key FILE] [--attestation-cert FILE] INPUT...
 
 # Monitor serial output
-solo1 monitor <PORT>
+solo monitor <PORT>
 ```
 
 ---
@@ -149,7 +171,7 @@ solo1 monitor <PORT>
 
 ## Key verification and SPKI fingerprints
 
-`solo1 key verify` performs attestation by making a FIDO2 credential and checking the
+`solo key verify` performs attestation by making a FIDO2 credential and checking the
 attestation certificate against known fingerprints.  Two fingerprint types are computed:
 
 - **Full-DER fingerprint** — SHA-256 of the complete certificate DER bytes.  Changes if
@@ -169,7 +191,7 @@ attestation certificate against known fingerprints.  Two fingerprint types are c
 | Solo Hacker          | not yet collected                                                               |
 | Emulation/simulation | not yet collected                                                               |
 
-The missing values must be obtained by running `solo1 key verify --json` against real
+The missing values must be obtained by running `solo key verify --json` against real
 hardware and reading the `spki_fingerprint` field from the output.  If you have one of
 these devices please contribute the value via the issue linked above.
 

@@ -1,31 +1,32 @@
-[package]
-name = "solo1"
-version = "0.2.1"
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
 edition = "2021"
-description = "CLI tool for interacting with SoloKeys Solo 1 hardware security keys"
 license = "MIT"
 
-[lib]
-name = "solo1"
-path = "src/lib.rs"
+[workspace.dependencies]
+# Workspace crates
+solo-ctap2 = { path = "crates/solo-ctap2" }
+solo-ctaphid = { path = "crates/solo-ctaphid" }
+solo1 = { path = "crates/solo1" }
+solo2 = { path = "crates/solo2" }
 
-[[bin]]
-name = "solo1"
-path = "src/main.rs"
-
-[dependencies]
+# Third-party
 aes = "0.9"
 base64 = "0.23"
 cbc = { version = "0.2", features = ["alloc"] }
 ciborium = "0.2"
 clap = { version = "4", features = ["derive"] }
 ctrlc = "3"
-digest = "0.11"
 hex = "0.4"
 hidapi = "2"
 hmac = "0.13"
 ihex = "3"
 indicatif = "0.18"
+libc = "0.2"
+log = "0.4"
 p256 = { version = "0.14", features = ["ecdsa", "pem", "pkcs8", "ecdh"] }
 rand = "0.10.2"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
@@ -38,15 +39,12 @@ sha2 = "0.11"
 thiserror = "2"
 x509-cert = "0.3"
 
-[target.'cfg(target_os = "linux")'.dependencies]
-libc = "0.2"
-
-[dev-dependencies]
-tempfile = "3"
+# Dev-only
 rcgen = "0.14"
+tempfile = "3"
 time = "0.3"
 
-[lints.clippy]
+[workspace.lints.clippy]
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }
 # Deny panics

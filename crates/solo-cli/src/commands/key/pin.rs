@@ -1,0 +1,108 @@
+use crate::error::{Result, SoloError};
+use solo_ctap2::cbor::{cbor_bytes, cbor_int, int_map};
+use solo_ctaphid::HidDevice;
+
+/// Change the existing PIN (prompts for old and new PIN).
+///
+/// Implements CTAP2 authenticatorClientPIN changePin (spec section 6.5.5):
+///   1. getKeyAgreement (subcommand 0x02) to get device's public key
+///   2. Generate ephemeral P-256 keypair
+///   3. ECDH + SHA-256 to derive shared secret
+///   4. AES-256-CBC encrypt SHA-256(old_pin)[0..16] → pinHashEnc
+///   5. AES-256-CBC encrypt padded new PIN → newPinEnc
+///   6. HMAC-SHA-256(shared_secret, newPinEnc || pinHashEnc)[0..16] → pinUvAuthParam
+///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
+///
+/// # Errors
+/// Returns an error if reading the device version fails, if a PIN prompt cannot
+/// be read, if the new PINs do not match, if either PIN is shorter than 4
+/// characters, if key agreement or encryption fails, or if the changePin
+/// command is rejected by the device.
+pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
+    let _version = super::ops::get_device_version(hid)?;
+    let old_pin = rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?;
+    let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
+    let confirm_pin = rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?;
+
+    if new_pin != confirm_pin {
+        return Err(SoloError::ProtocolError("PINs do not match".into()));
+    }
+    if new_pin.len() < 4 || old_pin.len() < 4 {
+        return Err(SoloError::ProtocolError("PIN must be at least 4 characters".into()));
+    }
+
+    let dev_pub_key = solo_ctap2::get_key_agreement(hid)?;
+    let session = solo_ctap2::ClientPinSession::new(&dev_pub_key)?;
+
+    let pin_hash_enc = session.encrypt_pin_hash(&old_pin)?;
+    let new_pin_enc = session.encrypt_pin(&new_pin)?;
+
+    let mut auth_msg = new_pin_enc.clone();
+    auth_msg.extend_from_slice(&pin_hash_enc);
+    let pin_uv_auth_param = session.authenticate(&auth_msg)?;
+
+    let change_pin_cbor = int_map([
+        (0x01, cbor_int(1)),                       // pinUvAuthProtocol = 1
+        (0x02, cbor_int(4)),                       // subCommand = changePin (0x04)
+        (0x03, session.ephemeral_pub_key),         // keyAgreement
+        (0x04, cbor_bytes(pin_uv_auth_param)),     // pinUvAuthParam (16 bytes)
+        (0x05, cbor_bytes(new_pin_enc)),           // newPinEnc (64 bytes)
+        (0x06, cbor_bytes(pin_hash_enc.to_vec())), // pinHashEnc (16 bytes)
+    ]);
+
+    // authenticatorClientPIN (0x06)
+    let change_pin_response = solo_ctap2::ctap2_call(hid, 0x06, &change_pin_cbor)?;
+    solo_ctap2::check_ctap_status(&change_pin_response, "changePin")?;
+
+    println!("PIN changed successfully.");
+    Ok(())
+}
+
+/// Set PIN on an unpinned key (prompts for new PIN).
+///
+/// Implements CTAP2 authenticatorClientPIN setPin (spec section 6.5.4):
+///   1. getKeyAgreement (subcommand 0x02) to get device's public key
+///   2. Generate ephemeral P-256 keypair
+///   3. ECDH + SHA-256 to derive shared secret
+///   4. AES-256-CBC encrypt padded PIN → newPinEnc
+///   5. HMAC-SHA-256(shared_secret, newPinEnc)[0..16] → pinUvAuthParam
+///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
+///
+/// # Errors
+/// Returns an error if reading the device version fails, if a PIN prompt cannot
+/// be read, if the new PINs do not match, if the PIN is shorter than 4
+/// characters, if key agreement or encryption fails, or if the setPin command
+/// is rejected by the device.
+pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
+    let _version = super::ops::get_device_version(hid)?;
+    let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
+    let confirm_pin = rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?;
+
+    if new_pin != confirm_pin {
+        return Err(SoloError::ProtocolError("PINs do not match".into()));
+    }
+    if new_pin.len() < 4 {
+        return Err(SoloError::ProtocolError("PIN must be at least 4 characters".into()));
+    }
+
+    let dev_pub_key = solo_ctap2::get_key_agreement(hid)?;
+    let session = solo_ctap2::ClientPinSession::new(&dev_pub_key)?;
+
+    let new_pin_enc = session.encrypt_pin(&new_pin)?;
+    let pin_uv_auth_param = session.authenticate(&new_pin_enc)?;
+
+    let set_pin_cbor = int_map([
+        (0x01, cbor_int(1)),                   // pinUvAuthProtocol = 1
+        (0x02, cbor_int(3)),                   // subCommand = setPin
+        (0x03, session.ephemeral_pub_key),     // keyAgreement
+        (0x04, cbor_bytes(pin_uv_auth_param)), // pinUvAuthParam
+        (0x05, cbor_bytes(new_pin_enc)),       // newPinEnc
+    ]);
+
+    // authenticatorClientPIN (0x06)
+    let set_pin_response = solo_ctap2::ctap2_call(hid, 0x06, &set_pin_cbor)?;
+    solo_ctap2::check_ctap_status(&set_pin_response, "setPin")?;
+
+    println!("PIN set successfully.");
+    Ok(())
+}

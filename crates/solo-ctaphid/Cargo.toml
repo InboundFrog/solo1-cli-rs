@@ -1,0 +1,21 @@
+[package]
+name = "solo-ctaphid"
+version = "0.1.0"
+description = "CTAPHID framing and USB HID transport for FIDO authenticators"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+# Exposes `mock::MockDevice` for other crates' tests.
+test-util = []
+
+[dependencies]
+hex.workspace = true
+hidapi.workspace = true
+log.workspace = true
+rand.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "solo-ctap2"
+version = "0.1.0"
+description = "CTAP2 protocol helpers (CBOR, clientPIN, key agreement) over CTAPHID"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+solo-ctaphid.workspace = true
+
+aes.workspace = true
+cbc.workspace = true
+ciborium.workspace = true
+hmac.workspace = true
+p256.workspace = true
+rand.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+solo-ctaphid = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true
