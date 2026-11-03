@@ -9,7 +9,6 @@ use crate::dfu::DfuDevice;
 use crate::error::{Result, SoloError};
 use crate::firmware::{self, FirmwareJson};
 use crate::solo1::bootloader;
-use crate::vlog;
 
 /// Write `firmware` to the device starting at `base_addr` with a progress bar,
 /// then send `CMD_DONE` with `signature` so the bootloader verifies and reboots.
@@ -66,19 +65,19 @@ pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u
 /// Returns an error if the firmware JSON cannot be loaded or parsed, if
 /// selecting the signature fails, or if writing the firmware fails.
 pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Result<()> {
-    vlog!("Loading firmware JSON: {:?}", firmware_json);
+    log::debug!("Loading firmware JSON: {}", firmware_json.display());
     let fw = FirmwareJson::from_file(firmware_json)?;
     let (flash_start, firmware_bytes) = fw.firmware_binary()?;
 
     println!("Firmware size: {} bytes", firmware_bytes.len());
     println!("Flash start:   0x{flash_start:08X}");
-    vlog!("Firmware SHA256: {}", hex::encode(Sha256::digest(&firmware_bytes)));
+    log::debug!("Firmware SHA256: {}", hex::encode(Sha256::digest(&firmware_bytes)));
 
     // Query bootloader version BEFORE writing to select the correct signature.
     // (The BootVersion command resets the internal has_erased flag; querying it
     // before writes avoids any state confusion and mirrors the Python tool's flow.)
     let signature = select_signature(hid, &fw)?;
-    vlog!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
+    log::debug!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
 
     write_firmware(hid, flash_start, &firmware_bytes, &signature, "Finalizing firmware...")?;
     println!("Done.");

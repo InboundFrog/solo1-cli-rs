@@ -6,7 +6,6 @@ use hidapi::{DeviceInfo, HidApi, HidDevice as HidApiDevice};
 use crate::device::frame::{CtapHidFrame, FramePayload, build_ctaphid_frames, reassemble_frames};
 use crate::device::protocol::{CTAPHID_BROADCAST_CID, CTAPHID_INIT};
 use crate::error::{Result, SoloError};
-use crate::vlog;
 
 /// Selects which HID devices [`list_devices`] and [`HidTransport::open`] consider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +113,7 @@ impl HidTransport {
     fn init(&mut self) -> Result<()> {
         // Generate a random nonce
         let nonce: [u8; 8] = rand::random();
-        vlog!("CTAPHID_INIT: sending nonce {}", hex::encode(nonce));
+        log::debug!("CTAPHID_INIT: sending nonce {}", hex::encode(nonce));
         let frames = build_ctaphid_frames(&CTAPHID_BROADCAST_CID, CTAPHID_INIT, &nonce)?;
         for frame in &frames {
             let encoded = frame.encode()?;
@@ -131,7 +130,7 @@ impl HidTransport {
                 .get(8..12)
                 .ok_or_else(|| SoloError::ProtocolError("CTAPHID_INIT response too short".into()))?,
         );
-        vlog!("CTAPHID_INIT: assigned channel_id {}", hex::encode(self.channel_id));
+        log::debug!("CTAPHID_INIT: assigned channel_id {}", hex::encode(self.channel_id));
         Ok(())
     }
 
@@ -151,7 +150,7 @@ impl HidTransport {
     /// Returns an error if the payload cannot be framed or encoded, or writing
     /// to the HID device fails.
     pub fn send(&self, cmd: u8, data: &[u8]) -> Result<()> {
-        vlog!(
+        log::debug!(
             "HID send: cmd=0x{:02X} len={} data={}",
             cmd,
             data.len(),
@@ -162,7 +161,7 @@ impl HidTransport {
             }
         );
         let frames = build_ctaphid_frames(&self.channel_id, cmd, data)?;
-        vlog!("HID send: {} frame(s)", frames.len());
+        log::debug!("HID send: {} frame(s)", frames.len());
         for frame in &frames {
             let encoded = frame.encode()?;
             self.device.write(&encoded)?;
@@ -216,7 +215,7 @@ impl HidTransport {
     /// returns a CTAPHID error, a HID read fails, or the frames cannot be
     /// reassembled.
     pub fn recv_response(&self, expected_cmd: u8, timeout: Duration) -> Result<Vec<u8>> {
-        vlog!("HID recv: waiting for cmd=0x{:02X}", expected_cmd);
+        log::debug!("HID recv: waiting for cmd=0x{expected_cmd:02X}");
         let start = Instant::now();
         let mut frames: Vec<CtapHidFrame> = Vec::new();
         let mut total_bcnt: Option<usize> = None;
@@ -233,7 +232,7 @@ impl HidTransport {
             // Skip frames not for our channel (unless this is INIT response on broadcast)
             let for_us = frame.channel_id == self.channel_id || frame.channel_id == CTAPHID_BROADCAST_CID;
             if !for_us {
-                vlog!("HID recv: ignoring frame for channel {}", hex::encode(frame.channel_id));
+                log::debug!("HID recv: ignoring frame for channel {}", hex::encode(frame.channel_id));
                 continue;
             }
 
@@ -243,17 +242,17 @@ impl HidTransport {
                     if *cmd == 0x3F {
                         // CTAPHID_ERROR
                         let code = data.first().copied().unwrap_or(0);
-                        vlog!("HID recv: CTAPHID_ERROR code=0x{:02X}", code);
+                        log::debug!("HID recv: CTAPHID_ERROR code=0x{code:02X}");
                         return Err(SoloError::ProtocolError(format!("CTAPHID error: {code:02x}")));
                     }
-                    vlog!(
+                    log::debug!(
                         "HID recv: init frame cmd=0x{:02X} bcnt={} first_data={}",
                         cmd,
                         bcnt,
                         hex::encode(data.get(..data.len().min(16)).unwrap_or(data))
                     );
                     if *cmd != (expected_cmd & 0x7F) {
-                        vlog!(
+                        log::debug!(
                             "HID recv: unexpected cmd 0x{:02X} (want 0x{:02X}), skipping",
                             cmd,
                             expected_cmd & 0x7F
@@ -266,7 +265,7 @@ impl HidTransport {
                     frames.push(frame);
                 }
                 FramePayload::Cont { seq, .. } => {
-                    vlog!("HID recv: cont frame seq={}", seq);
+                    log::debug!("HID recv: cont frame seq={seq}");
                     if let Some(tb) = total_bcnt {
                         frames.push(frame.clone());
                         if let FramePayload::Cont { data, .. } = &frame.payload {
@@ -289,7 +288,7 @@ impl HidTransport {
         }
 
         let (_, payload) = reassemble_frames(&frames)?;
-        vlog!(
+        log::debug!(
             "HID recv: reassembled {} bytes: {}",
             payload.len(),
             if payload.len() <= 32 {

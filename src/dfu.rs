@@ -7,7 +7,6 @@ use rusb::{Context, DeviceHandle, UsbContext};
 
 use crate::error::{Result, SoloError};
 use crate::solo1::protocol::{SOLO_DFU_PID, SOLO_VID};
-use crate::vlog;
 
 /// DFU transfer chunk size in bytes.
 pub const DFU_CHUNK_SIZE: u32 = 2048;
@@ -138,7 +137,7 @@ impl DfuDevice {
         let mut buf = [0u8; 6];
         self.control_in(DFU_GETSTATUS, 0, &mut buf)?;
         let status = DfuStatus::parse(&buf)?;
-        vlog!(
+        log::debug!(
             "DFU_GETSTATUS: status=0x{:02X} state=0x{:02X} poll_ms={}",
             status.status,
             status.state,
@@ -178,7 +177,7 @@ impl DfuDevice {
     /// Returns an error if the USB control transfer fails, the transaction
     /// counter overflows, or the device reports an error while busy.
     pub fn dnload_chunk(&mut self, data: &[u8]) -> Result<()> {
-        vlog!("DFU_DNLOAD: transaction={} len={}", self.transaction, data.len());
+        log::debug!("DFU_DNLOAD: transaction={} len={}", self.transaction, data.len());
         self.control_out(DFU_DNLOAD, self.transaction, data)?;
         self.transaction = self
             .transaction

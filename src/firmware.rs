@@ -11,7 +11,6 @@ use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use crate::solo1::bootloader::bootloader_cmd;
 use crate::solo1::protocol::CMD_VERSION;
-use crate::vlog;
 
 /// The firmware JSON format used by the Solo 1 bootloader.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -138,7 +137,7 @@ pub fn read_bootloader_version(hid: &impl HidDevice) -> Option<FirmwareVersion> 
             [] => None,
         },
         Err(e) => {
-            vlog!("bootloader version query failed: {e}");
+            log::debug!("bootloader version query failed: {e}");
             None
         }
     }
@@ -603,7 +602,7 @@ pub fn merge_hex_files(
 
     let application_end_page = FLASH_PAGES - APPLICATION_END_PAGE_COUNT; // = 108
 
-    vlog!("app end page: {application_end_page}");
+    log::debug!("app end page: {application_end_page}");
 
     let auth_word_addr = flash_addr(application_end_page)
         .checked_sub(8)

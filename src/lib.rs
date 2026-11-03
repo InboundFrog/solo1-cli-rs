@@ -8,6 +8,6 @@ pub mod dfu;
 pub mod error;
 pub mod firmware;
 pub mod github;
+pub mod logger;
 pub mod output;
 pub mod solo1;
-pub mod verbose;

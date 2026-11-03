@@ -2,7 +2,6 @@
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use crate::solo1::protocol::{CMD_BOOT, CMD_DONE, CMD_WRITE, SOLO_TAG};
-use crate::vlog;
 
 /// Build a bootloader command packet.
 /// Address is encoded little-endian (lower 24 bits); firmware ORs 0x08000000 back in.
@@ -50,7 +49,7 @@ pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8
 /// command cannot be sent or received (device/transport error or timeout),
 /// or the bootloader returns a non-zero status.
 pub fn bootloader_cmd(hid: &impl HidDevice, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
-    vlog!(
+    log::debug!(
         "bootloader cmd=0x{:02X} addr=0x{:08X} data_len={}",
         cmd,
         addr,
@@ -97,7 +96,7 @@ pub fn write_firmware_chunks(
     firmware: &[u8],
     mut on_progress: impl FnMut(usize, usize),
 ) -> Result<()> {
-    vlog!(
+    log::debug!(
         "Writing {} chunks of {} bytes starting at 0x{:08X}",
         firmware_chunk_count(firmware.len()),
         CHUNK_SIZE,
@@ -115,10 +114,10 @@ pub fn write_firmware_chunks(
         let chunk = firmware
             .get(offset..end)
             .ok_or_else(|| SoloError::ProtocolError("chunk out of range".into()))?;
-        vlog!("chunk #{} addr=0x{:08X} len={}", chunk_num, addr, chunk.len());
+        log::debug!("chunk #{} addr=0x{:08X} len={}", chunk_num, addr, chunk.len());
         let resp = bootloader_cmd(hid, CMD_WRITE, addr, chunk)?;
         if !resp.is_empty() {
-            vlog!("  write response: {}", hex::encode(&resp));
+            log::debug!("  write response: {}", hex::encode(&resp));
         }
         offset = end;
         on_progress(offset, firmware.len());
@@ -133,9 +132,9 @@ pub fn write_firmware_chunks(
 /// Returns an error if the command fails or the bootloader rejects the
 /// signature (non-zero status).
 pub fn finish_firmware(hid: &impl HidDevice, signature: &[u8]) -> Result<()> {
-    vlog!("Sending CMD_DONE with {} byte signature", signature.len());
+    log::debug!("Sending CMD_DONE with {} byte signature", signature.len());
     let done_resp = bootloader_cmd(hid, CMD_DONE, 0, signature)?;
-    vlog!("done response: {}", hex::encode(&done_resp));
+    log::debug!("done response: {}", hex::encode(&done_resp));
     Ok(())
 }
 

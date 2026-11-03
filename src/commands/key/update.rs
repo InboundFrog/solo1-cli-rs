@@ -2,7 +2,6 @@ use std::path::Path;
 
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
-use crate::vlog;
 
 /// Update the device firmware.
 ///
@@ -54,7 +53,7 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
 
     // Query bootloader version to select the correct signature.
     let signature = select_signature(&bl_hid, &fw_json)?;
-    vlog!(
+    log::debug!(
         "Using signature ({} bytes): {}",
         signature.len(),
         hex::encode(&signature)

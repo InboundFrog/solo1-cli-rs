@@ -14,7 +14,7 @@ fn main() {
 
     let cli = Cli::parse();
 
-    solo1::verbose::set_verbose(cli.verbose);
+    solo1::logger::init(cli.verbose);
 
     let result = run(cli);
     if let Err(e) = result {
