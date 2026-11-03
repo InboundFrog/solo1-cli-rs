@@ -19,11 +19,14 @@ pub fn authenticate(&self, message: &[u8]) -> [u8; 16] {
 }
 ```
 
-`Hmac::new_from_slice` returns `Result<_, InvalidLength>` which is `Err` if the key length is zero or otherwise invalid. The `shared_secret` is a SHA-256 digest (always 32 bytes), so in practice this never panics — but:
+`Hmac::new_from_slice` returns `Result<_, InvalidLength>` which is `Err` if the key length is zero or otherwise invalid.
+The `shared_secret` is a SHA-256 digest (always 32 bytes), so in practice this never panics — but:
 
 1. It sets a bad precedent: `unwrap()` in security-critical code signals "I didn't think about this"
-2. A future refactor that changes how `shared_secret` is stored (e.g., truncation, wrong source) would cause a silent panic rather than a propagated error
-3. The second `.unwrap()` on the `try_into()` would panic if the HMAC output were shorter than 16 bytes (it won't be for SHA-256, but the invariant is implicit)
+2. A future refactor that changes how `shared_secret` is stored (e.g., truncation, wrong source) would cause a silent
+   panic rather than a propagated error
+3. The second `.unwrap()` on the `try_into()` would panic if the HMAC output were shorter than 16 bytes (it won't be for
+   SHA-256, but the invariant is implicit)
 
 ## Why It Needs Changing
 

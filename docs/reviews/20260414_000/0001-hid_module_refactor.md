@@ -10,16 +10,20 @@ type: project
 
 `src/device.rs` is a single ~500-line file that contains three distinct concerns:
 
-1. **HID frame protocol** — `CtapHidFrame`, `FramePayload`, init/continuation frame encoding/decoding, multi-frame message assembly/reassembly
+1. **HID frame protocol** — `CtapHidFrame`, `FramePayload`, init/continuation frame encoding/decoding, multi-frame
+   message assembly/reassembly
 2. **CTAPHID protocol constants** — `CTAPHID_INIT`, `CTAPHID_CBOR`, `CMD_WRITE`, `CMD_RNG`, etc.
 3. **Device communication** — `SoloHid`, `SoloDevice`, `list_solo_devices()`, `send_recv()`, `send_bootloader_cmd()`
 
-These three concerns have different reasons to change, different test audiences, and different abstraction levels. Mixing them makes the file hard to navigate and test in isolation.
+These three concerns have different reasons to change, different test audiences, and different abstraction levels.
+Mixing them makes the file hard to navigate and test in isolation.
 
 ## Why It Needs Changing
 
-- The constants (`CMD_*`, `CTAPHID_*`, USB VID/PID) are referenced from many places and would benefit from being importable from a clear path like `device::protocol::CMD_RNG`.
-- The frame encoding/decoding logic is pure data transformation — entirely testable without a device handle — but it's buried alongside device I/O code.
+- The constants (`CMD_*`, `CTAPHID_*`, USB VID/PID) are referenced from many places and would benefit from being
+  importable from a clear path like `device::protocol::CMD_RNG`.
+- The frame encoding/decoding logic is pure data transformation — entirely testable without a device handle — but it's
+  buried alongside device I/O code.
 - New contributors (or future-you) must read ~300 lines before reaching the device communication code.
 
 ## Proposed Change

@@ -26,8 +26,8 @@ Three concrete problems follow from this:
    that performs a clean shutdown.
 
 2. **No configurable timeout.** The timeout is baked into each call site rather than being
-   configurable via a CLI flag or environment variable. Commands that the user knows will be fast
-   (e.g., `ping`, `wink`) still pay the same 10-second ceiling.
+   configurable via a CLI flag or environment variable. Commands that the user knows will be fast (e.g., `ping`, `wink`)
+   still pay the same 10-second ceiling.
 
 3. **No progress feedback during wait.** The user sees nothing between "Touch your authenticator…"
    and the response arriving (or timing out). An async-aware approach would allow a spinner or

@@ -8,7 +8,8 @@ type: project
 
 ## Problem
 
-Every command that speaks CTAP2 manually constructs `ciborium::Value::Map(vec![...])` inline and manually extracts values by scanning integer-keyed pairs. This pattern appears in:
+Every command that speaks CTAP2 manually constructs `ciborium::Value::Map(vec![...])` inline and manually extracts
+values by scanning integer-keyed pairs. This pattern appears in:
 
 - `src/commands/key/fido2.rs` (makeCredential, getAssertion — twice each)
 - `src/commands/key/pin.rs` (setPin, changePin)

@@ -30,9 +30,9 @@ if let Err(e) = result {
 
 ### Issues
 
-1. **All errors look the same to the user.** A hex-decode failure on user-supplied input
-   (`"Invalid credential_id hex"`) is formatted identically to an internal protocol error
-   (`"authData too short"`). Users cannot tell whether they made a mistake or the device misbehaved.
+1. **All errors look the same to the user.** A hex-decode failure on user-supplied input (`"Invalid credential_id hex"`)
+   is formatted identically to an internal protocol error (`"authData too short"`). Users cannot tell whether they made
+   a mistake or the device misbehaved.
 
 2. **No actionable guidance.** Errors caused by user mistakes (bad hex, wrong credential ID,
    no key plugged in) do not suggest what to do. `NoSoloFound` is the only variant with a
