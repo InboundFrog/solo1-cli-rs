@@ -7,7 +7,7 @@ pub enum SoloError {
     )]
     NoSoloFound,
 
-    #[error("Multiple Solo devices found. Run `solo1 ls` to list serial numbers, then use `--serial <serial>`.")]
+    #[error("Multiple Solo devices found. Run `solo ls` to list serial numbers, then use `--serial <serial>`.")]
     NonUniqueDevice,
 
     #[error("Device error: {0}")]

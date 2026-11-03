@@ -1,8 +1,6 @@
 [workspace]
 resolver = "2"
-members = [".", "crates/*"]
-# Build, lint and test every crate by default, not just the root package.
-default-members = [".", "crates/solo-ctaphid", "crates/solo-ctap2", "crates/solo1"]
+members = ["crates/*"]
 
 [workspace.package]
 edition = "2021"
@@ -62,54 +60,3 @@ panic_in_result_fn = "deny"
 panic = "deny"
 exit = "deny"
 as_conversions = "deny"
-
-[package]
-name = "solo-cli"
-version = "0.2.1"
-description = "CLI tool for interacting with SoloKeys hardware security keys"
-edition.workspace = true
-license.workspace = true
-
-[lib]
-name = "solo_cli"
-path = "src/lib.rs"
-
-[[bin]]
-name = "solo1"
-path = "src/main.rs"
-
-[dependencies]
-solo-ctap2.workspace = true
-solo-ctaphid.workspace = true
-solo1.workspace = true
-
-base64.workspace = true
-ciborium.workspace = true
-clap.workspace = true
-ctrlc.workspace = true
-hex.workspace = true
-hmac.workspace = true
-indicatif.workspace = true
-log.workspace = true
-p256.workspace = true
-rand.workspace = true
-reqwest.workspace = true
-rpassword.workspace = true
-rusb.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-serialport.workspace = true
-sha2.workspace = true
-thiserror.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-libc.workspace = true
-
-[dev-dependencies]
-solo-ctaphid = { workspace = true, features = ["test-util"] }
-rcgen.workspace = true
-tempfile.workspace = true
-time.workspace = true
-
-[lints]
-workspace = true

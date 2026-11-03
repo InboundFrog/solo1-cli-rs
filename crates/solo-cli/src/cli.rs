@@ -1,12 +1,12 @@
-/// Clap CLI structure for the solo1 tool.
+/// Clap CLI structure for the `solo` tool.
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "solo1",
-    about = "CLI tool for SoloKeys Solo 1 hardware security keys",
+    name = "solo",
+    about = "CLI tool for SoloKeys hardware security keys",
     version
 )]
 pub struct Cli {

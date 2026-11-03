@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn cli_timeout_default_is_30() {
         use clap::Parser;
-        let cli = Cli::try_parse_from(["solo1", "ls"]).unwrap();
+        let cli = Cli::try_parse_from(["solo", "ls"]).unwrap();
         assert_eq!(cli.timeout, 30);
     }
 }
