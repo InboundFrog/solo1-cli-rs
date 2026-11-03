@@ -2,7 +2,7 @@ use crate::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, 
 use crate::commands::key::common;
 use crate::ctap2::{
     check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set, parse_cbor_map_response,
-    parse_cbor_map_response_allow_empty, pin_uv_auth, prompt_and_get_pin_token,
+    parse_cbor_map_response_allow_empty, pin_uv_auth,
 };
 use crate::device::{CTAPHID_CBOR, HidDevice};
 use crate::error::{Result, SoloError};
@@ -340,7 +340,7 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
 
     // ── Step 0: get PIN token ────────────────────────────────────────────
-    let pin_token = prompt_and_get_pin_token(hid)?;
+    let pin_token = common::prompt_and_get_pin_token(hid)?;
     let pin_token = pin_token.as_slice();
 
     // ── Step 1: enumerate all relying parties ────────────────────────────
@@ -410,7 +410,7 @@ pub fn cmd_credential_rm(
     }
 
     // ── Step 0: get PIN token ────────────────────────────────────────────
-    let pin_token = prompt_and_get_pin_token(hid)?;
+    let pin_token = common::prompt_and_get_pin_token(hid)?;
     let pin_token = pin_token.as_slice();
 
     // ── Resolve credential ID bytes ──────────────────────────────────────

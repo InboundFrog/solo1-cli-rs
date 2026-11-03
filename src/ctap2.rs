@@ -331,21 +331,6 @@ pub fn get_key_agreement(hid: &impl HidDevice) -> Result<p256::PublicKey> {
     cose_to_public_key(cose_pairs)
 }
 
-/// Prompt the user for a PIN, validate it is non-empty, and acquire a PIN token from the device.
-///
-/// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
-///
-/// # Errors
-/// Returns [`SoloError::IoError`] if the PIN prompt fails, [`SoloError::ProtocolError`] if
-/// the entered PIN is empty, or propagates errors from the getPINToken flow.
-pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
-    let pin = rpassword::prompt_password("Enter PIN: ").map_err(SoloError::IoError)?;
-    if pin.is_empty() {
-        return Err(SoloError::ProtocolError("PIN is required".into()));
-    }
-    get_pin_token(hid, &pin)
-}
-
 /// Perform the full CTAP2 clientPIN getPINToken flow and return the decrypted PIN token.
 ///
 /// Steps:
@@ -385,17 +370,22 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
     session.decrypt_pin_token(&pin_token_enc)
 }
 
-/// If a PIN is set on the device, prompt for it, fetch a PIN token, and
-/// compute `pinUvAuthParam` over `msg`. Returns `None` when no PIN is set.
+/// If a PIN is set on the device, obtain it from `get_pin`, fetch a PIN token,
+/// and compute `pinUvAuthParam` over `msg`. Returns `None` (without calling
+/// `get_pin`) when no PIN is set.
 ///
 /// # Errors
-/// Propagates errors from querying whether a PIN is set, prompting for and fetching the PIN
-/// token, and computing `pinUvAuthParam`.
-pub fn maybe_pin_uv_auth(hid: &impl HidDevice, msg: &[u8]) -> Result<Option<Vec<u8>>> {
+/// Propagates errors from querying whether a PIN is set, from `get_pin`, from
+/// fetching the PIN token, and from computing `pinUvAuthParam`.
+pub fn maybe_pin_uv_auth(
+    hid: &impl HidDevice,
+    msg: &[u8],
+    get_pin: impl FnOnce() -> Result<String>,
+) -> Result<Option<Vec<u8>>> {
     if !get_info_client_pin_set(hid)? {
         return Ok(None);
     }
-    let pin_token = prompt_and_get_pin_token(hid)?;
+    let pin_token = get_pin_token(hid, &get_pin()?)?;
     Ok(Some(pin_uv_auth(&pin_token, msg)?))
 }
 

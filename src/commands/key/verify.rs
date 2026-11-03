@@ -129,7 +129,8 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     let client_data_hash: Vec<u8> = Sha256::digest(b"solokeys_verify_test").to_vec();
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
-    let pin_uv_auth = crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash)?;
+    let pin_uv_auth =
+        crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
 
     eprintln!("Please press the button on your Solo key");
 

@@ -11,6 +11,7 @@ use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use crate::solo1::bootloader::bootloader_cmd;
 use crate::solo1::protocol::CMD_VERSION;
+use crate::vlog;
 
 /// The firmware JSON format used by the Solo 1 bootloader.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -81,6 +82,18 @@ impl FirmwareJson {
         websafe_b64_decode(&self.signature)
     }
 
+    /// Select the signature for a bootloader of the given version, or the
+    /// default signature when the version is unknown.
+    ///
+    /// Bootloaders <= 2.5.3 use the v1 signing region; later ones use v2.
+    ///
+    /// # Errors
+    /// Returns [`SoloError::FirmwareError`] if a version constraint string is
+    /// malformed, or the selected signature is not valid websafe base64.
+    pub fn signature_for_bootloader(&self, version: Option<&FirmwareVersion>) -> Result<Vec<u8>> {
+        version.map_or_else(|| self.signature_bytes(), |v| self.signature_for_version(v))
+    }
+
     /// Select the appropriate signature based on firmware version.
     /// Version constraint format: "<=2.5.3" or ">2.5.3"
     ///
@@ -108,45 +121,25 @@ impl FirmwareJson {
     }
 }
 
-/// Query the bootloader version from a connected device and select the
-/// appropriate firmware signature for that bootloader version.
+/// Read the Solo bootloader version from a device in bootloader mode.
 ///
-/// Bootloaders <= 2.5.3 use the v1 signing region; later ones use v2.
-/// If the version query fails or returns no data, falls back to the default
-/// (latest) signature rather than incorrectly matching "<=2.5.3".
-///
-/// # Errors
-/// Returns [`SoloError::FirmwareError`] if the bootloader version response is
-/// too short to parse, or if signature selection fails (a malformed version
-/// constraint, or a signature that is not valid websafe base64).
-pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
+/// Returns `None` if the query fails or the device returns no data, so callers
+/// fall back to the default (latest) signature rather than incorrectly
+/// matching "<=2.5.3". A one- or two-byte response is read as `0.0.<first>`.
+pub fn read_bootloader_version(hid: &impl HidDevice) -> Option<FirmwareVersion> {
     match bootloader_cmd(hid, CMD_VERSION, 0, &[]) {
-        Ok(resp) if resp.len() >= 3 => {
-            let short = || SoloError::FirmwareError("bootloader version response too short".into());
-            let v = FirmwareVersion::new(
-                u32::from(*resp.first().ok_or_else(short)?),
-                u32::from(*resp.get(1).ok_or_else(short)?),
-                u32::from(*resp.get(2).ok_or_else(short)?),
-            );
-            println!("Bootloader version: {v}");
-            fw.signature_for_version(&v)
-        }
-        Ok(resp) if !resp.is_empty() => {
-            let v = FirmwareVersion::new(
-                0,
-                0,
-                u32::from(
-                    *resp
-                        .first()
-                        .ok_or_else(|| SoloError::FirmwareError("empty version response".into()))?,
-                ),
-            );
-            println!("Bootloader version: {v}");
-            fw.signature_for_version(&v)
-        }
-        _ => {
-            println!("Could not read bootloader version; using default signature.");
-            fw.signature_bytes()
+        Ok(resp) => match resp.as_slice() {
+            [major, minor, patch, ..] => Some(FirmwareVersion::new(
+                u32::from(*major),
+                u32::from(*minor),
+                u32::from(*patch),
+            )),
+            [patch, ..] => Some(FirmwareVersion::new(0, 0, u32::from(*patch))),
+            [] => None,
+        },
+        Err(e) => {
+            vlog!("bootloader version query failed: {e}");
+            None
         }
     }
 }
@@ -610,7 +603,7 @@ pub fn merge_hex_files(
 
     let application_end_page = FLASH_PAGES - APPLICATION_END_PAGE_COUNT; // = 108
 
-    eprintln!("app end page: {application_end_page}");
+    vlog!("app end page: {application_end_page}");
 
     let auth_word_addr = flash_addr(application_end_page)
         .checked_sub(8)
@@ -901,71 +894,15 @@ pub fn create_firmware_json(firmware: &[u8], signature: &[u8]) -> FirmwareJson {
     }
 }
 
-/// GitHub release API response (simplified).
-#[derive(Debug, Deserialize)]
-pub struct GithubRelease {
-    pub tag_name: String,
-    pub assets: Vec<GithubAsset>,
-}
+/// GitHub repository (`owner/name`) that publishes Solo 1 firmware releases.
+pub const FIRMWARE_RELEASES_REPO: &str = "solokeys/solo1";
 
-#[derive(Debug, Deserialize)]
-pub struct GithubAsset {
-    pub name: String,
-    pub browser_download_url: String,
-    pub size: u64,
-}
-
-impl GithubRelease {
-    /// Find the firmware JSON asset.
-    #[must_use]
-    pub fn find_firmware_asset(&self) -> Option<&GithubAsset> {
-        self.assets.iter().find(|a| {
-            std::path::Path::new(&a.name)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-        })
-    }
-}
-
-/// Build the blocking HTTP client used for GitHub requests.
-fn http_client() -> Result<reqwest::blocking::Client> {
-    reqwest::blocking::Client::builder()
-        .user_agent("solo1-cli-rs")
-        .build()
-        .map_err(|e| SoloError::NetworkError(e.to_string()))
-}
-
-/// Fetch the latest release info from GitHub.
-///
-/// # Errors
-/// Returns [`SoloError::NetworkError`] if the HTTP client cannot be built, the
-/// request fails, or the response body is not valid release JSON.
-pub fn fetch_latest_release() -> Result<GithubRelease> {
-    let url = "https://api.github.com/repos/solokeys/solo1/releases/latest";
-    let client = http_client()?;
-    let resp = client
-        .get(url)
-        .send()
-        .map_err(|e| SoloError::NetworkError(e.to_string()))?;
-    let release: GithubRelease = resp
-        .json()
-        .map_err(|e| SoloError::NetworkError(format!("Failed to parse release JSON: {e}")))?;
-    Ok(release)
-}
-
-/// Download a URL to bytes.
-///
-/// # Errors
-/// Returns [`SoloError::NetworkError`] if the HTTP client cannot be built, the
-/// request fails, or the response body cannot be read.
-pub fn download_url(url: &str) -> Result<Vec<u8>> {
-    let client = http_client()?;
-    let resp = client
-        .get(url)
-        .send()
-        .map_err(|e| SoloError::NetworkError(e.to_string()))?;
-    let bytes = resp.bytes().map_err(|e| SoloError::NetworkError(e.to_string()))?;
-    Ok(bytes.to_vec())
+/// Whether a release asset name is a Solo 1 firmware JSON file.
+#[must_use]
+pub fn is_firmware_asset(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
 }
 
 #[cfg(test)]
@@ -1059,6 +996,48 @@ mod tests {
         let new_version = FirmwareVersion::new(3, 0, 0);
         let sig = fw.signature_for_version(&new_version).unwrap();
         assert_eq!(sig, b"new");
+
+        // Unknown bootloader version falls back to the default signature.
+        let sig = fw.signature_for_bootloader(None).unwrap();
+        assert_eq!(sig, b"default");
+        let sig = fw.signature_for_bootloader(Some(&old_version)).unwrap();
+        assert_eq!(sig, b"old");
+    }
+
+    // ── read_bootloader_version ─────────────────────────────────────────────
+
+    #[test]
+    fn test_read_bootloader_version_three_bytes() {
+        use crate::device::mock::MockDevice;
+        // Bootloader responses start with a 0x00 status byte.
+        let device = MockDevice::new(vec![Ok(vec![0x00, 2, 5, 3])]);
+        assert_eq!(read_bootloader_version(&device), Some(FirmwareVersion::new(2, 5, 3)));
+    }
+
+    #[test]
+    fn test_read_bootloader_version_one_byte() {
+        use crate::device::mock::MockDevice;
+        let device = MockDevice::new(vec![Ok(vec![0x00, 7])]);
+        assert_eq!(read_bootloader_version(&device), Some(FirmwareVersion::new(0, 0, 7)));
+    }
+
+    #[test]
+    fn test_read_bootloader_version_empty_or_error_is_none() {
+        use crate::device::mock::MockDevice;
+        let device = MockDevice::new(vec![Ok(vec![0x00])]);
+        assert_eq!(read_bootloader_version(&device), None);
+        let device = MockDevice::new(vec![Ok(vec![0x01])]);
+        assert_eq!(read_bootloader_version(&device), None);
+        let device = MockDevice::new(vec![]);
+        assert_eq!(read_bootloader_version(&device), None);
+    }
+
+    #[test]
+    fn test_is_firmware_asset() {
+        assert!(is_firmware_asset("firmware-4.1.5.json"));
+        assert!(is_firmware_asset("FIRMWARE.JSON"));
+        assert!(!is_firmware_asset("firmware-4.1.5.hex"));
+        assert!(!is_firmware_asset("json"));
     }
 
     #[test]

@@ -2,7 +2,6 @@ use std::path::Path;
 
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
-use crate::firmware;
 use crate::vlog;
 
 /// Update the device firmware.
@@ -13,9 +12,10 @@ use crate::vlog;
 /// firmware JSON is malformed, if reconnecting in bootloader mode fails, if
 /// selecting the signature fails, or if writing the firmware fails.
 pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<()> {
-    use crate::commands::program::write_firmware;
+    use crate::commands::program::{select_signature, write_firmware};
     use crate::crypto::sha256_hex;
-    use crate::firmware::{FirmwareJson, download_url, fetch_latest_release};
+    use crate::firmware::{FIRMWARE_RELEASES_REPO, FirmwareJson, is_firmware_asset};
+    use crate::github::{download_url, fetch_latest_release};
     use crate::solo1::protocol::CMD_ENTER_BOOT;
 
     let fw_json = if let Some(path) = firmware_file {
@@ -23,10 +23,10 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
         FirmwareJson::from_file(path)?
     } else {
         println!("Fetching latest firmware from GitHub...");
-        let release = fetch_latest_release()?;
+        let release = fetch_latest_release(FIRMWARE_RELEASES_REPO)?;
         println!("Latest release: {}", release.tag_name);
         let asset = release
-            .find_firmware_asset()
+            .find_asset(is_firmware_asset)
             .ok_or_else(|| SoloError::FirmwareError("No firmware JSON in release".into()))?;
         println!("Downloading: {}", asset.name);
         let bytes = download_url(&asset.browser_download_url)?;
@@ -53,7 +53,7 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
     let bl_hid = crate::solo1::open(None, std::time::Duration::from_secs(30))?;
 
     // Query bootloader version to select the correct signature.
-    let signature = firmware::select_signature(&bl_hid, &fw_json)?;
+    let signature = select_signature(&bl_hid, &fw_json)?;
     vlog!(
         "Using signature ({} bytes): {}",
         signature.len(),

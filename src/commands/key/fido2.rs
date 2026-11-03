@@ -34,7 +34,8 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
 
     // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
     // PIN prompt comes first; the touch prompt is printed after PIN entry.
-    let pin_uv_auth = crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash)?;
+    let pin_uv_auth =
+        crate::ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
 
     // makeCredential request with extensions {"hmac-secret": true} (0x06)
     // and options {"rk": true} (0x07) on top of the shared scaffolding.

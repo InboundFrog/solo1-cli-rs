@@ -3,7 +3,6 @@
 /// Implements USB DFU over control transfers for STM32 devices.
 use std::time::Duration;
 
-use indicatif::{ProgressBar, ProgressStyle};
 use rusb::{Context, DeviceHandle, UsbContext};
 
 use crate::error::{Result, SoloError};
@@ -191,24 +190,16 @@ impl DfuDevice {
 
     /// Program a firmware binary to the device.
     ///
+    /// After each chunk, `on_progress(chunks_written, total_chunks)` is called.
+    ///
     /// # Errors
-    /// Returns an error if the chunk-size or offset arithmetic overflows, the
-    /// progress bar style is invalid, or downloading a chunk to the device
-    /// fails.
-    pub fn program(&mut self, firmware: &[u8]) -> Result<()> {
+    /// Returns an error if the chunk-size or offset arithmetic overflows, or
+    /// downloading a chunk to the device fails.
+    pub fn program(&mut self, firmware: &[u8], mut on_progress: impl FnMut(usize, usize)) -> Result<()> {
         let chunk_size =
             usize::try_from(DFU_CHUNK_SIZE).map_err(|_| SoloError::ProtocolError("DFU chunk size overflow".into()))?;
         let total_chunks = firmware.len().div_ceil(chunk_size);
-
-        let pb = ProgressBar::new(
-            u64::try_from(total_chunks).map_err(|_| SoloError::ProtocolError("DFU chunk count overflow".into()))?,
-        );
-        pb.set_style(
-            ProgressStyle::default_bar()
-                .template("[{elapsed_precise}] {bar:40.cyan/blue} {pos}/{len} chunks")
-                .map_err(|e| SoloError::FirmwareError(format!("Progress bar style error: {e}")))?
-                .progress_chars("##-"),
-        );
+        let mut chunks_written = 0usize;
 
         // Reset transaction counter for address calculation
         // block_index = (address - BASE) / chunk_size + 2
@@ -232,7 +223,8 @@ impl DfuDevice {
             }
 
             self.dnload_chunk(&padded)?;
-            pb.inc(1);
+            chunks_written = chunks_written.saturating_add(1);
+            on_progress(chunks_written, total_chunks);
             offset = offset
                 .checked_add(chunk_size)
                 .ok_or_else(|| SoloError::ProtocolError("DFU offset overflow".into()))?;
@@ -240,8 +232,6 @@ impl DfuDevice {
 
         // Send zero-length download to signal end
         self.dnload_chunk(&[])?;
-
-        pb.finish_with_message("Done");
         Ok(())
     }
 }

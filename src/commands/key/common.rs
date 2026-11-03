@@ -1,4 +1,29 @@
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+
+/// Prompt for the device PIN without echoing it, rejecting an empty entry.
+///
+/// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
+///
+/// # Errors
+/// Returns [`SoloError::IoError`] if the PIN prompt fails, or
+/// [`SoloError::ProtocolError`] if the entered PIN is empty.
+pub fn prompt_pin() -> Result<String> {
+    let pin = rpassword::prompt_password("Enter PIN: ").map_err(SoloError::IoError)?;
+    if pin.is_empty() {
+        return Err(SoloError::ProtocolError("PIN is required".into()));
+    }
+    Ok(pin)
+}
+
+/// Prompt for the PIN and acquire a PIN token from the device.
+///
+/// # Errors
+/// Returns an error if [`prompt_pin`] fails, or propagates errors from the
+/// getPINToken flow.
+pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
+    crate::ctap2::get_pin_token(hid, &prompt_pin()?)
+}
 
 /// Print `prompt` and require the user to type exactly "yes" to continue.
 ///
