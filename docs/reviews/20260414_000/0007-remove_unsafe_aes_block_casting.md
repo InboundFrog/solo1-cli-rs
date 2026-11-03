@@ -8,7 +8,8 @@ type: project
 
 ## Problem
 
-`src/commands/key/fido2.rs` contains two `unsafe` blocks that cast a `&[u8]` buffer into `&[Block<Aes256>]` in order to call the AES encrypt/decrypt API:
+`src/commands/key/fido2.rs` contains two `unsafe` blocks that cast a `&[u8]` buffer into `&[Block<Aes256>]` in order to
+call the AES encrypt/decrypt API:
 
 ```rust
 // Encrypt
@@ -24,6 +25,7 @@ let blocks_out_slice = unsafe {
 The same pattern appears twice (encrypt for `saltEnc`, decrypt for the `hmac_secret` output).
 
 While the code is arguably sound (the types are aligned 16-byte arrays of the right size), it:
+
 - Requires future readers to audit `unsafe` blocks
 - Relies on implementation details of `Block<Aes256>` being `[u8; 16]`
 - Was marked `#[allow(deprecated)]`, suggesting the API it uses was already transitional
@@ -70,7 +72,7 @@ The exact API depends on the pinned `aes`/`cbc` crate versions. The key requirem
 1. Read the exact `aes` and `cbc` crate versions in `Cargo.toml`
 2. Identify the safe in-place or allocating encrypt/decrypt API available for those versions
 3. Replace the two `unsafe` blocks in `fido2.rs` with safe equivalents
-4. Remove the `#[allow(deprecated)]` attribute(s)
+4. Remove the `#[allow(deprecated)]` attribute (s)
 5. Verify that the existing `cargo test` suite passes (the `test_challenge_response_crypto` test covers this path)
 
 ## Security Impact
@@ -80,7 +82,8 @@ None — the cryptographic operations are identical. This is purely a code quali
 ## Relevant Code
 
 - `src/commands/key/fido2.rs`: salt encryption (~lines 395–410), hmac-secret decryption (~lines 440–455)
-- `src/ctap2.rs`: `ClientPinSession::encrypt_pin_hash`, `encrypt_pin`, `decrypt_pin_token` — check whether these also use unsafe casts
+- `src/ctap2.rs`: `ClientPinSession::encrypt_pin_hash`, `encrypt_pin`, `decrypt_pin_token` — check whether these also
+  use unsafe casts
 
 ## References
 

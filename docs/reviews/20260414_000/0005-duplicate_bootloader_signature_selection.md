@@ -9,12 +9,14 @@ type: project
 ## Problem
 
 Two commands — `cmd_update` and `cmd_program_bootloader` — both need to:
+
 1. Query the connected device for its bootloader version
 2. Compare the version against `2.5.3` to select either the v1 or v2 firmware signature
 
 The code is copy-pasted:
 
 ### `src/commands/key/update.rs` (~lines 52–67):
+
 ```rust
 let version_bytes = hid.send_recv(CMD_BOOT, &[CMD_VERSION])?;
 let boot_major = version_bytes[0];
@@ -28,6 +30,7 @@ let sig = if (boot_major, boot_minor, boot_patch) <= (2, 5, 3) {
 ```
 
 ### `src/commands/program.rs` (~lines 30–47):
+
 ```rust
 let version_bytes = hid.send_recv(CMD_BOOT, &[CMD_VERSION])?;
 let boot_major = version_bytes[0];
@@ -43,7 +46,8 @@ let sig = if (boot_major, boot_minor, boot_patch) <= (2, 5, 3) {
 ## Why It Needs Changing
 
 - DRY violation — any change to the version threshold or signature selection logic must be applied in both places
-- The version comparison uses raw tuple comparison on bytes, which is correct but implicit; a helper with a clear name makes the intent obvious
+- The version comparison uses raw tuple comparison on bytes, which is correct but implicit; a helper with a clear name
+  makes the intent obvious
 - Introduces a single place to add logging or diagnostics about the selected signature
 
 ## Proposed Change
@@ -68,6 +72,7 @@ pub fn select_signature<'a>(hid: &mut SoloHid, fw: &'a FirmwareJson) -> Result<&
 ```
 
 Both call sites become:
+
 ```rust
 let sig = firmware::select_signature(hid, &fw)?;
 ```

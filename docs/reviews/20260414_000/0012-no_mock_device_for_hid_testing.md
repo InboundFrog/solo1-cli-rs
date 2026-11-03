@@ -8,7 +8,8 @@ type: project
 
 ## Problem
 
-Every command function that communicates with a SoloKey takes a `&mut SoloHid` parameter, which is a concrete type wrapping a real hidapi device handle. There is no way to test any of these functions without a physical device.
+Every command function that communicates with a SoloKey takes a `&mut SoloHid` parameter, which is a concrete type
+wrapping a real hidapi device handle. There is no way to test any of these functions without a physical device.
 
 This means the following are completely untested (unless `#[ignore]`-d and run manually):
 
@@ -17,7 +18,8 @@ This means the following are completely untested (unless `#[ignore]`-d and run m
 - Error handling paths (timeout, wrong response, protocol errors)
 - Edge cases in response parsing
 
-The existing test suite compensates by testing the pure-function helpers (frame encoding, CBOR parsing, crypto), but the "glue" code that calls the device and processes the response is untested.
+The existing test suite compensates by testing the pure-function helpers (frame encoding, CBOR parsing, crypto), but the
+"glue" code that calls the device and processes the response is untested.
 
 ## Why It Needs Changing
 
@@ -84,7 +86,8 @@ This is a significant refactor. It is recommended to:
 
 ### Alternative: `mockall` crate
 
-If adding a hand-rolled mock is too much ceremony, the `mockall` crate can auto-generate mock implementations from trait definitions with `#[automock]`. This would reduce mock boilerplate significantly.
+If adding a hand-rolled mock is too much ceremony, the `mockall` crate can auto-generate mock implementations from trait
+definitions with `#[automock]`. This would reduce mock boilerplate significantly.
 
 ### Steps
 

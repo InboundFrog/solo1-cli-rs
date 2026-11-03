@@ -8,7 +8,8 @@ type: project
 
 ## Problem
 
-Throughout `src/ctap2.rs` and `src/commands/key/fido2.rs`, AES-256-CBC encryption is performed with a hardcoded all-zero IV:
+Throughout `src/ctap2.rs` and `src/commands/key/fido2.rs`, AES-256-CBC encryption is performed with a hardcoded all-zero
+IV:
 
 ```rust
 const IV: [u8; 16] = [0u8; 16];
@@ -16,13 +17,17 @@ const IV: [u8; 16] = [0u8; 16];
 let iv = [0u8; 16];
 ```
 
-An all-zero IV is a well-known anti-pattern in general AES-CBC usage because it leaks information about the first block when the same key is reused. Anyone reading this code without knowledge of the CTAP2 specification will immediately flag it as a security vulnerability.
+An all-zero IV is a well-known anti-pattern in general AES-CBC usage because it leaks information about the first block
+when the same key is reused. Anyone reading this code without knowledge of the CTAP2 specification will immediately flag
+it as a security vulnerability.
 
-However, **the CTAP2 specification explicitly mandates this IV** for the clientPIN and hmac-secret operations. From the spec:
+However, **the CTAP2 specification explicitly mandates this IV** for the clientPIN and hmac-secret operations. From the
+spec:
 
 > "The platform MUST use an IV of all 16 zero bytes for AES-256-CBC encryption."
 
-The key is also never reused across sessions (it is derived from an ephemeral ECDH exchange), so the zero-IV is safe in this specific context.
+The key is also never reused across sessions (it is derived from an ephemeral ECDH exchange), so the zero-IV is safe in
+this specific context.
 
 ## Why It Needs Changing
 

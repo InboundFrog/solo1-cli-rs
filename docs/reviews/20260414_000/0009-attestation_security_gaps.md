@@ -8,7 +8,8 @@ type: project
 
 ## Problem
 
-`src/commands/key/verify.rs` `cmd_verify` and `src/crypto.rs` `check_attestation_fingerprint` implement "verify key authenticity" by:
+`src/commands/key/verify.rs` `cmd_verify` and `src/crypto.rs` `check_attestation_fingerprint` implement "verify key
+authenticity" by:
 
 1. Triggering a `makeCredential` to get the device's attestation certificate
 2. Computing `SHA-256(certificate_der)`
@@ -30,32 +31,40 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> bool {
 
 ### Issues
 
-1. **No certificate chain validation.** The attestation certificate is only useful if it chains to a known root. Without chain validation, an attacker with any device could self-sign a certificate whose DER bytes happen to match a known fingerprint (practically infeasible with SHA-256, but not proven impossible by the code alone).
+1. **No certificate chain validation.** The attestation certificate is only useful if it chains to a known root. Without
+   chain validation, an attacker with any device could self-sign a certificate whose DER bytes happen to match a known
+   fingerprint (practically infeasible with SHA-256, but not proven impossible by the code alone).
 
-2. **Fingerprints validate the whole certificate DER, not the public key.** Any change to the certificate (e.g., updated validity dates, updated extensions) will cause the fingerprint to not match, even for a legitimate Solo device with a genuine attestation key. This has likely already affected users with newer firmware builds.
+2. **Fingerprints validate the whole certificate DER, not the public key.** Any change to the certificate (e.g., updated
+   validity dates, updated extensions) will cause the fingerprint to not match, even for a legitimate Solo device with a
+   genuine attestation key. This has likely already affected users with newer firmware builds.
 
 3. **No validity date check.** Expired certificates are accepted.
 
 4. **No revocation check.** There is no CRL or OCSP check.
 
-5. **`SOLO_HACKER_FINGERPRINT` and `SOLO_EMULATION_FINGERPRINT` represent non-genuine devices.** The verify command will return "authentic" for hacker and emulation builds, which could mislead users. This is probably intentional for developer convenience but should be clearly documented and perhaps guarded by a `--include-developer-devices` flag.
+5. **`SOLO_HACKER_FINGERPRINT` and `SOLO_EMULATION_FINGERPRINT` represent non-genuine devices.** The verify command will
+   return "authentic" for hacker and emulation builds, which could mislead users. This is probably intentional for
+   developer convenience but should be clearly documented and perhaps guarded by a `--include-developer-devices` flag.
 
 6. **No user-visible explanation** of what level of assurance the fingerprint check provides.
 
 ## Why It Needs Changing
 
-Items 3–6 are security UX issues that could mislead users. Item 2 will cause false negatives for users with newer firmware. Items 1 and 4 are theoretical but worth documenting.
+Items 3–6 are security UX issues that could mislead users. Item 2 will cause false negatives for users with newer
+firmware. Items 1 and 4 are theoretical but worth documenting.
 
-This issue does not require a full X.509 validation implementation immediately — the primary deliverable is **honest documentation and improved UX**.
+This issue does not require a full X.509 validation implementation immediately — the primary deliverable is **honest
+documentation and improved UX**.
 
 ## Proposed Changes
 
 ### Short term (code changes)
 
 1. **Add a comment block above `check_attestation_fingerprint`** that clearly explains:
-   - What the check does and does not prove
-   - That hacker/emulation fingerprints represent developer devices, not genuine consumer keys
-   - That fingerprints are valid only for specific certificate versions (link to SoloKeys docs if available)
+    - What the check does and does not prove
+    - That hacker/emulation fingerprints represent developer devices, not genuine consumer keys
+    - That fingerprints are valid only for specific certificate versions (link to SoloKeys docs if available)
 2. **Differentiate genuine vs. developer fingerprints** in the return value:
    ```rust
    pub enum AttestationResult {
@@ -71,7 +80,8 @@ This issue does not require a full X.509 validation implementation immediately �
 ### Medium term (if/when practical)
 
 1. Validate certificate `notBefore`/`notAfter` dates using the `x509-cert` or `rustls-pki-types` crate.
-2. Consider pinning the attestation public key (SPKI) rather than the full certificate DER, to be resilient to certificate re-issuance with the same key.
+2. Consider pinning the attestation public key (SPKI) rather than the full certificate DER, to be resilient to
+   certificate re-issuance with the same key.
 
 ### Steps (short term)
 

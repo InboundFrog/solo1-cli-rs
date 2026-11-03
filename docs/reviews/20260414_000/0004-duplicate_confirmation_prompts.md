@@ -11,6 +11,7 @@ type: project
 Three destructive commands prompt the user to type "yes" before proceeding. The code is nearly identical in each:
 
 ### `src/commands/key/ops.rs` — `cmd_reset`:
+
 ```rust
 println!("This will reset the key. Type 'yes' to confirm: ");
 let mut input = String::new();
@@ -22,6 +23,7 @@ if input.trim() != "yes" {
 ```
 
 ### `src/commands/key/ops.rs` — `cmd_disable_updates`:
+
 ```rust
 println!("This will permanently disable firmware updates. Type 'yes' to confirm: ");
 let mut input = String::new();
@@ -33,6 +35,7 @@ if input.trim() != "yes" {
 ```
 
 ### `src/commands/key/credential.rs` — `cmd_credential_rm`:
+
 ```rust
 println!("This will delete the credential. Type 'yes' to confirm: ");
 let mut input = String::new();
@@ -42,12 +45,14 @@ if input.trim() != "yes" {
 }
 ```
 
-Note: the third copy uses `Err` rather than `Ok(())` for a "no" response — a subtle inconsistency that affects the exit code seen by the caller.
+Note: the third copy uses `Err` rather than `Ok(())` for a "no" response — a subtle inconsistency that affects the exit
+code seen by the caller.
 
 ## Why It Needs Changing
 
 - DRY violation — same stdin-reading boilerplate in three places
-- Inconsistent behaviour: `cmd_credential_rm` returns `Err` on "no", while the others return `Ok(())`; this should be a deliberate choice made once
+- Inconsistent behaviour: `cmd_credential_rm` returns `Err` on "no", while the others return `Ok(())`; this should be a
+  deliberate choice made once
 - Any change to the prompt UX (e.g., accepting "y", case-insensitive matching) must be applied in three places
 
 ## Proposed Change
@@ -67,6 +72,7 @@ pub fn confirm(prompt: &str) -> Result<bool> {
 ```
 
 Call sites become:
+
 ```rust
 if !common::confirm("This will reset the key. Type 'yes' to confirm:")? {
     println!("Aborted.");

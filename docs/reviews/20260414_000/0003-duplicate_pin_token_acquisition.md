@@ -8,11 +8,13 @@ type: project
 
 ## Problem
 
-Three commands all prompt the user for a PIN, validate it, derive a PIN token from the device, and then use the token for a subsequent operation. The logic is copy-pasted:
+Three commands all prompt the user for a PIN, validate it, derive a PIN token from the device, and then use the token
+for a subsequent operation. The logic is copy-pasted:
 
 ### Appears in:
 
 **`src/commands/key/verify.rs`** (~lines 20–38):
+
 ```rust
 let pin = rpassword::prompt_password("Enter PIN: ")?;
 if pin.is_empty() { return Err(SoloError::ProtocolError("PIN required".into())); }
@@ -20,6 +22,7 @@ let pin_token = ctap2::get_pin_token(hid, &pin)?;
 ```
 
 **`src/commands/key/credential.rs` (`cmd_credential_ls`)** (~lines 135–144):
+
 ```rust
 let pin = rpassword::prompt_password("Enter PIN: ")?;
 if pin.is_empty() { return Err(...); }
@@ -27,13 +30,15 @@ let pin_token = ctap2::get_pin_token(hid, &pin)?;
 ```
 
 **`src/commands/key/credential.rs` (`cmd_credential_rm`)** (~lines 456–465):
+
 ```rust
 let pin = rpassword::prompt_password("Enter PIN: ")?;
 if pin.is_empty() { return Err(...); }
 let pin_token = ctap2::get_pin_token(hid, &pin)?;
 ```
 
-The three copies differ only slightly in error message strings, making future changes (e.g., adding retry logic, PIN caching, or minimum-length enforcement) require edits in all three places.
+The three copies differ only slightly in error message strings, making future changes (e.g., adding retry logic, PIN
+caching, or minimum-length enforcement) require edits in all three places.
 
 ## Why It Needs Changing
 
@@ -59,6 +64,7 @@ pub fn prompt_and_get_pin_token(hid: &mut SoloHid) -> Result<Vec<u8>> {
 ```
 
 Then replace all three call sites:
+
 ```rust
 let pin_token = ctap2::prompt_and_get_pin_token(hid)?;
 ```

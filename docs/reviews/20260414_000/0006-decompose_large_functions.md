@@ -17,7 +17,8 @@ Several functions are far too large to read, test, or reason about in isolation:
 | `merge_hex_files`        | `firmware.rs`   | ~150 lines        | Multiple concerns: parse, patch auth word, patch attestation, write      |
 | `cmd_verify`             | `verify.rs`     | ~160 lines        | PIN acquisition, credential creation, cert extraction, fingerprint check |
 
-The CTAP2 spec is already complex; embedding all protocol handling inline in these functions makes it very difficult to understand where one protocol step ends and another begins.
+The CTAP2 spec is already complex; embedding all protocol handling inline in these functions makes it very difficult to
+understand where one protocol step ends and another begins.
 
 ## Why It Needs Changing
 
@@ -85,7 +86,8 @@ fn extract_attestation_cert(response: &[u8]) -> Result<Vec<u8>>
 
 ## Notes
 
-Each decomposition can be done in a separate commit. The helper functions should be private (`fn`, not `pub fn`) unless they are genuinely reusable across modules.
+Each decomposition can be done in a separate commit. The helper functions should be private (`fn`, not `pub fn`) unless
+they are genuinely reusable across modules.
 
 ## Relevant Code
 

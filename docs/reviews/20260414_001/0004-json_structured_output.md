@@ -43,8 +43,8 @@ between the tool's human-readable messages and any script that consumes them.
 pub json: bool,
 ```
 
-Pass `json: bool` through the command dispatch chain, or store it in a thread-local / global
-(less clean but requires fewer signature changes).
+Pass `json: bool` through the command dispatch chain, or store it in a thread-local / global (less clean but requires
+fewer signature changes).
 
 ### 2. Define output structs for each affected command
 
