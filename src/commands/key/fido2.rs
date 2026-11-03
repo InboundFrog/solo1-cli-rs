@@ -1,7 +1,5 @@
 use crate::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
-use crate::ctap2::{
-    aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response,
-};
+use crate::ctap2::{aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response};
 use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
 use p256::elliptic_curve::Generate;
@@ -25,13 +23,7 @@ use sha2::{Digest, Sha256};
 /// request fails, or if the response is malformed (missing authData, the
 /// attested-credential-data flag is unset, or the authData is too short to
 /// contain the credential ID).
-pub fn cmd_make_credential(
-    hid: &impl HidDevice,
-    host: &str,
-    user: &str,
-    prompt: &str,
-    json: bool,
-) -> Result<()> {
+pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt: &str, json: bool) -> Result<()> {
     use ciborium::value::Value;
     use rand::Rng;
 
@@ -52,10 +44,7 @@ pub fn cmd_make_credential(
         &client_data_hash,
         pin_uv_auth,
         [
-            (
-                0x06,
-                Value::Map(vec![(cbor_text("hmac-secret"), Value::Bool(true))]),
-            ),
+            (0x06, Value::Map(vec![(cbor_text("hmac-secret"), Value::Bool(true))])),
             (0x07, Value::Map(vec![(cbor_text("rk"), Value::Bool(true))])),
         ],
     );
@@ -109,9 +98,7 @@ pub fn cmd_make_credential(
 
     let cred_id_len_bytes: [u8; 2] = auth_data
         .get(53..55)
-        .ok_or_else(|| {
-            SoloError::MalformedResponse("authData too short to read credentialIdLength".into())
-        })?
+        .ok_or_else(|| SoloError::MalformedResponse("authData too short to read credentialIdLength".into()))?
         .try_into()
         .map_err(|_| SoloError::MalformedResponse("invalid credentialIdLength field".into()))?;
     let cred_id_len = usize::from(u16::from_be_bytes(cred_id_len_bytes));
@@ -128,12 +115,12 @@ pub fn cmd_make_credential(
         )));
     }
 
-    let credential_id = auth_data.get(cred_id_start..cred_id_end).ok_or_else(|| {
-        SoloError::MalformedResponse("authData too short for credential ID".into())
-    })?;
+    let credential_id = auth_data
+        .get(cred_id_start..cred_id_end)
+        .ok_or_else(|| SoloError::MalformedResponse("authData too short for credential ID".into()))?;
 
     if json {
-        use crate::output::{print_json, MakeCredentialOutput};
+        use crate::output::{MakeCredentialOutput, print_json};
         return print_json(&MakeCredentialOutput {
             credential_id: hex::encode(credential_id),
         });
@@ -259,10 +246,7 @@ pub fn cmd_challenge_response(
                 (cbor_text("id"), cbor_bytes(cred_id_bytes)),
             ])]),
         ),
-        (
-            0x04,
-            Value::Map(vec![(cbor_text("hmac-secret"), hmac_secret_ext)]),
-        ),
+        (0x04, Value::Map(vec![(cbor_text("hmac-secret"), hmac_secret_ext)])),
     ]);
 
     eprintln!("Touch your authenticator to generate a response...");
@@ -314,7 +298,7 @@ pub fn cmd_challenge_response(
         _ => {
             return Err(SoloError::MalformedResponse(
                 "hmac-secret missing from authData extensions".into(),
-            ))
+            ));
         }
     };
 
@@ -328,7 +312,7 @@ pub fn cmd_challenge_response(
             .ok_or_else(|| SoloError::MalformedResponse("hmac-secret output too short".into()))?,
     );
     if json {
-        use crate::output::{print_json, ChallengeResponseOutput};
+        use crate::output::{ChallengeResponseOutput, print_json};
         return print_json(&ChallengeResponseOutput {
             hmac_output: hmac_output_hex,
         });
@@ -398,12 +382,8 @@ mod tests {
         // the COSE-key parse the production code performs on device responses.
         let dev_cose_pairs = cose_pairs_from_pub(&dev_pub);
         let parsed_dev_pub = cose_to_public_key(&dev_cose_pairs).expect("COSE parse failed");
-        assert_eq!(
-            parsed_dev_pub, dev_pub,
-            "COSE round-trip must preserve the key"
-        );
-        let (platform_shared, _cose_key) =
-            ecdh_shared_secret(&parsed_dev_pub, &platform_scalar).unwrap();
+        assert_eq!(parsed_dev_pub, dev_pub, "COSE round-trip must preserve the key");
+        let (platform_shared, _cose_key) = ecdh_shared_secret(&parsed_dev_pub, &platform_scalar).unwrap();
 
         // Device → platform: device computes DH with platform_pub
         let dev_scalar = dev_secret.to_nonzero_scalar();
@@ -446,20 +426,12 @@ mod tests {
         let kty_val = cose_pairs.iter().find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: i64 = (*i).try_into().ok()?;
-                if ki == 1 {
-                    Some(v.clone())
-                } else {
-                    None
-                }
+                if ki == 1 { Some(v.clone()) } else { None }
             } else {
                 None
             }
         });
-        assert_eq!(
-            kty_val,
-            Some(Value::Integer(2i64.into())),
-            "kty must be 2 (EC2)"
-        );
+        assert_eq!(kty_val, Some(Value::Integer(2i64.into())), "kty must be 2 (EC2)");
 
         // x coordinate
         let got_x = find_bytes_by_int_key(&cose_pairs, -2).expect("COSE key missing x (-2)");
@@ -488,9 +460,8 @@ mod tests {
         let platform_secret = p256::SecretKey::generate_from_rng(&mut rand::rng());
         let platform_scalar = platform_secret.to_nonzero_scalar();
 
-        let (hmac_ext, shared_secret) =
-            prepare_hmac_secret_input_with_scalar(&dev_pub, challenge, &platform_scalar)
-                .expect("prepare_hmac_secret_input_with_scalar failed");
+        let (hmac_ext, shared_secret) = prepare_hmac_secret_input_with_scalar(&dev_pub, challenge, &platform_scalar)
+            .expect("prepare_hmac_secret_input_with_scalar failed");
 
         // The result must be a CBOR map
         let Value::Map(ext_pairs) = hmac_ext else {
@@ -529,8 +500,7 @@ mod tests {
         );
 
         // Recompute saltAuth and verify it matches
-        let mut mac =
-            Hmac::<Sha256>::new_from_slice(shared_secret.as_slice()).expect("HMAC init failed");
+        let mut mac = Hmac::<Sha256>::new_from_slice(shared_secret.as_slice()).expect("HMAC init failed");
         mac.update(&salt_enc);
         let mac_result = mac.finalize().into_bytes();
         let expected_salt_auth = &mac_result[..16];
@@ -552,9 +522,8 @@ mod tests {
         let platform_scalar = platform_secret.to_nonzero_scalar();
         let platform_pub = platform_secret.public_key();
 
-        let (_hmac_ext, platform_shared) =
-            prepare_hmac_secret_input_with_scalar(&dev_pub, challenge, &platform_scalar)
-                .expect("prepare_hmac_secret_input_with_scalar failed");
+        let (_hmac_ext, platform_shared) = prepare_hmac_secret_input_with_scalar(&dev_pub, challenge, &platform_scalar)
+            .expect("prepare_hmac_secret_input_with_scalar failed");
 
         // Device computes the same shared secret from the platform's public key
         let dev_scalar = dev_secret.to_nonzero_scalar();

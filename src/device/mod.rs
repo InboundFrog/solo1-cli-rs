@@ -24,8 +24,7 @@ pub trait HidDevice {
     /// # Errors
     /// Returns an error if the bootloader command transaction fails, e.g. an
     /// I/O error or a timeout waiting for the response.
-    fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8])
-        -> crate::error::Result<Vec<u8>>;
+    fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> crate::error::Result<Vec<u8>>;
 
     /// Send a command with payload without waiting for a response.
     ///
@@ -40,21 +39,20 @@ pub trait HidDevice {
 
 // USB / protocol constants
 pub use protocol::{
-    CMD_BOOT, CMD_CHECK, CMD_DISABLE_BOOTLOADER, CMD_DONE, CMD_ENTER_BOOT, CMD_ENTER_DFU,
-    CMD_ENTER_ST_BOOT, CMD_ERASE, CMD_GET_VERSION, CMD_KEYBOARD, CMD_PROBE, CMD_REBOOT, CMD_RNG,
-    CMD_SET_VERSION, CMD_VERSION, CMD_WRITE, CTAPHID_BROADCAST_CID, CTAPHID_CBOR, CTAPHID_INIT,
-    CTAPHID_MSG, CTAPHID_PING, CTAPHID_VENDOR_FIRST, CTAPHID_WINK, HID_REPORT_SIZE, SOLO_DFU_PID,
-    SOLO_PID, SOLO_TAG, SOLO_VID,
+    CMD_BOOT, CMD_CHECK, CMD_DISABLE_BOOTLOADER, CMD_DONE, CMD_ENTER_BOOT, CMD_ENTER_DFU, CMD_ENTER_ST_BOOT, CMD_ERASE,
+    CMD_GET_VERSION, CMD_KEYBOARD, CMD_PROBE, CMD_REBOOT, CMD_RNG, CMD_SET_VERSION, CMD_VERSION, CMD_WRITE,
+    CTAPHID_BROADCAST_CID, CTAPHID_CBOR, CTAPHID_INIT, CTAPHID_MSG, CTAPHID_PING, CTAPHID_VENDOR_FIRST, CTAPHID_WINK,
+    HID_REPORT_SIZE, SOLO_DFU_PID, SOLO_PID, SOLO_TAG, SOLO_VID,
 };
 
 // Frame types and helpers
 pub use frame::{
-    build_bootloader_packet, build_ctaphid_frames, reassemble_frames, CtapHidFrame, FramePayload,
-    CTAPHID_MAX_PAYLOAD, DFU_CHUNK_SIZE,
+    CTAPHID_MAX_PAYLOAD, CtapHidFrame, DFU_CHUNK_SIZE, FramePayload, build_bootloader_packet, build_ctaphid_frames,
+    reassemble_frames,
 };
 
 // Device communication
-pub use hid::{list_solo_devices, SoloDevice, SoloHid};
+pub use hid::{SoloDevice, SoloHid, list_solo_devices};
 
 #[cfg(test)]
 pub mod mock {
@@ -89,12 +87,7 @@ pub mod mock {
                 .unwrap_or(Err(crate::error::SoloError::Timeout))
         }
 
-        fn send_bootloader_cmd(
-            &self,
-            _cmd: u8,
-            _addr: u32,
-            _data: &[u8],
-        ) -> crate::error::Result<Vec<u8>> {
+        fn send_bootloader_cmd(&self, _cmd: u8, _addr: u32, _data: &[u8]) -> crate::error::Result<Vec<u8>> {
             self.responses
                 .borrow_mut()
                 .pop_front()

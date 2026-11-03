@@ -1,12 +1,10 @@
 use std::time::Instant;
 
 use crate::commands::key::common;
-use crate::device::{
-    HidDevice, CMD_GET_VERSION, CMD_KEYBOARD, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK,
-};
+use crate::device::{CMD_GET_VERSION, CMD_KEYBOARD, CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 use crate::error::{Result, SoloError};
 use crate::firmware::FirmwareVersion;
-use crate::output::{print_json, PingOutput};
+use crate::output::{PingOutput, print_json};
 
 /// Get firmware version from the device.
 ///
@@ -14,7 +12,7 @@ use crate::output::{print_json, PingOutput};
 /// Returns an error if the version query fails (device/transport error or
 /// timeout), the response is too short, or JSON serialization fails.
 pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{print_json, VersionOutput};
+    use crate::output::{VersionOutput, print_json};
 
     let version = get_device_version(hid)?;
     if json {
@@ -29,9 +27,7 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
 pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
     let response = hid.send_recv(CMD_GET_VERSION, &[])?;
     let [major, minor, patch, ..] = response.as_slice() else {
-        return Err(SoloError::ProtocolError(
-            "Version response too short".into(),
-        ));
+        return Err(SoloError::ProtocolError("Version response too short".into()));
     };
     Ok(FirmwareVersion::new(
         u32::from(*major),
@@ -64,9 +60,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
         let elapsed = start.elapsed();
 
         if response != data {
-            return Err(SoloError::ProtocolError(
-                "Ping response data mismatch".into(),
-            ));
+            return Err(SoloError::ProtocolError("Ping response data mismatch".into()));
         }
 
         let index = i
@@ -98,9 +92,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
 /// (device/transport error or timeout).
 pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
     if data.len() > 64 {
-        return Err(SoloError::ProtocolError(
-            "Keyboard data too long (max 64 bytes)".into(),
-        ));
+        return Err(SoloError::ProtocolError("Keyboard data too long (max 64 bytes)".into()));
     }
     hid.send_recv(CMD_KEYBOARD, data)?;
     println!("Keyboard sequence programmed ({} bytes)", data.len());

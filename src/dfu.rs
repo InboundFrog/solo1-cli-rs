@@ -48,9 +48,7 @@ impl DfuStatus {
             .map_err(|_| SoloError::ProtocolError("DFU status response too short".into()))?;
         Ok(Self {
             status: bytes[0],
-            poll_timeout_ms: u32::from(bytes[1])
-                | (u32::from(bytes[2]) << 8)
-                | (u32::from(bytes[3]) << 16),
+            poll_timeout_ms: u32::from(bytes[1]) | (u32::from(bytes[2]) << 8) | (u32::from(bytes[3]) << 16),
             state: bytes[4],
             istring: bytes[5],
         })
@@ -78,9 +76,7 @@ pub fn open_dfu_device() -> Result<DeviceHandle<Context>> {
             return Ok(handle);
         }
     }
-    Err(SoloError::DeviceError(
-        "No ST DFU device found (PID 0xDF11)".into(),
-    ))
+    Err(SoloError::DeviceError("No ST DFU device found (PID 0xDF11)".into()))
 }
 
 /// DFU programmer for STM32.
@@ -97,13 +93,8 @@ impl DfuDevice {
     /// opened, or the DFU interface cannot be claimed.
     pub fn open() -> Result<Self> {
         let handle = open_dfu_device()?;
-        handle
-            .claim_interface(DFU_INTERFACE)
-            .map_err(SoloError::UsbError)?;
-        Ok(Self {
-            handle,
-            transaction: 0,
-        })
+        handle.claim_interface(DFU_INTERFACE).map_err(SoloError::UsbError)?;
+        Ok(Self { handle, transaction: 0 })
     }
 
     fn control_out(&self, request: u8, value: u16, data: &[u8]) -> Result<usize> {
@@ -185,11 +176,7 @@ impl DfuDevice {
     /// Returns an error if the USB control transfer fails, the transaction
     /// counter overflows, or the device reports an error while busy.
     pub fn dnload_chunk(&mut self, data: &[u8]) -> Result<()> {
-        vlog!(
-            "DFU_DNLOAD: transaction={} len={}",
-            self.transaction,
-            data.len()
-        );
+        vlog!("DFU_DNLOAD: transaction={} len={}", self.transaction, data.len());
         self.control_out(DFU_DNLOAD, self.transaction, data)?;
         self.transaction = self
             .transaction
@@ -206,13 +193,12 @@ impl DfuDevice {
     /// progress bar style is invalid, or downloading a chunk to the device
     /// fails.
     pub fn program(&mut self, firmware: &[u8]) -> Result<()> {
-        let chunk_size = usize::try_from(DFU_CHUNK_SIZE)
-            .map_err(|_| SoloError::ProtocolError("DFU chunk size overflow".into()))?;
+        let chunk_size =
+            usize::try_from(DFU_CHUNK_SIZE).map_err(|_| SoloError::ProtocolError("DFU chunk size overflow".into()))?;
         let total_chunks = firmware.len().div_ceil(chunk_size);
 
         let pb = ProgressBar::new(
-            u64::try_from(total_chunks)
-                .map_err(|_| SoloError::ProtocolError("DFU chunk count overflow".into()))?,
+            u64::try_from(total_chunks).map_err(|_| SoloError::ProtocolError("DFU chunk count overflow".into()))?,
         );
         pb.set_style(
             ProgressStyle::default_bar()

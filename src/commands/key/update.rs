@@ -16,7 +16,7 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
     use crate::commands::program::write_firmware;
     use crate::crypto::sha256_hex;
     use crate::device::CMD_ENTER_BOOT;
-    use crate::firmware::{download_url, fetch_latest_release, FirmwareJson};
+    use crate::firmware::{FirmwareJson, download_url, fetch_latest_release};
 
     let fw_json = if let Some(path) = firmware_file {
         println!("Loading firmware from {}", path.display());

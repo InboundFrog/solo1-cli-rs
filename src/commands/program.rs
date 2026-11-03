@@ -4,7 +4,7 @@ use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::device::{HidDevice, CMD_DONE, CMD_WRITE};
+use crate::device::{CMD_DONE, CMD_WRITE, HidDevice};
 use crate::dfu::DfuDevice;
 use crate::error::{Result, SoloError};
 use crate::firmware::{self, FirmwareJson};
@@ -45,8 +45,8 @@ pub fn write_firmware(
         base_addr
     );
 
-    let total_bytes = u64::try_from(firmware.len())
-        .map_err(|_| SoloError::ProtocolError("firmware size too large".into()))?;
+    let total_bytes =
+        u64::try_from(firmware.len()).map_err(|_| SoloError::ProtocolError("firmware size too large".into()))?;
     let pb = ProgressBar::new(total_bytes);
     let style = ProgressStyle::default_bar()
         .template("[{elapsed_precise}] {bar:40.cyan/blue} {bytes}/{total_bytes} {msg}")
@@ -65,18 +65,12 @@ pub fn write_firmware(
         let chunk = firmware
             .get(offset..end)
             .ok_or_else(|| SoloError::ProtocolError("chunk out of range".into()))?;
-        vlog!(
-            "chunk #{} addr=0x{:08X} len={}",
-            chunk_num,
-            addr,
-            chunk.len()
-        );
+        vlog!("chunk #{} addr=0x{:08X} len={}", chunk_num, addr, chunk.len());
         let resp = hid.send_bootloader_cmd(CMD_WRITE, addr, chunk)?;
         if !resp.is_empty() {
             vlog!("  write response: {}", hex::encode(&resp));
         }
-        let inc = u64::try_from(chunk.len())
-            .map_err(|_| SoloError::ProtocolError("chunk size too large".into()))?;
+        let inc = u64::try_from(chunk.len()).map_err(|_| SoloError::ProtocolError("chunk size too large".into()))?;
         pb.inc(inc);
         offset = end;
     }
@@ -103,28 +97,15 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 
     println!("Firmware size: {} bytes", firmware_bytes.len());
     println!("Flash start:   0x{flash_start:08X}");
-    vlog!(
-        "Firmware SHA256: {}",
-        hex::encode(Sha256::digest(&firmware_bytes))
-    );
+    vlog!("Firmware SHA256: {}", hex::encode(Sha256::digest(&firmware_bytes)));
 
     // Query bootloader version BEFORE writing to select the correct signature.
     // (The BootVersion command resets the internal has_erased flag; querying it
     // before writes avoids any state confusion and mirrors the Python tool's flow.)
     let signature = firmware::select_signature(hid, &fw)?;
-    vlog!(
-        "Signature ({} bytes): {}",
-        signature.len(),
-        hex::encode(&signature)
-    );
+    vlog!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
 
-    write_firmware(
-        hid,
-        flash_start,
-        &firmware_bytes,
-        &signature,
-        "Finalizing firmware...",
-    )?;
+    write_firmware(hid, flash_start, &firmware_bytes, &signature, "Finalizing firmware...")?;
     println!("Done.");
     Ok(())
 }

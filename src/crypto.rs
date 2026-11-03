@@ -3,43 +3,31 @@
 use std::path::Path;
 
 use p256::{
+    SecretKey,
     ecdsa::{SigningKey, VerifyingKey},
     elliptic_curve::Generate,
     pkcs8::{DecodePrivateKey, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
-    SecretKey,
 };
 use sha2::{Digest, Sha256};
-use x509_cert::der::{Decode, Encode};
 use x509_cert::Certificate;
+use x509_cert::der::{Decode, Encode};
 
 use crate::error::{Result, SoloError};
 
 /// Known attestation certificate fingerprints (SHA-256 of DER cert bytes).
 /// These match the fingerprints checked in the Python reference (key.py verify command).
-pub const SOLO_V3_FINGERPRINT: &str =
-    "72d5833126acfce9a8e8266018e6414934c8be4ab8685f91b0992113bbd43295";
-pub const SOLO_HACKER_FINGERPRINT: &str =
-    "d06d6ccbda7de56a1627c2a7899c35a2a316c851b36ad8ed7ed78479bb787ef7";
-pub const SOLO_EMULATION_FINGERPRINT: &str =
-    "0592e1b2ba8e610d629a9bc015197e4adadc3136e0a0a176d9b57d17a6b80b38";
-pub const SOLO_TAP_FINGERPRINT: &str =
-    "b36b03211164db1d60413ec0f8d827e0eec204be29065300940ed9c59b90533f";
-pub const SOMU_FINGERPRINT: &str =
-    "8dde12db98e87c90c9d6231a9cd8fe3f54df82b73d732e8e72ec9f98f8b5c6c1";
-pub const SOLO_FINGERPRINT: &str =
-    "327585e49e496cffdebc4b280608183134e7cbf4c01670679476291cd9b98104";
+pub const SOLO_V3_FINGERPRINT: &str = "72d5833126acfce9a8e8266018e6414934c8be4ab8685f91b0992113bbd43295";
+pub const SOLO_HACKER_FINGERPRINT: &str = "d06d6ccbda7de56a1627c2a7899c35a2a316c851b36ad8ed7ed78479bb787ef7";
+pub const SOLO_EMULATION_FINGERPRINT: &str = "0592e1b2ba8e610d629a9bc015197e4adadc3136e0a0a176d9b57d17a6b80b38";
+pub const SOLO_TAP_FINGERPRINT: &str = "b36b03211164db1d60413ec0f8d827e0eec204be29065300940ed9c59b90533f";
+pub const SOMU_FINGERPRINT: &str = "8dde12db98e87c90c9d6231a9cd8fe3f54df82b73d732e8e72ec9f98f8b5c6c1";
+pub const SOLO_FINGERPRINT: &str = "327585e49e496cffdebc4b280608183134e7cbf4c01670679476291cd9b98104";
 
 pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
-    (
-        SOLO_V3_FINGERPRINT,
-        "Valid Solo (<=3.0.0) firmware from SoloKeys.",
-    ),
+    (SOLO_V3_FINGERPRINT, "Valid Solo (<=3.0.0) firmware from SoloKeys."),
     (SOLO_HACKER_FINGERPRINT, "Solo Hacker firmware."),
     (SOLO_EMULATION_FINGERPRINT, "Local software emulation."),
-    (
-        SOLO_TAP_FINGERPRINT,
-        "Valid Solo Tap with firmware from SoloKeys.",
-    ),
+    (SOLO_TAP_FINGERPRINT, "Valid Solo Tap with firmware from SoloKeys."),
     (SOMU_FINGERPRINT, "Valid Somu with firmware from SoloKeys."),
     (SOLO_FINGERPRINT, "Valid Solo with firmware from SoloKeys."),
 ];
@@ -70,8 +58,7 @@ pub fn generate_keypair() -> Result<(String, String)> {
 /// PKCS#8 PEM-encoded P-256 signing key.
 pub fn load_signing_key(path: &Path) -> Result<SigningKey> {
     let pem = std::fs::read_to_string(path)?;
-    SigningKey::from_pkcs8_pem(&pem)
-        .map_err(|e| SoloError::CryptoError(format!("Failed to load key: {e}")))
+    SigningKey::from_pkcs8_pem(&pem).map_err(|e| SoloError::CryptoError(format!("Failed to load key: {e}")))
 }
 
 /// Sign the firmware bytes with the given key.
@@ -159,9 +146,7 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
         f if f == SOMU_FINGERPRINT => AttestationResult::GenuineConsumer("Solo Mu"),
         f if f == SOLO_FINGERPRINT => AttestationResult::GenuineConsumer("Solo 1"),
         f if f == SOLO_HACKER_FINGERPRINT => AttestationResult::DeveloperDevice("Solo Hacker"),
-        f if f == SOLO_EMULATION_FINGERPRINT => {
-            AttestationResult::DeveloperDevice("Solo Emulation")
-        }
+        f if f == SOLO_EMULATION_FINGERPRINT => AttestationResult::DeveloperDevice("Solo Emulation"),
         _ => AttestationResult::Unknown,
     }
 }
@@ -190,8 +175,7 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
 pub const SOLO_V3_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
 pub const SOMU_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
 pub const SOLO_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
-pub const SOLO_TAP_SPKI_FINGERPRINT: &str =
-    "6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049";
+pub const SOLO_TAP_SPKI_FINGERPRINT: &str = "6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049";
 pub const SOLO_HACKER_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
 pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
 
@@ -214,8 +198,8 @@ pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate fr
 /// Returns [`SoloError::CryptoError`] if `cert_der` is not a parseable X.509
 /// certificate, or its `SubjectPublicKeyInfo` cannot be re-encoded to DER.
 pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
-    let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
+    let cert =
+        Certificate::from_der(cert_der).map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
     let spki_der = cert
         .tbs_certificate()
         .subject_public_key_info()
@@ -240,8 +224,8 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
 /// Returns [`SoloError::CryptoError`] if the certificate cannot be parsed, has
 /// expired (now > `notAfter`), or is not yet valid (now < `notBefore`).
 pub fn check_cert_validity(cert_der: &[u8]) -> Result<()> {
-    let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
+    let cert =
+        Certificate::from_der(cert_der).map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
 
     let validity = cert.tbs_certificate().validity();
     let now = std::time::SystemTime::now();
@@ -288,21 +272,20 @@ pub fn verify_attestation_signature(
     client_data_hash: &[u8],
     sig_der: &[u8],
 ) -> Result<()> {
-    use p256::ecdsa::{signature::Verifier, DerSignature};
+    use p256::ecdsa::{DerSignature, signature::Verifier};
 
-    let cert = Certificate::from_der(cert_der)
-        .map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
+    let cert =
+        Certificate::from_der(cert_der).map_err(|e| SoloError::CryptoError(format!("Certificate parse error: {e}")))?;
     let spki_der = cert
         .tbs_certificate()
         .subject_public_key_info()
         .to_der()
         .map_err(|e| SoloError::CryptoError(format!("SPKI encode error: {e}")))?;
-    let verifying_key = VerifyingKey::from_public_key_der(&spki_der).map_err(|e| {
-        SoloError::CryptoError(format!("Attestation public key is not ECDSA P-256: {e}"))
-    })?;
+    let verifying_key = VerifyingKey::from_public_key_der(&spki_der)
+        .map_err(|e| SoloError::CryptoError(format!("Attestation public key is not ECDSA P-256: {e}")))?;
 
-    let sig = DerSignature::try_from(sig_der)
-        .map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {e}")))?;
+    let sig =
+        DerSignature::try_from(sig_der).map_err(|e| SoloError::CryptoError(format!("Malformed DER signature: {e}")))?;
 
     let capacity = auth_data
         .len()
@@ -320,8 +303,8 @@ pub fn verify_attestation_signature(
 /// Websafe base64 encoding (RFC 4648 URL-safe, no padding).
 #[must_use]
 pub fn websafe_b64_encode(data: &[u8]) -> String {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     URL_SAFE_NO_PAD.encode(data)
 }
 
@@ -331,8 +314,8 @@ pub fn websafe_b64_encode(data: &[u8]) -> String {
 /// Returns [`SoloError::FirmwareError`] if `s` is not valid websafe base64
 /// (RFC 4648 URL-safe, no padding).
 pub fn websafe_b64_decode(s: &str) -> Result<Vec<u8>> {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     URL_SAFE_NO_PAD
         .decode(s)
         .map_err(|e| SoloError::FirmwareError(format!("Base64 decode error: {e}")))
@@ -393,7 +376,7 @@ mod tests {
 
     #[test]
     fn test_sign_and_verify_firmware() {
-        use p256::ecdsa::{signature::Verifier, DerSignature, VerifyingKey};
+        use p256::ecdsa::{DerSignature, VerifyingKey, signature::Verifier};
         let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
         let firmware = b"fake firmware data for testing";
         let sig_der = sign_firmware(&signing_key, firmware).unwrap();
@@ -455,10 +438,7 @@ mod tests {
     ///
     /// Returns `(der_bytes, key_pem)` so callers can reuse the same key.
     #[cfg(test)]
-    fn make_test_cert_with_key(
-        not_before: time::OffsetDateTime,
-        not_after: time::OffsetDateTime,
-    ) -> (Vec<u8>, String) {
+    fn make_test_cert_with_key(not_before: time::OffsetDateTime, not_after: time::OffsetDateTime) -> (Vec<u8>, String) {
         use rcgen::{CertificateParams, KeyPair};
 
         let key_pair = KeyPair::generate().expect("key gen failed");
@@ -518,23 +498,14 @@ mod tests {
     #[test]
     fn check_cert_validity_valid() {
         let now = time::OffsetDateTime::now_utc();
-        let (der, _) = make_test_cert_with_key(
-            now - time::Duration::days(1),
-            now + time::Duration::days(365),
-        );
-        assert!(
-            check_cert_validity(&der).is_ok(),
-            "Currently-valid cert should pass"
-        );
+        let (der, _) = make_test_cert_with_key(now - time::Duration::days(1), now + time::Duration::days(365));
+        assert!(check_cert_validity(&der).is_ok(), "Currently-valid cert should pass");
     }
 
     #[test]
     fn check_cert_validity_expired() {
         let now = time::OffsetDateTime::now_utc();
-        let (der, _) = make_test_cert_with_key(
-            now - time::Duration::days(730),
-            now - time::Duration::days(365),
-        );
+        let (der, _) = make_test_cert_with_key(now - time::Duration::days(730), now - time::Duration::days(365));
         let err = check_cert_validity(&der).expect_err("Expired cert should fail");
         let msg = err.to_string();
         assert!(
@@ -546,10 +517,7 @@ mod tests {
     #[test]
     fn check_cert_validity_not_yet_valid() {
         let now = time::OffsetDateTime::now_utc();
-        let (der, _) = make_test_cert_with_key(
-            now + time::Duration::days(1),
-            now + time::Duration::days(366),
-        );
+        let (der, _) = make_test_cert_with_key(now + time::Duration::days(1), now + time::Duration::days(366));
         let err = check_cert_validity(&der).expect_err("Not-yet-valid cert should fail");
         let msg = err.to_string();
         assert!(
@@ -561,10 +529,7 @@ mod tests {
     #[test]
     fn spki_fingerprint_differs_from_der_fingerprint() {
         let now = time::OffsetDateTime::now_utc();
-        let (der, _) = make_test_cert_with_key(
-            now - time::Duration::days(1),
-            now + time::Duration::days(365),
-        );
+        let (der, _) = make_test_cert_with_key(now - time::Duration::days(1), now + time::Duration::days(365));
         let spki_fp = extract_spki_fingerprint(&der).expect("spki extract failed");
         let der_fp = sha256_hex(&der);
         assert_ne!(
@@ -595,15 +560,12 @@ mod tests {
     ///
     /// Returns `(cert_der, auth_data, client_data_hash, sig_der)`.
     fn make_attestation_fixture() -> (Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>) {
-        use p256::ecdsa::{signature::Signer, DerSignature};
+        use p256::ecdsa::{DerSignature, signature::Signer};
 
         let now = time::OffsetDateTime::now_utc();
-        let (cert_der, key_pem) = make_test_cert_with_key(
-            now - time::Duration::days(1),
-            now + time::Duration::days(365),
-        );
-        let signing_key =
-            SigningKey::from_pkcs8_pem(&key_pem).expect("rcgen PEM should load as p256 key");
+        let (cert_der, key_pem) =
+            make_test_cert_with_key(now - time::Duration::days(1), now + time::Duration::days(365));
+        let signing_key = SigningKey::from_pkcs8_pem(&key_pem).expect("rcgen PEM should load as p256 key");
 
         let auth_data: Vec<u8> = (0u8..37).collect();
         let client_data_hash = Sha256::digest(b"attestation fixture client data").to_vec();
@@ -612,12 +574,7 @@ mod tests {
         message.extend_from_slice(&client_data_hash);
         let sig: DerSignature = signing_key.sign(&message);
 
-        (
-            cert_der,
-            auth_data,
-            client_data_hash,
-            sig.as_bytes().to_vec(),
-        )
+        (cert_der, auth_data, client_data_hash, sig.as_bytes().to_vec())
     }
 
     #[test]
@@ -633,8 +590,7 @@ mod tests {
         // Flip one bit in the last byte (signature value, not DER structure).
         *sig_der.last_mut().unwrap() ^= 0x01;
         assert!(
-            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der)
-                .is_err(),
+            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der).is_err(),
             "tampered signature must be rejected"
         );
     }
@@ -644,8 +600,7 @@ mod tests {
         let (cert_der, mut auth_data, client_data_hash, sig_der) = make_attestation_fixture();
         auth_data[0] ^= 0x01;
         assert!(
-            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der)
-                .is_err(),
+            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der).is_err(),
             "tampered authData must be rejected"
         );
     }
@@ -655,8 +610,7 @@ mod tests {
         let (cert_der, auth_data, mut client_data_hash, sig_der) = make_attestation_fixture();
         client_data_hash[0] ^= 0x01;
         assert!(
-            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der)
-                .is_err(),
+            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, &sig_der).is_err(),
             "tampered clientDataHash must be rejected"
         );
     }
@@ -667,13 +621,10 @@ mod tests {
         // DIFFERENT key — models a counterfeit device replaying a genuine cert.
         let (_, auth_data, client_data_hash, sig_der) = make_attestation_fixture();
         let now = time::OffsetDateTime::now_utc();
-        let (other_cert_der, _) = make_test_cert_with_key(
-            now - time::Duration::days(1),
-            now + time::Duration::days(365),
-        );
+        let (other_cert_der, _) =
+            make_test_cert_with_key(now - time::Duration::days(1), now + time::Duration::days(365));
         assert!(
-            verify_attestation_signature(&other_cert_der, &auth_data, &client_data_hash, &sig_der)
-                .is_err(),
+            verify_attestation_signature(&other_cert_der, &auth_data, &client_data_hash, &sig_der).is_err(),
             "signature must not verify against a different key's cert"
         );
     }
@@ -681,24 +632,14 @@ mod tests {
     #[test]
     fn verify_attestation_signature_rejects_garbage_cert() {
         let (_, auth_data, client_data_hash, sig_der) = make_attestation_fixture();
-        assert!(verify_attestation_signature(
-            b"not a certificate",
-            &auth_data,
-            &client_data_hash,
-            &sig_der
-        )
-        .is_err());
+        assert!(verify_attestation_signature(b"not a certificate", &auth_data, &client_data_hash, &sig_der).is_err());
     }
 
     #[test]
     fn verify_attestation_signature_rejects_garbage_sig() {
         let (cert_der, auth_data, client_data_hash, _) = make_attestation_fixture();
-        assert!(verify_attestation_signature(
-            &cert_der,
-            &auth_data,
-            &client_data_hash,
-            b"not a der signature"
-        )
-        .is_err());
+        assert!(
+            verify_attestation_signature(&cert_der, &auth_data, &client_data_hash, b"not a der signature").is_err()
+        );
     }
 }

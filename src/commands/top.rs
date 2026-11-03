@@ -4,9 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::crypto::{generate_keypair, load_signing_key, sign_firmware};
 use crate::device::list_solo_devices;
 use crate::error::Result;
-use crate::firmware::{
-    create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_files,
-};
+use crate::firmware::{create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_files};
 
 /// Print the library version.
 ///
@@ -15,7 +13,7 @@ use crate::firmware::{
 /// only).
 pub fn cmd_version(json: bool) -> Result<()> {
     if json {
-        use crate::output::{print_json, CliVersionOutput};
+        use crate::output::{CliVersionOutput, print_json};
         let out = CliVersionOutput {
             name: "solo1-cli-rs".into(),
             version: env!("CARGO_PKG_VERSION").into(),
@@ -45,7 +43,7 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
     let (priv_pem, pub_pem) = generate_keypair()?;
 
     if json {
-        use crate::output::{print_json, GenKeyOutput};
+        use crate::output::{GenKeyOutput, print_json};
         let out = GenKeyOutput {
             private_key: priv_pem,
             public_key: pub_pem,
@@ -146,7 +144,7 @@ pub fn cmd_mergehex(
 /// Returns an error if enumerating HID devices fails or JSON serialization
 /// fails.
 pub fn cmd_ls(json: bool) -> Result<()> {
-    use crate::output::{print_json, DeviceInfo, ListOutput};
+    use crate::output::{DeviceInfo, ListOutput, print_json};
 
     let devices = list_solo_devices()?;
 

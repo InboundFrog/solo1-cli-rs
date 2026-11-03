@@ -1,7 +1,5 @@
 use clap::Parser;
-use solo1::cli::{
-    AuxCommands, Cli, Commands, CredentialCommands, KeyCommands, ProgramCommands, RngCommands,
-};
+use solo1::cli::{AuxCommands, Cli, Commands, CredentialCommands, KeyCommands, ProgramCommands, RngCommands};
 use solo1::commands::{aux, key, program, top};
 use solo1::device::SoloHid;
 use solo1::error;
@@ -34,11 +32,7 @@ fn run(cli: Cli) -> error::Result<()> {
             top::cmd_version(json)?;
         }
 
-        Commands::Genkey {
-            output,
-            entropy,
-            json,
-        } => {
+        Commands::Genkey { output, entropy, json } => {
             top::cmd_genkey(output.as_deref(), entropy.as_deref(), json)?;
         }
 
@@ -65,12 +59,7 @@ fn run(cli: Cli) -> error::Result<()> {
         }
 
         Commands::Key(key_args) => {
-            run_key_command(
-                key_args.serial.as_deref(),
-                key_args.command,
-                key_args.json,
-                timeout,
-            )?;
+            run_key_command(key_args.serial.as_deref(), key_args.command, key_args.json, timeout)?;
         }
 
         Commands::Program(prog_args) => {
@@ -156,10 +145,7 @@ fn run_key_command(
             key::cmd_disable_updates(&hid)?;
         }
 
-        KeyCommands::Probe {
-            hash_type,
-            filename,
-        } => {
+        KeyCommands::Probe { hash_type, filename } => {
             key::cmd_probe(&hid, &hash_type, &filename)?;
         }
 
@@ -186,12 +172,7 @@ fn run_key_command(
                 host,
                 user,
             } => {
-                key::credential::cmd_credential_rm(
-                    &hid,
-                    credential_id.as_deref(),
-                    host.as_deref(),
-                    user.as_deref(),
-                )?;
+                key::credential::cmd_credential_rm(&hid, credential_id.as_deref(), host.as_deref(), user.as_deref())?;
             }
             CredentialCommands::Create { host, user, prompt } => {
                 key::cmd_make_credential(&hid, &host, &user, &prompt, json)?;
@@ -201,11 +182,7 @@ fn run_key_command(
     Ok(())
 }
 
-fn run_program_command(
-    serial: Option<&str>,
-    cmd: ProgramCommands,
-    timeout: std::time::Duration,
-) -> error::Result<()> {
+fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std::time::Duration) -> error::Result<()> {
     match cmd {
         ProgramCommands::Bootloader { firmware } => {
             let hid = SoloHid::open(serial, timeout)?;

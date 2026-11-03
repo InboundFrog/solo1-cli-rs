@@ -1,5 +1,5 @@
 /// `program aux` subcommands: bootloader mode switching, reboot, DFU mode.
-use crate::device::{HidDevice, CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION};
+use crate::device::{CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION, HidDevice};
 use crate::error::Result;
 
 /// Enter bootloader mode (from firmware).

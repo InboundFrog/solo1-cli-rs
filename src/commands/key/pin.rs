@@ -22,16 +22,13 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let _version = super::ops::get_device_version(hid)?;
     let old_pin = rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?;
     let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
-    let confirm_pin =
-        rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?;
+    let confirm_pin = rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?;
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
     }
     if new_pin.len() < 4 || old_pin.len() < 4 {
-        return Err(SoloError::ProtocolError(
-            "PIN must be at least 4 characters".into(),
-        ));
+        return Err(SoloError::ProtocolError("PIN must be at least 4 characters".into()));
     }
 
     let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
@@ -85,9 +82,7 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
     }
     if new_pin.len() < 4 {
-        return Err(SoloError::ProtocolError(
-            "PIN must be at least 4 characters".into(),
-        ));
+        return Err(SoloError::ProtocolError("PIN must be at least 4 characters".into()));
     }
 
     let dev_pub_key = crate::ctap2::get_key_agreement(hid)?;
