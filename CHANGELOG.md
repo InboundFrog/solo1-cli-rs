@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Split the device-neutral CTAPHID transport from Solo 1 vendor commands: the `HidDevice` trait no longer has `send_bootloader_cmd` (now `solo1::bootloader::bootloader_cmd`), Solo 1 USB IDs and vendor command codes moved to `solo1::protocol`, and device lookup takes a `DeviceFilter`.
+
 ## [0.2.1] - 2026-04-14
 
 ### Added

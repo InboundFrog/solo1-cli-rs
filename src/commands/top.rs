@@ -2,9 +2,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::crypto::{generate_keypair, load_signing_key, sign_firmware};
-use crate::device::list_solo_devices;
 use crate::error::Result;
 use crate::firmware::{create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_files};
+use crate::solo1::list_solo_devices;
 
 /// Print the library version.
 ///

@@ -1,7 +1,6 @@
 use clap::Parser;
 use solo1::cli::{AuxCommands, Cli, Commands, CredentialCommands, KeyCommands, ProgramCommands, RngCommands};
 use solo1::commands::{aux, key, program, top};
-use solo1::device::SoloHid;
 use solo1::error;
 use solo1::output;
 
@@ -80,7 +79,7 @@ fn run_key_command(
     timeout: std::time::Duration,
 ) -> error::Result<()> {
     // Every key subcommand talks to a device, so open it once up front.
-    let hid = SoloHid::open(serial, timeout)?;
+    let hid = solo1::solo1::open(serial, timeout)?;
     match cmd {
         KeyCommands::Rng { command } => match command {
             RngCommands::Hexbytes { num } => {
@@ -185,7 +184,7 @@ fn run_key_command(
 fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std::time::Duration) -> error::Result<()> {
     match cmd {
         ProgramCommands::Bootloader { firmware } => {
-            let hid = SoloHid::open(serial, timeout)?;
+            let hid = solo1::solo1::open(serial, timeout)?;
             program::cmd_program_bootloader(&hid, &firmware)?;
         }
 
@@ -195,7 +194,7 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
         }
 
         ProgramCommands::Aux { command } => {
-            let hid = SoloHid::open(serial, timeout)?;
+            let hid = solo1::solo1::open(serial, timeout)?;
             match command {
                 AuxCommands::EnterBootloader => aux::cmd_enter_bootloader(&hid)?,
                 AuxCommands::LeaveBootloader => aux::cmd_leave_bootloader(&hid)?,

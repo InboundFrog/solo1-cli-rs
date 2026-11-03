@@ -6,9 +6,12 @@ use std::time::Duration;
 use indicatif::{ProgressBar, ProgressStyle};
 use rusb::{Context, DeviceHandle, UsbContext};
 
-use crate::device::{DFU_CHUNK_SIZE, SOLO_DFU_PID, SOLO_VID};
 use crate::error::{Result, SoloError};
+use crate::solo1::protocol::{SOLO_DFU_PID, SOLO_VID};
 use crate::vlog;
+
+/// DFU transfer chunk size in bytes.
+pub const DFU_CHUNK_SIZE: u32 = 2048;
 
 // DFU request codes
 pub const DFU_DNLOAD: u8 = 0x01;

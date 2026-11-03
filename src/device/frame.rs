@@ -1,4 +1,3 @@
-use crate::device::protocol::SOLO_TAG;
 /// CTAP HID frame types, encoding/decoding, and message assembly.
 use crate::error::{Result, SoloError};
 
@@ -209,43 +208,6 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     Ok((cmd, payload))
 }
 
-/// Build a bootloader command packet.
-/// Address is encoded little-endian (lower 24 bits); firmware ORs 0x08000000 back in.
-///
-/// # Errors
-/// Returns an error if `data` is longer than the 16-bit big-endian length
-/// field can express (65535 bytes), which would otherwise be silently
-/// truncated.
-pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
-    if data.len() > usize::from(u16::MAX) {
-        return Err(SoloError::ProtocolError(format!(
-            "Bootloader packet data too large: {} bytes (max {})",
-            data.len(),
-            u16::MAX
-        )));
-    }
-    let capacity = 10usize
-        .checked_add(data.len())
-        .ok_or_else(|| SoloError::ProtocolError("bootloader packet capacity overflow".into()))?;
-    let mut packet = Vec::with_capacity(capacity);
-    packet.push(cmd);
-    let [addr0, addr1, addr2, _] = addr.to_le_bytes();
-    packet.push(addr0);
-    packet.push(addr1);
-    packet.push(addr2);
-    packet.extend_from_slice(&SOLO_TAG);
-    let len = u16::try_from(data.len())
-        .map_err(|_| SoloError::ProtocolError("bootloader packet length exceeds u16".into()))?;
-    let [len_hi, len_lo] = len.to_be_bytes();
-    packet.push(len_hi);
-    packet.push(len_lo);
-    packet.extend_from_slice(data);
-    Ok(packet)
-}
-
-/// DFU transfer chunk size in bytes.
-pub const DFU_CHUNK_SIZE: u32 = 2048;
-
 #[cfg(test)]
 mod tests {
     #![allow(
@@ -356,28 +318,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bootloader_packet() {
-        // Address 0x08001000: firmware strips 0x08000000, leaving offset 0x001000.
-        // Little-endian 3-byte encoding of 0x001000: [0x00, 0x10, 0x00]
-        let pkt = build_bootloader_packet(0x40, 0x0800_1000, &[0xDE, 0xAD]).unwrap();
-        assert_eq!(pkt[0], 0x40); // cmd
-        assert_eq!(&pkt[1..4], &[0x00, 0x10, 0x00]); // addr little-endian (LSB first)
-        assert_eq!(&pkt[4..8], &SOLO_TAG); // tag
-        assert_eq!(pkt[8], 0x00); // len high
-        assert_eq!(pkt[9], 0x02); // len low
-        assert_eq!(&pkt[10..12], &[0xDE, 0xAD]); // data
-
-        // Address where byte order matters: 0x08010000 → offset 0x010000
-        // Little-endian: [0x00, 0x00, 0x01]  (NOT [0x01, 0x00, 0x00])
-        let pkt2 = build_bootloader_packet(0x40, 0x0801_0000, &[]).unwrap();
-        assert_eq!(&pkt2[1..4], &[0x00, 0x00, 0x01]);
-
-        // 0x08012345 → offset 0x012345 → LE: [0x45, 0x23, 0x01]
-        let pkt3 = build_bootloader_packet(0x40, 0x0801_2345, &[]).unwrap();
-        assert_eq!(&pkt3[1..4], &[0x45, 0x23, 0x01]);
-    }
-
-    #[test]
     fn test_build_frames_max_payload_ok() {
         let cid = [0x01, 0x02, 0x03, 0x04];
         let data = vec![0x5A; CTAPHID_MAX_PAYLOAD]; // 7609 = 57 + 128 * 59
@@ -404,22 +344,6 @@ mod tests {
         let cid = [0x01, 0x02, 0x03, 0x04];
         let data = vec![0x5A; CTAPHID_MAX_PAYLOAD + 1];
         let err = build_ctaphid_frames(&cid, 0x81, &data).unwrap_err();
-        assert!(matches!(err, SoloError::ProtocolError(_)));
-    }
-
-    #[test]
-    fn test_bootloader_packet_max_data_ok() {
-        let data = vec![0xA5; u16::MAX as usize];
-        let pkt = build_bootloader_packet(0x40, 0x0800_0000, &data).unwrap();
-        assert_eq!(pkt[8], 0xFF); // len high
-        assert_eq!(pkt[9], 0xFF); // len low
-        assert_eq!(pkt.len(), 10 + u16::MAX as usize);
-    }
-
-    #[test]
-    fn test_bootloader_packet_oversized_data_err() {
-        let data = vec![0xA5; u16::MAX as usize + 1];
-        let err = build_bootloader_packet(0x40, 0x0800_0000, &data).unwrap_err();
         assert!(matches!(err, SoloError::ProtocolError(_)));
     }
 }

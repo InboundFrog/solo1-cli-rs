@@ -4,10 +4,12 @@ use std::path::Path;
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
-use crate::device::{CMD_DONE, CMD_WRITE, HidDevice};
+use crate::device::HidDevice;
 use crate::dfu::DfuDevice;
 use crate::error::{Result, SoloError};
 use crate::firmware::{self, FirmwareJson};
+use crate::solo1::bootloader::bootloader_cmd;
+use crate::solo1::protocol::{CMD_DONE, CMD_WRITE};
 use crate::vlog;
 
 /// Size of each flash write sent to the bootloader.
@@ -66,7 +68,7 @@ pub fn write_firmware(
             .get(offset..end)
             .ok_or_else(|| SoloError::ProtocolError("chunk out of range".into()))?;
         vlog!("chunk #{} addr=0x{:08X} len={}", chunk_num, addr, chunk.len());
-        let resp = hid.send_bootloader_cmd(CMD_WRITE, addr, chunk)?;
+        let resp = bootloader_cmd(hid, CMD_WRITE, addr, chunk)?;
         if !resp.is_empty() {
             vlog!("  write response: {}", hex::encode(&resp));
         }
@@ -79,7 +81,7 @@ pub fn write_firmware(
     // CMD_DONE sends the ECDSA signature; bootloader verifies and reboots on success
     println!("{finalize_msg}");
     vlog!("Sending CMD_DONE with {} byte signature", signature.len());
-    let done_resp = hid.send_bootloader_cmd(CMD_DONE, 0, signature)?;
+    let done_resp = bootloader_cmd(hid, CMD_DONE, 0, signature)?;
     vlog!("done response: {}", hex::encode(&done_resp));
     Ok(())
 }

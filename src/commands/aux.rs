@@ -1,6 +1,8 @@
 /// `program aux` subcommands: bootloader mode switching, reboot, DFU mode.
-use crate::device::{CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION, HidDevice};
+use crate::device::HidDevice;
 use crate::error::Result;
+use crate::solo1::bootloader::bootloader_cmd;
+use crate::solo1::protocol::{CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION};
 
 /// Enter bootloader mode (from firmware).
 /// Sends command 0x51 directly — no bootloader wrapper — as the firmware handles it.
@@ -21,7 +23,7 @@ pub fn cmd_enter_bootloader(hid: &impl HidDevice) -> Result<()> {
 /// This function does not return an error; the reboot command's result is
 /// intentionally ignored because the device reboots without replying.
 pub fn cmd_leave_bootloader(hid: &impl HidDevice) -> Result<()> {
-    let _ = hid.send_bootloader_cmd(CMD_REBOOT, 0, &[]);
+    let _ = bootloader_cmd(hid, CMD_REBOOT, 0, &[]);
     println!("Booting to firmware...");
     Ok(())
 }
@@ -44,7 +46,7 @@ pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
 /// This function does not return an error; the reboot command's result is
 /// intentionally ignored because the device reboots without replying.
 pub fn cmd_leave_dfu(hid: &impl HidDevice) -> Result<()> {
-    let _ = hid.send_bootloader_cmd(CMD_REBOOT, 0, &[]);
+    let _ = bootloader_cmd(hid, CMD_REBOOT, 0, &[]);
     println!("Leaving ST DFU mode...");
     Ok(())
 }
@@ -54,7 +56,7 @@ pub fn cmd_leave_dfu(hid: &impl HidDevice) -> Result<()> {
 /// # Errors
 /// Returns an error if the reboot command cannot be sent to the device.
 pub fn cmd_reboot(hid: &impl HidDevice) -> Result<()> {
-    hid.send_bootloader_cmd(CMD_REBOOT, 0, &[])?;
+    bootloader_cmd(hid, CMD_REBOOT, 0, &[])?;
     println!("Rebooting device...");
     Ok(())
 }
@@ -65,7 +67,7 @@ pub fn cmd_reboot(hid: &impl HidDevice) -> Result<()> {
 /// Returns an error if the version query cannot be sent or the bootloader
 /// returns an error status.
 pub fn cmd_bootloader_version(hid: &impl HidDevice) -> Result<()> {
-    let response = hid.send_bootloader_cmd(CMD_VERSION, 0, &[])?;
+    let response = bootloader_cmd(hid, CMD_VERSION, 0, &[])?;
     let version_str = format_bootloader_version(&response);
     println!("Bootloader version: {version_str}");
     Ok(())

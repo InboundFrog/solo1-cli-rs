@@ -2,8 +2,9 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use crate::device::{CMD_PROBE, HidDevice};
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+use crate::solo1::protocol::CMD_PROBE;
 
 /// Run a hash probe on the device.
 ///

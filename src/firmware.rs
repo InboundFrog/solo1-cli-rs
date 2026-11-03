@@ -7,8 +7,10 @@ use ihex::Record;
 use serde::{Deserialize, Serialize};
 
 use crate::crypto::{websafe_b64_decode, websafe_b64_encode};
-use crate::device::{CMD_VERSION, HidDevice};
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+use crate::solo1::bootloader::bootloader_cmd;
+use crate::solo1::protocol::CMD_VERSION;
 
 /// The firmware JSON format used by the Solo 1 bootloader.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -118,7 +120,7 @@ impl FirmwareJson {
 /// too short to parse, or if signature selection fails (a malformed version
 /// constraint, or a signature that is not valid websafe base64).
 pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
-    match hid.send_bootloader_cmd(CMD_VERSION, 0, &[]) {
+    match bootloader_cmd(hid, CMD_VERSION, 0, &[]) {
         Ok(resp) if resp.len() >= 3 => {
             let short = || SoloError::FirmwareError("bootloader version response too short".into());
             let v = FirmwareVersion::new(

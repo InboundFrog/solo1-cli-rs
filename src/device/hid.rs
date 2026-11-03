@@ -1,34 +1,49 @@
-/// Solo HID device communication — `SoloHid`, `SoloDevice`, `list_solo_devices`.
+/// CTAPHID transport over USB HID — `HidTransport`, `HidDeviceInfo`, `list_devices`.
 use std::time::{Duration, Instant};
 
-use hidapi::{HidApi, HidDevice as HidApiDevice};
+use hidapi::{DeviceInfo, HidApi, HidDevice as HidApiDevice};
 
-use crate::device::frame::{
-    CtapHidFrame, FramePayload, build_bootloader_packet, build_ctaphid_frames, reassemble_frames,
-};
-use crate::device::protocol::{CMD_BOOT, CTAPHID_BROADCAST_CID, CTAPHID_INIT, SOLO_PID, SOLO_VID};
+use crate::device::frame::{CtapHidFrame, FramePayload, build_ctaphid_frames, reassemble_frames};
+use crate::device::protocol::{CTAPHID_BROADCAST_CID, CTAPHID_INIT};
 use crate::error::{Result, SoloError};
 use crate::vlog;
 
-/// Information about a connected Solo device.
+/// Selects which HID devices [`list_devices`] and [`HidTransport::open`] consider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceFilter {
+    /// Match an exact USB vendor and product ID.
+    UsbId { vendor_id: u16, product_id: u16 },
+}
+
+impl DeviceFilter {
+    /// Whether the given hidapi device entry passes this filter.
+    #[must_use]
+    pub fn matches(&self, info: &DeviceInfo) -> bool {
+        match *self {
+            Self::UsbId { vendor_id, product_id } => info.vendor_id() == vendor_id && info.product_id() == product_id,
+        }
+    }
+}
+
+/// Information about a connected HID device.
 #[derive(Debug, Clone)]
-pub struct SoloDevice {
+pub struct HidDeviceInfo {
     pub path: String,
     pub serial: Option<String>,
     pub product: Option<String>,
     pub manufacturer: Option<String>,
 }
 
-/// List all connected Solo HID devices.
+/// List connected HID devices that match `filter`.
 ///
 /// # Errors
 /// Returns an error if the HID API cannot be initialized.
-pub fn list_solo_devices() -> Result<Vec<SoloDevice>> {
+pub fn list_devices(filter: DeviceFilter) -> Result<Vec<HidDeviceInfo>> {
     let api = HidApi::new()?;
-    let devices: Vec<SoloDevice> = api
+    let devices: Vec<HidDeviceInfo> = api
         .device_list()
-        .filter(|d| d.vendor_id() == SOLO_VID && d.product_id() == SOLO_PID)
-        .map(|d| SoloDevice {
+        .filter(|d| filter.matches(d))
+        .map(|d| HidDeviceInfo {
             path: d.path().to_string_lossy().to_string(),
             serial: d.serial_number().map(std::string::ToString::to_string),
             product: d.product_string().map(std::string::ToString::to_string),
@@ -38,9 +53,8 @@ pub fn list_solo_devices() -> Result<Vec<SoloDevice>> {
     Ok(devices)
 }
 
-/// Open a Solo HID device, optionally filtered by serial number.
-/// Returns the opened device and its assigned channel ID.
-pub struct SoloHid {
+/// An open CTAPHID channel to a USB HID authenticator.
+pub struct HidTransport {
     pub device: HidApiDevice,
     pub channel_id: [u8; 4],
     /// Timeout applied to each `send_recv` / `recv_response` call.
@@ -48,24 +62,22 @@ pub struct SoloHid {
     pub response_timeout: Duration,
 }
 
-impl SoloHid {
-    /// Open a device by serial number (or the only device if None).
+impl HidTransport {
+    /// Open a device matching `filter` by serial number (or the only matching
+    /// device if `serial` is `None`).
     ///
     /// `timeout` controls how long `send_recv` and `recv_response` wait for a
     /// device reply. The low-level CTAPHID init handshake always uses a fixed
     /// 5-second timeout regardless of this value.
     ///
     /// # Errors
-    /// Returns an error if the HID API cannot be initialized, no Solo device is
-    /// found, the requested serial does not match any device, multiple devices
+    /// Returns an error if the HID API cannot be initialized, no matching device
+    /// is found, the requested serial does not match any device, multiple devices
     /// are present when no serial is given, the device cannot be opened, or the
     /// CTAPHID init handshake fails.
-    pub fn open(serial: Option<&str>, timeout: Duration) -> Result<Self> {
+    pub fn open(filter: DeviceFilter, serial: Option<&str>, timeout: Duration) -> Result<Self> {
         let api = HidApi::new()?;
-        let devices: Vec<_> = api
-            .device_list()
-            .filter(|d| d.vendor_id() == SOLO_VID && d.product_id() == SOLO_PID)
-            .collect();
+        let devices: Vec<_> = api.device_list().filter(|d| filter.matches(d)).collect();
 
         if devices.is_empty() {
             return Err(SoloError::NoSoloFound);
@@ -288,57 +300,11 @@ impl SoloHid {
         );
         Ok(payload)
     }
-
-    /// Send a vendor (bootloader) command packet and return the response payload.
-    ///
-    /// Packet format: [cmd(1)] [addr(3) LE] [TAG(4)] [`length_be(2)`] [data]
-    ///
-    /// The bootloader responds with [status(1)] [payload...]. This method checks
-    /// the status byte and strips it, returning only the payload on success.
-    ///
-    /// # Errors
-    /// Returns an error if the packet cannot be built (data too long), the
-    /// command cannot be sent or received (device/transport error or timeout),
-    /// or the bootloader returns a non-zero status.
-    pub fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
-        vlog!(
-            "bootloader cmd=0x{:02X} addr=0x{:08X} data_len={}",
-            cmd,
-            addr,
-            data.len()
-        );
-        // [cmd(1)] [addr(3) LE] [TAG(4)] [length_be(2)] [data]; errors if
-        // data is longer than the 16-bit length field can express.
-        let packet = build_bootloader_packet(cmd, addr, data)?;
-
-        let resp = self.send_recv(CMD_BOOT, &packet)?;
-
-        // First byte of bootloader response is a status code (0x00 = success)
-        if resp.is_empty() {
-            return Ok(resp);
-        }
-        let status = *resp
-            .first()
-            .ok_or_else(|| SoloError::ProtocolError("empty bootloader response".into()))?;
-        if status != 0x00 {
-            return Err(SoloError::ProtocolError(format!(
-                "Bootloader error status: 0x{status:02X}"
-            )));
-        }
-        Ok(resp
-            .get(1..)
-            .ok_or_else(|| SoloError::ProtocolError("bootloader response too short".into()))?
-            .to_vec())
-    }
 }
 
-impl crate::device::HidDevice for SoloHid {
+impl crate::device::HidDevice for HidTransport {
     fn send_recv(&self, cmd: u8, data: &[u8]) -> Result<Vec<u8>> {
         Self::send_recv(self, cmd, data)
-    }
-
-    fn send_bootloader_cmd(&self, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
-        Self::send_bootloader_cmd(self, cmd, addr, data)
     }
 
     fn send(&self, cmd: u8, data: &[u8]) -> Result<()> {

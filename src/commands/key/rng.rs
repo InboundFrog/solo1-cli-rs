@@ -1,7 +1,8 @@
 use std::io::Write;
 
-use crate::device::{CMD_RNG, HidDevice};
+use crate::device::HidDevice;
 use crate::error::{Result, SoloError};
+use crate::solo1::protocol::CMD_RNG;
 
 /// Get N random bytes from the device, return as hex string.
 ///
