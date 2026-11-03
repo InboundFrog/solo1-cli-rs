@@ -93,18 +93,17 @@ pub fn aes256_cbc_decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>> {
 }
 
 fn to_aes_blocks(data: &[u8]) -> Result<Vec<aes::Block>> {
-    if data.is_empty() || !data.len().is_multiple_of(16) {
+    let (blocks, remainder) = data.as_chunks::<16>();
+
+    if blocks.is_empty() || !remainder.is_empty() {
         return Err(SoloError::CryptoError(format!(
-            "AES-256-CBC input has unexpected length: {}",
-            data.len()
+            "AES-256-CBC input has unexpected length: {}", data.len()
         )));
     }
-    data.chunks_exact(16)
-        .map(|chunk| {
-            aes::Block::try_from(chunk)
-                .map_err(|_| SoloError::CryptoError("AES block must be 16 bytes".into()))
-        })
-        .collect()
+
+    Ok(blocks.iter().copied()
+        .map(aes::Block::from)
+        .collect())
 }
 
 fn from_aes_blocks(blocks: &[aes::Block]) -> Vec<u8> {
