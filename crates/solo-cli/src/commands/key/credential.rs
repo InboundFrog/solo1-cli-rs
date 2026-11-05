@@ -61,10 +61,10 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     let mut pin_uv_auth_protocols = Vec::new();
     if let Some(Value::Array(protos)) = find_int_key(&pairs, 0x06) {
         for v in protos {
-            if let Value::Integer(i) = v {
-                if let Ok(n) = (*i).try_into() {
-                    pin_uv_auth_protocols.push(n);
-                }
+            if let Value::Integer(i) = v
+                && let Ok(n) = (*i).try_into()
+            {
+                pin_uv_auth_protocols.push(n);
             }
         }
     }

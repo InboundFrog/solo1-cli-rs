@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
@@ -28,7 +28,7 @@ indicatif = "0.18"
 libc = "0.2"
 log = "0.4"
 p256 = { version = "0.14", features = ["ecdsa", "pem", "pkcs8", "ecdh"] }
-rand = "0.10.2"
+rand = "0.10.3"
 reqwest = { version = "0.13", features = ["blocking", "json"] }
 rpassword = "7"
 rusb = "0.9"

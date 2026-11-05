@@ -46,10 +46,10 @@ pub fn find_uint(pairs: &[(Value, Value)], key: i64) -> Option<u64> {
 #[must_use]
 pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
     pairs.iter().find_map(|(k, v)| {
-        if let Value::Text(s) = k {
-            if s == key {
-                return Some(v);
-            }
+        if let Value::Text(s) = k
+            && s == key
+        {
+            return Some(v);
         }
         None
     })

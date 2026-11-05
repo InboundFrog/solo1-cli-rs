@@ -333,10 +333,10 @@ impl HidTransport {
                 }
             }
 
-            if let Some(tb) = total_bcnt {
-                if collected >= tb || frames.len() == 1 && tb <= 57 {
-                    break;
-                }
+            if let Some(tb) = total_bcnt
+                && (collected >= tb || frames.len() == 1 && tb <= 57)
+            {
+                break;
             }
         }
 
