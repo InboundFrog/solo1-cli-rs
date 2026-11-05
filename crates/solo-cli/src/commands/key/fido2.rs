@@ -354,10 +354,10 @@ mod tests {
         pairs.iter().find_map(|(k, v)| {
             if let Value::Integer(i) = k {
                 let ki: i64 = (*i).try_into().ok()?;
-                if ki == key {
-                    if let Value::Bytes(b) = v {
-                        return Some(b.clone());
-                    }
+                if ki == key
+                    && let Value::Bytes(b) = v
+                {
+                    return Some(b.clone());
                 }
             }
             None
