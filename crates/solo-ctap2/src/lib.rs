@@ -572,13 +572,21 @@ impl ClientPinSession {
     /// Encrypt the PIN hash for getPinToken.
     ///
     /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
-    /// section 6.5.1), then hashed.
+    /// section 6.5.1), then hashed. If that changes the text, a warning is logged
+    /// (without any PIN data), because a PIN set in another form by a different
+    /// tool will be rejected by the key.
     ///
     /// # Errors
     /// Returns [`Error::Crypto`] if the SHA-256 PIN hash is too short to truncate
     /// or the AES-256-CBC encryption fails.
     pub fn encrypt_pin_hash(&self, pin: &str) -> Result<[u8; 16]> {
-        let pin = nfc_pin(pin)?;
+        let normalized = nfc_pin(pin)?;
+        if normalized.as_str() != pin {
+            log::warn!(
+                "The PIN was changed to Unicode NFC form before use. A PIN that was set in another form by a different tool will be rejected."
+            );
+        }
+        let pin = normalized;
         let pin_hash_full = Zeroizing::new(<[u8; 32]>::from(Sha256::digest(pin.as_bytes())));
         let pin_hash_prefix = pin_hash_full
             .get(..16)

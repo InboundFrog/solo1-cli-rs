@@ -2129,6 +2129,7 @@ dependencies = [
  "ciborium",
  "hmac",
  "icu_normalizer",
+ "log",
  "p256",
  "rand",
  "sha2",
