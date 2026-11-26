@@ -532,22 +532,39 @@ fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u
 
 /// Returns the 32 attestation key bytes from the contents of a key file.
 ///
-/// A file of exactly 32 bytes is a raw key. Any other file must be UTF-8 text
-/// that holds 64 hex digits, with optional white space around them.
+/// The format is chosen from the content, never from the file length:
+/// 1. If every byte is printable ASCII or white space, the file is text.
+/// 2. A text file must hold exactly 64 hex digits. White space anywhere in it
+///    is ignored. Anything else (such as a `0x` prefix) is an error.
+/// 3. Any other file is binary and must be exactly 32 bytes, which are the key.
+///
+/// Error messages never quote the file, because it holds a secret key.
 fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
-    if raw.len() == 32 {
+    let is_text = raw.iter().all(|b| b.is_ascii_graphic() || b.is_ascii_whitespace());
+    if !is_text {
+        if raw.len() != 32 {
+            return Err(Error::Firmware(format!(
+                "Attestation key file is binary, so it must be exactly 32 bytes, got {}",
+                raw.len()
+            )));
+        }
         return Ok(raw.to_vec());
     }
-    let text = std::str::from_utf8(raw)
-        .map_err(|_| Error::Firmware("Attestation key file must be 32 raw bytes or 64 hex digits".into()))?;
-    let key = hex::decode(text.trim()).map_err(|e| Error::Firmware(format!("Invalid attestation key hex: {e}")))?;
-    if key.len() != 32 {
+    let digits: Vec<u8> = raw.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+    if !digits.iter().all(u8::is_ascii_hexdigit) {
+        return Err(Error::Firmware(
+            "Attestation key file is text, so it must hold exactly 64 hex digits, \
+             but it has a character that is not a hex digit"
+                .into(),
+        ));
+    }
+    if digits.len() != 64 {
         return Err(Error::Firmware(format!(
-            "Attestation key must be 32 bytes, got {}",
-            key.len()
+            "Attestation key file is text, so it must hold exactly 64 hex digits, got {}",
+            digits.len()
         )));
     }
-    Ok(key)
+    hex::decode(&digits).map_err(|_| Error::Firmware("Attestation key file has invalid hex".into()))
 }
 
 /// Merge multiple Intel HEX files into one output HEX file.
@@ -593,7 +610,7 @@ pub fn merge_hex_files(
         ));
     }
 
-    // Read attestation key bytes (32 bytes raw)
+    // Read attestation key bytes (32 raw bytes, or 64 hex digits as text)
     let key_bytes: Vec<u8> = if let Some(key_path) = attestation_key {
         parse_attestation_key(&std::fs::read(key_path)?)?
     } else {
@@ -1199,27 +1216,74 @@ mod tests {
         assert_eq!(auth_word_addr, 0x0803_5FF8);
     }
 
+    fn key_err(raw: &[u8]) -> String {
+        parse_attestation_key(raw).unwrap_err().to_string()
+    }
+
     #[test]
     fn test_parse_attestation_key_formats() {
         let key = [0xabu8; 32];
         let hex_key = "ab".repeat(32);
-        assert_eq!(parse_attestation_key(&key).unwrap(), key);
-        let lf = parse_attestation_key(format!("{hex_key}\n").as_bytes()).unwrap();
-        let crlf = parse_attestation_key(format!("{hex_key}\r\n").as_bytes()).unwrap();
-        assert_eq!(lf, key);
-        assert_eq!(crlf, key);
-        assert_eq!(parse_attestation_key(hex_key.as_bytes()).unwrap(), key);
+        let mut one_unprintable = [b'a'; 32];
+        one_unprintable[0] = 0;
+        let spaced = "ab ".repeat(32);
+        let xxd = format!("{}\n{}\n", "ab".repeat(30), "ab".repeat(2));
+        let ok = |raw: &[u8]| parse_attestation_key(raw).unwrap();
+
+        assert_eq!(ok(&key), key);
+        assert_eq!(ok(&one_unprintable), one_unprintable);
+        assert_eq!(ok(hex_key.as_bytes()), key);
+        assert_eq!(ok(format!("{hex_key}\n").as_bytes()), key);
+        assert_eq!(ok(format!("{hex_key}\r\n").as_bytes()), key);
+        assert_eq!(ok(format!(" \t{hex_key} \t").as_bytes()), key);
+        assert_eq!(ok("AB".repeat(32).as_bytes()), key);
+        assert_eq!(ok(xxd.as_bytes()), key);
+        assert_eq!(ok(spaced.as_bytes()), key);
     }
 
     #[test]
-    fn test_parse_attestation_key_rejects_bad_files() {
-        assert!(parse_attestation_key(&[1u8; 31]).is_err());
-        assert!(parse_attestation_key(&[1u8; 33]).is_err());
-        assert!(parse_attestation_key(&[0xffu8; 64]).is_err());
-        assert!(parse_attestation_key(&[0xffu8; 65]).is_err());
-        assert!(parse_attestation_key("zz".repeat(32).as_bytes()).is_err());
-        assert!(parse_attestation_key(b"abcd").is_err());
-        assert!(parse_attestation_key(b"").is_err());
+    fn test_parse_attestation_key_rejects_text_that_is_not_64_hex_digits() {
+        let hex64 = "ab".repeat(32);
+        let bad: Vec<Vec<u8>> = vec![
+            "ab".repeat(16).into_bytes(),                 // 32 bytes of hex text
+            format!("{}\n", "a".repeat(31)).into_bytes(), // 32 bytes with LF
+            b"this is a 32 byte note, no key.".to_vec(),  // 32 bytes of other text
+            format!("0x{hex64}").into_bytes(),
+            "a".repeat(63).into_bytes(),
+            "a".repeat(65).into_bytes(),
+            "a".repeat(66).into_bytes(),
+            "a".repeat(128).into_bytes(),
+            "zz".repeat(32).into_bytes(),
+            b"abcd".to_vec(),
+            Vec::new(),
+            b" \t\r\n".to_vec(),
+        ];
+        for raw in &bad {
+            assert!(parse_attestation_key(raw).is_err(), "accepted {} bytes", raw.len());
+        }
+    }
+
+    #[test]
+    fn test_parse_attestation_key_rejects_bad_binary_lengths() {
+        for len in [31, 33, 64, 65] {
+            assert!(parse_attestation_key(&vec![0xffu8; len]).is_err(), "len {len}");
+            assert!(parse_attestation_key(&vec![0x01u8; len]).is_err(), "len {len}");
+        }
+    }
+
+    #[test]
+    fn test_parse_attestation_key_errors_name_format_and_hide_content() {
+        let binary = key_err(&[0xffu8; 31]);
+        assert!(binary.contains("binary") && binary.contains("32 bytes") && binary.contains("got 31"));
+
+        let bad_char = key_err("zz".repeat(32).as_bytes());
+        assert!(bad_char.contains("text") && bad_char.contains("not a hex digit"));
+        assert!(!bad_char.contains("zz"));
+
+        let hex32 = "1234567890abcdef".repeat(2);
+        let count = key_err(hex32.as_bytes());
+        assert!(count.contains("text") && count.contains("64 hex digits") && count.contains("got 32"));
+        assert!(!count.contains(&hex32) && !count.contains("1234"));
     }
 
     #[test]
