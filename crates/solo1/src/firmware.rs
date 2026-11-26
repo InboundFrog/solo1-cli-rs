@@ -446,44 +446,83 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
     0x87, 0x61, 0x82, 0xd8, 0xcd, 0x48, 0xfc, 0x57,
 ];
 
-/// A sparse flash image: bytes at 32-bit addresses.
+/// A sparse flash image: runs of consecutive bytes at 32-bit addresses.
+///
+/// Each map entry is a start address and the bytes that follow it. Runs never
+/// overlap and never touch (no run ends where the next one starts), so each
+/// run is exactly one output segment. Holes between runs stay empty.
 ///
 /// A later write to the same address replaces the earlier byte. This matches
 /// the Python `IntelHex` merge with `overlap="replace"`.
 #[derive(Default)]
 struct FlashImage {
-    bytes: BTreeMap<u32, u8>,
+    /// Start address -> consecutive bytes.
+    runs: BTreeMap<u32, Vec<u8>>,
+}
+
+/// Exclusive end address of a run, as `u64` so the top of flash does not wrap.
+fn run_end(start: u32, run: &[u8]) -> u64 {
+    u64::from(start).saturating_add(u64::try_from(run.len()).unwrap_or(u64::MAX))
 }
 
 impl FlashImage {
     /// Write `data` at `addr`, replacing any bytes already there.
     ///
+    /// Runs that overlap or touch the new bytes are joined with them into one
+    /// run. On error the image is left unchanged.
+    ///
     /// # Errors
     /// Returns [`Error::Firmware`] if an address in the range overflows 32 bits.
     fn write(&mut self, addr: u32, data: &[u8]) -> Result<()> {
         let overflow = || Error::Firmware("flash address overflow".into());
-        let mut next = Some(addr);
-        for &b in data {
-            let a = next.ok_or_else(overflow)?;
-            self.bytes.insert(a, b);
-            next = a.checked_add(1);
+        if data.is_empty() {
+            return Ok(());
         }
+        let start = u64::from(addr);
+        let end = start
+            .checked_add(u64::try_from(data.len()).map_err(|_| overflow())?)
+            .filter(|&e| e <= 1 << 32)
+            .ok_or_else(overflow)?;
+        let end_off = |k: u32| usize::try_from(end.saturating_sub(u64::from(k))).map_err(|_| overflow());
+        let head_len = |k: u32| usize::try_from(start.saturating_sub(u64::from(k))).map_err(|_| overflow());
+
+        // Runs that overlap or touch [start, end], lowest address first.
+        let last = u32::try_from(end).unwrap_or(u32::MAX);
+        let mut keys: Vec<u32> = self
+            .runs
+            .range(..=last)
+            .rev()
+            .take_while(|&(&k, v)| run_end(k, v) >= start)
+            .map(|(&k, _)| k)
+            .collect();
+        keys.reverse();
+        let mut hit: Vec<(u32, Vec<u8>)> = keys
+            .into_iter()
+            .filter_map(|k| self.runs.remove(&k).map(|v| (k, v)))
+            .collect();
+
+        // Only the highest run can stick out past `end`; keep that part.
+        let mut tail = match hit.last_mut() {
+            Some((k, v)) if run_end(*k, v) > end => v.split_off(end_off(*k)?),
+            _ => Vec::new(),
+        };
+        // Only the lowest run can start before `addr`; keep that part.
+        let (new_start, mut joined) = match hit.first_mut() {
+            Some((k, v)) if *k < addr => {
+                v.truncate(head_len(*k)?);
+                (*k, core::mem::take(v))
+            }
+            _ => (addr, Vec::new()),
+        };
+        joined.extend_from_slice(data);
+        joined.append(&mut tail);
+        self.runs.insert(new_start, joined);
         Ok(())
     }
 
-    /// Join runs of consecutive addresses into `(start, bytes)` segments, sorted by address.
+    /// The runs as `(start, bytes)` segments, sorted by address.
     fn segments(&self) -> Vec<(u32, Vec<u8>)> {
-        let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
-        let mut prev: Option<u32> = None;
-        for (&addr, &b) in &self.bytes {
-            let joins = prev.and_then(|p| p.checked_add(1)) == Some(addr);
-            match segments.last_mut() {
-                Some((_, data)) if joins => data.push(b),
-                _ => segments.push((addr, vec![b])),
-            }
-            prev = Some(addr);
-        }
-        segments
+        self.runs.iter().map(|(&addr, run)| (addr, run.clone())).collect()
     }
 }
 
@@ -1090,6 +1129,156 @@ mod tests {
         let mut img = FlashImage::default();
         img.write(u32::MAX, &[1]).unwrap();
         assert_eq!(img.segments(), vec![(u32::MAX, vec![1])]);
+    }
+
+    /// Image with runs `[10..14)`, `[20..24)` and `[30..34)`, filled with 1, 2 and 3.
+    fn three_runs() -> FlashImage {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(20, &[2; 4]).unwrap();
+        img.write(30, &[3; 4]).unwrap();
+        img
+    }
+
+    #[test]
+    fn test_flash_image_write_inside_run_keeps_both_sides() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 6]).unwrap();
+        img.write(12, &[9, 9]).unwrap();
+        assert_eq!(img.segments(), vec![(10, vec![1, 1, 9, 9, 1, 1])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_overlaps_run_start() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(8, &[9; 4]).unwrap();
+        assert_eq!(img.segments(), vec![(8, vec![9, 9, 9, 9, 1, 1])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_overlaps_run_end() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(12, &[9; 4]).unwrap();
+        assert_eq!(img.segments(), vec![(10, vec![1, 1, 9, 9, 9, 9])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_exactly_covers_run() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(10, &[9; 4]).unwrap();
+        assert_eq!(img.segments(), vec![(10, vec![9; 4])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_covers_run_and_extends_both_sides() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(8, &[9; 8]).unwrap();
+        assert_eq!(img.segments(), vec![(8, vec![9; 8])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_bridges_three_runs_and_holes() {
+        let mut img = three_runs();
+        img.write(12, &[9; 20]).unwrap();
+        let mut want = vec![1, 1];
+        want.extend([9; 20]);
+        want.extend([3, 3]);
+        assert_eq!(img.segments(), vec![(10, want)]);
+    }
+
+    #[test]
+    fn test_flash_image_write_touching_run_front_joins() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1, 2]).unwrap();
+        img.write(8, &[7, 8]).unwrap();
+        assert_eq!(img.segments(), vec![(8, vec![7, 8, 1, 2])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_touching_run_back_joins() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1, 2]).unwrap();
+        img.write(12, &[7, 8]).unwrap();
+        assert_eq!(img.segments(), vec![(10, vec![1, 2, 7, 8])]);
+    }
+
+    #[test]
+    fn test_flash_image_empty_write_is_noop() {
+        let mut img = FlashImage::default();
+        img.write(5, &[]).unwrap();
+        img.write(u32::MAX, &[]).unwrap();
+        assert_eq!(img.segments(), Vec::<(u32, Vec<u8>)>::new());
+        let mut img = three_runs();
+        let before = img.segments();
+        img.write(12, &[]).unwrap();
+        img.write(u32::MAX, &[]).unwrap();
+        assert_eq!(img.segments(), before);
+    }
+
+    #[test]
+    fn test_flash_image_write_ending_at_top_of_address_space_is_valid() {
+        let mut img = FlashImage::default();
+        img.write(u32::MAX - 1, &[1, 2]).unwrap();
+        assert_eq!(img.segments(), vec![(u32::MAX - 1, vec![1, 2])]);
+        img.write(u32::MAX - 3, &[7, 8]).unwrap();
+        assert_eq!(img.segments(), vec![(u32::MAX - 3, vec![7, 8, 1, 2])]);
+    }
+
+    #[test]
+    fn test_flash_image_failed_overflow_write_leaves_image_unchanged() {
+        let mut img = three_runs();
+        let before = img.segments();
+        assert!(img.write(u32::MAX - 1, &[1, 2, 3]).is_err());
+        assert_eq!(img.segments(), before);
+    }
+
+    #[test]
+    fn test_flash_image_matches_per_byte_model() {
+        // Reference model: one map entry per byte (the old implementation).
+        fn model_segments(model: &BTreeMap<u32, u8>) -> Vec<(u32, Vec<u8>)> {
+            let mut out: Vec<(u32, Vec<u8>)> = Vec::new();
+            for (&a, &b) in model {
+                match out.last_mut() {
+                    Some((s, d)) if u64::from(*s) + d.len() as u64 == u64::from(a) => d.push(b),
+                    _ => out.push((a, vec![b])),
+                }
+            }
+            out
+        }
+        for base in [1000_u32, u32::MAX - 63] {
+            let mut img = FlashImage::default();
+            let mut model: BTreeMap<u32, u8> = BTreeMap::new();
+            let mut state: u64 = 0x1234_5678_9abc_def0;
+            let mut next = move || {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                (state >> 33) as u32
+            };
+            for i in 0..400_u32 {
+                let offset = next() % 64;
+                let len = next() % 9;
+                // Keep every write inside the window (the window may end at u32::MAX).
+                let len = len.min(64 - offset);
+                let data: Vec<u8> = (0..len).map(|j| (i as u8).wrapping_add(j as u8)).collect();
+                let addr = base + offset;
+                img.write(addr, &data).unwrap();
+                for (j, &b) in data.iter().enumerate() {
+                    model.insert(addr + j as u32, b);
+                }
+                let segs = img.segments();
+                assert_eq!(segs, model_segments(&model), "write {i}");
+                // Invariant: no empty runs, and a gap between neighbours.
+                assert!(segs.iter().all(|(_, d)| !d.is_empty()));
+                for w in segs.windows(2) {
+                    assert!(u64::from(w[0].0) + (w[0].1.len() as u64) < u64::from(w[1].0));
+                }
+            }
+        }
     }
 
     #[test]
