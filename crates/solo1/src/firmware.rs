@@ -1,7 +1,7 @@
 //! Firmware file handling: Intel HEX parsing, merging, signing, and the
 //! firmware JSON format used by the Solo bootloader.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use ihex::Record;
@@ -19,7 +19,7 @@ pub struct FirmwareJson {
     pub firmware: String,
     pub signature: String,
     #[serde(default)]
-    pub versions: HashMap<String, VersionedSignature>,
+    pub versions: BTreeMap<String, VersionedSignature>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -854,7 +854,7 @@ pub fn create_firmware_json_versioned(hex_path: &Path, sig_v1: &[u8], sig_v2: &[
     let hex_text = std::fs::read_to_string(hex_path)?;
     let firmware_b64 = websafe_b64_encode(hex_text.as_bytes());
 
-    let mut versions = HashMap::new();
+    let mut versions = BTreeMap::new();
     versions.insert(
         "<=2.5.3".to_string(),
         VersionedSignature {
@@ -881,7 +881,7 @@ pub fn create_firmware_json(firmware: &[u8], signature: &[u8]) -> FirmwareJson {
     FirmwareJson {
         firmware: websafe_b64_encode(firmware),
         signature: websafe_b64_encode(signature),
-        versions: HashMap::new(),
+        versions: BTreeMap::new(),
     }
 }
 
@@ -993,6 +993,56 @@ mod tests {
         assert_eq!(sig, b"default");
         let sig = fw.signature_for_bootloader(Some(&old_version)).unwrap();
         assert_eq!(sig, b"old");
+    }
+
+    #[test]
+    fn test_firmware_json_to_json_sorted_and_stable() {
+        let fw = create_firmware_json_versioned_for_test();
+        let first = fw.to_json().unwrap();
+        for _ in 0..20 {
+            assert_eq!(fw.to_json().unwrap(), first);
+        }
+        let lt = first.find("\"<=2.5.3\"").unwrap();
+        let gt = first.find("\">2.5.3\"").unwrap();
+        assert!(lt < gt);
+    }
+
+    fn create_firmware_json_versioned_for_test() -> FirmwareJson {
+        let mut versions = BTreeMap::new();
+        versions.insert(
+            ">2.5.3".to_string(),
+            VersionedSignature {
+                signature: "bmV3".into(),
+            },
+        );
+        versions.insert(
+            "<=2.5.3".to_string(),
+            VersionedSignature {
+                signature: "b2xk".into(),
+            },
+        );
+        FirmwareJson {
+            firmware: "SGVsbG8".into(),
+            signature: "ZGVmYXVsdA".into(),
+            versions,
+        }
+    }
+
+    #[test]
+    fn test_firmware_json_overlapping_constraints_pick_first_sorted() {
+        let json = r#"{
+            "firmware": "SGVsbG8",
+            "signature": "ZGVmYXVsdA",
+            "versions": {
+                ">2.0.0": {"signature": "bmV3"},
+                "<=3.0.0": {"signature": "b2xk"}
+            }
+        }"#;
+        let fw: FirmwareJson = serde_json::from_str(json).unwrap();
+        let v = FirmwareVersion::new(2, 5, 0);
+        for _ in 0..20 {
+            assert_eq!(fw.signature_for_version(&v).unwrap(), b"old");
+        }
     }
 
     // ── read_bootloader_version ─────────────────────────────────────────────
