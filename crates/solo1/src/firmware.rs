@@ -533,24 +533,33 @@ fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u
 /// Returns the 32 attestation key bytes from the contents of a key file.
 ///
 /// The format is chosen from the content, never from the file length:
-/// 1. If every byte is printable ASCII or white space, the file is text.
+/// 1. One UTF-8 byte order mark at the start is ignored when deciding if the
+///    file is text. If every other byte is printable ASCII or white space,
+///    the file is text.
 /// 2. A text file must hold exactly 64 hex digits. White space anywhere in it
 ///    is ignored. Anything else (such as a `0x` prefix) is an error.
-/// 3. Any other file is binary and must be exactly 32 bytes, which are the key.
+/// 3. Any other file is binary and must be exactly 32 bytes, which are the
+///    key. The byte order mark is not removed here.
+///
+/// A limit remains: a 32-byte file with any byte that is not printable ASCII
+/// or white space is taken as a raw key, because a raw key can be any 32
+/// bytes and cannot be told apart from such a file.
 ///
 /// Error messages never quote the file, because it holds a secret key.
 fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
-    let is_text = raw.iter().all(|b| b.is_ascii_graphic() || b.is_ascii_whitespace());
+    let body = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw);
+    let is_text = body.iter().all(|b| b.is_ascii_graphic() || b.is_ascii_whitespace());
     if !is_text {
         if raw.len() != 32 {
             return Err(Error::Firmware(format!(
-                "Attestation key file is binary, so it must be exactly 32 bytes, got {}",
+                "Attestation key file is not plain ASCII text, so it is read as a raw key \
+                 and must be exactly 32 bytes, got {}",
                 raw.len()
             )));
         }
         return Ok(raw.to_vec());
     }
-    let digits: Vec<u8> = raw.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+    let digits: Vec<u8> = body.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
     if !digits.iter().all(u8::is_ascii_hexdigit) {
         return Err(Error::Firmware(
             "Attestation key file is text, so it must hold exactly 64 hex digits, \
@@ -1272,18 +1281,56 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_attestation_key_bom_only_applies_to_text() {
+        let key = [0xabu8; 32];
+        let hex_key = "ab".repeat(32);
+        let bom = b"\xEF\xBB\xBF";
+        let with_bom = |tail: &str| [bom.as_slice(), tail.as_bytes()].concat();
+
+        assert_eq!(
+            parse_attestation_key(&with_bom(&format!("{hex_key}\r\n"))).unwrap(),
+            key
+        );
+        assert_eq!(parse_attestation_key(&with_bom(&hex_key)).unwrap(), key);
+        assert!(key_err(&with_bom(&"ab".repeat(16))).contains("text"));
+        assert!(key_err(bom).contains("text"));
+
+        // A raw key may start with the same three bytes: it is returned unchanged.
+        let raw_key = [bom.as_slice(), &[0xffu8; 29]].concat();
+        assert_eq!(raw_key.len(), 32);
+        assert_eq!(parse_attestation_key(&raw_key).unwrap(), raw_key);
+
+        // The BOM is not removed on the binary path, so 35 bytes is an error.
+        let too_long = [bom.as_slice(), &[0xffu8; 32]].concat();
+        let err = key_err(&too_long);
+        assert!(err.contains("raw key") && err.contains("got 35"));
+    }
+
+    #[test]
+    fn test_parse_attestation_key_rejects_utf16_text() {
+        let utf16: Vec<u8> = [0xff, 0xfe]
+            .into_iter()
+            .chain("ab".repeat(32).bytes().flat_map(|b| [b, 0]))
+            .collect();
+        assert!(key_err(&utf16).contains("not plain ASCII text"));
+    }
+
+    #[test]
     fn test_parse_attestation_key_errors_name_format_and_hide_content() {
-        let binary = key_err(&[0xffu8; 31]);
-        assert!(binary.contains("binary") && binary.contains("32 bytes") && binary.contains("got 31"));
-
-        let bad_char = key_err("zz".repeat(32).as_bytes());
+        // Each input uses characters that cannot appear in any of our messages.
+        let bad_char = key_err(format!("{}#", "a".repeat(63)).as_bytes());
         assert!(bad_char.contains("text") && bad_char.contains("not a hex digit"));
-        assert!(!bad_char.contains("zz"));
+        assert!(!bad_char.contains('#') && !bad_char.contains('\''));
 
-        let hex32 = "1234567890abcdef".repeat(2);
-        let count = key_err(hex32.as_bytes());
+        let count = key_err("7".repeat(32).as_bytes());
         assert!(count.contains("text") && count.contains("64 hex digits") && count.contains("got 32"));
-        assert!(!count.contains(&hex32) && !count.contains("1234"));
+        assert!(!count.contains('7'));
+
+        let err = parse_attestation_key(&[0xc3u8; 33]).unwrap_err();
+        assert!(err.to_string().contains("raw key") && err.to_string().contains("got 33"));
+        for text in [format!("{err}"), format!("{err:?}")] {
+            assert!(!text.contains("c3") && !text.contains("C3") && !text.contains("195"));
+        }
     }
 
     #[test]
