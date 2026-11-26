@@ -85,6 +85,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `key rng feedkernel` now prints the kernel entropy count as a decimal number, without a misleading `0x` prefix. (#102)
 - Firmware writes to the Solo 1 bootloader now fail on a flash address overflow instead of repeatedly writing to the
   last address. (#112)
+- `solo key rng raw` and `solo monitor` now end quietly with exit code 0 when the program reading their output closes
+  the pipe, instead of printing a "Broken pipe" error and exiting with code 1. (#125)
 
 ### Security
 
