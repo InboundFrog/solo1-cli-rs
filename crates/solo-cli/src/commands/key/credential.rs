@@ -280,7 +280,7 @@ fn enumerate_credentials_for_rp(
             })
             .unwrap_or_else(|| "<unknown>".into());
 
-        // credentialId: key 0x07 → map with "id" (bytes); store as base64
+        // credentialId: key 0x07 → map with "id" (bytes); keep the raw bytes
         let cred_id: Vec<u8> = find_int_key(&cred_pairs, 0x07)
             .and_then(|v| {
                 if let Value::Map(m) = v {
@@ -468,7 +468,7 @@ pub fn cmd_credential_rm(
     let del_pin_uv_auth = pin_uv_auth(pin_token, &del_auth_msg)?;
 
     // Send: authenticatorCredentialManagement CBOR =
-    //   {0x01: 6, 0x02: {0x01: cred_id_bytes}, 0x03: 1, 0x04: pinUvAuthParam}
+    //   {0x01: 6, 0x02: {0x02: {"type": "public-key", "id": cred_id_bytes}}, 0x03: 1, 0x04: pinUvAuthParam}
     let del_cbor = int_map([
         (0x01, cbor_int(6)),                 // subCommand = deleteCredential
         (0x02, del_params),                  // subCommandParams
