@@ -1,6 +1,6 @@
 use crate::commands::key::common;
 use crate::error::{Result, SoloError};
-use solo_ctap2::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
+use solo_ctap2::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_text_str, find_uint, int_map};
 use solo_ctap2::{
     check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set, parse_cbor_map_response,
     parse_cbor_map_response_allow_empty, pin_uv_auth,
@@ -192,10 +192,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
         let rp_id: String = find_int_key(&rp_pairs, 0x03)
             .and_then(|v| {
                 if let Value::Map(m) = v {
-                    match find_text_key(m, "id") {
-                        Some(Value::Text(id)) => Some(id.clone()),
-                        _ => None,
-                    }
+                    find_text_str(m, "id").map(str::to_string)
                 } else {
                     None
                 }
@@ -270,10 +267,7 @@ fn enumerate_credentials_for_rp(
             .and_then(|v| {
                 if let Value::Map(m) = v {
                     // prefer "name", fall back to "displayName", then "id" as hex
-                    let text_field = |key: &str| match find_text_key(m, key) {
-                        Some(Value::Text(n)) => Some(n.clone()),
-                        _ => None,
-                    };
+                    let text_field = |key: &str| find_text_str(m, key).map(str::to_string);
                     text_field("name")
                         .or_else(|| text_field("displayName"))
                         .or_else(|| match find_text_key(m, "id") {
