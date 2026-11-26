@@ -480,6 +480,22 @@ pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
     Ok(truncated.to_vec())
 }
 
+/// Check that `pin` is allowed as a new PIN (CTAP 2.1, setPIN and changePIN).
+///
+/// A new PIN has at least 4 Unicode code points and at most 63 bytes of UTF-8.
+///
+/// # Errors
+/// Returns [`Error::Protocol`] if the PIN is too short or too long.
+pub fn validate_new_pin(pin: &str) -> Result<()> {
+    if pin.chars().count() < 4 {
+        return Err(Error::Protocol("PIN must be at least 4 characters".into()));
+    }
+    if pin.len() > 63 {
+        return Err(Error::Protocol("PIN must be at most 63 bytes in UTF-8".into()));
+    }
+    Ok(())
+}
+
 /// Represents an established shared secret with a CTAP2 device.
 pub struct ClientPinSession {
     shared_secret: [u8; 32],
@@ -504,20 +520,19 @@ impl ClientPinSession {
 
     /// Encrypt a PIN for setPin or changePin.
     ///
+    /// The PIN is padded with zero bytes to 64 bytes before encryption.
+    ///
     /// # Errors
-    /// Returns [`Error::Crypto`] if the PIN cannot be padded or the AES-256-CBC
-    /// encryption fails.
+    /// Returns [`Error::Protocol`] if the PIN is not valid (see [`validate_new_pin`]),
+    /// or [`Error::Crypto`] if the AES-256-CBC encryption fails.
     pub fn encrypt_pin(&self, pin: &str) -> Result<Vec<u8>> {
+        validate_new_pin(pin)?;
         let pin_bytes = pin.as_bytes();
         let mut padded_pin = [0u8; 64];
-        let copy_len = pin_bytes.len().min(64);
-        let src = pin_bytes
-            .get(..copy_len)
-            .ok_or_else(|| Error::Crypto("PIN slice out of range".into()))?;
         padded_pin
-            .get_mut(..copy_len)
+            .get_mut(..pin_bytes.len())
             .ok_or_else(|| Error::Crypto("PIN buffer out of range".into()))?
-            .copy_from_slice(src);
+            .copy_from_slice(pin_bytes);
 
         aes256_cbc_encrypt(&self.shared_secret, &padded_pin)
     }
@@ -630,6 +645,33 @@ mod tests {
         ];
         let texts = extract_cbor_text_responses(&values);
         assert_eq!(texts, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn test_validate_new_pin_length_rules() {
+        assert!(validate_new_pin("abc").is_err());
+        assert!(
+            validate_new_pin("\u{e9}\u{e9}\u{e9}").is_err(),
+            "3 code points, 6 bytes"
+        );
+        assert!(
+            validate_new_pin("\u{e9}\u{e9}\u{e9}\u{e9}").is_ok(),
+            "4 code points, 8 bytes"
+        );
+        assert!(validate_new_pin(&"a".repeat(63)).is_ok());
+        assert!(validate_new_pin(&"a".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn test_encrypt_pin_rejects_invalid_and_keeps_full_pin() {
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        assert!(session.encrypt_pin("abc").is_err());
+        assert!(session.encrypt_pin(&"a".repeat(64)).is_err());
+        let pin = "a".repeat(63);
+        let dec = session.decrypt_pin_token(&session.encrypt_pin(&pin).unwrap()).unwrap();
+        assert_eq!(&dec[..63], pin.as_bytes());
+        assert_eq!(dec[63], 0);
     }
 
     #[test]
