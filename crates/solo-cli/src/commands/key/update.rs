@@ -17,7 +17,7 @@ const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 ///
 /// Each failed attempt that will be tried again is passed to `report` as text.
 /// A message that is the same as the one just before it is not reported again.
-/// The error from the last attempt is not reported, it is returned.
+/// The error from the last attempt is not reported. It is returned.
 ///
 /// # Errors
 /// Returns the error of the last attempt when the time is up.
