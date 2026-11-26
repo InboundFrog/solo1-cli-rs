@@ -66,7 +66,9 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_file() => {
-            // ponytail: the old file is removed before the new one is written, so a failed write loses the old key (truncating did too). Write a temporary file and rename it if the old key must survive.
+            // ponytail: the old file is removed before the new one is written,
+            // so a failed write loses the old key (truncating did too). Write
+            // a temporary file and rename it if the old key must survive.
             std::fs::remove_file(path)?;
         }
         Ok(_) => {
