@@ -300,6 +300,30 @@ mod tests {
         assert!(!target.exists());
     }
 
+    /// If the old file cannot be removed, the call fails and the old file is not written into.
+    #[test]
+    fn test_write_private_key_fails_when_old_file_cannot_be_removed() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        // Root ignores directory permissions, so this test cannot work as root.
+        if std::fs::metadata(dir.path()).unwrap().uid() == 0 {
+            return;
+        }
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let path = sub.join("signing-key.pem");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = write_private_key(&path, KEY_PEM);
+        let content = std::fs::read_to_string(&path);
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(content.unwrap(), "old");
+    }
+
     /// A path that is a directory gives an error and is left untouched.
     #[test]
     fn test_write_private_key_rejects_non_regular_path() {
