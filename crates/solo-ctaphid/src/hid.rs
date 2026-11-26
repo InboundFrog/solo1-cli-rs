@@ -173,16 +173,7 @@ impl HidTransport {
             self.device.write(&encoded)?;
         }
 
-        let response = self.recv_response(CTAPHID_INIT, Duration::from_secs(5))?;
-        if response.len() < 12 {
-            return Err(Error::Protocol("CTAPHID_INIT response too short".into()));
-        }
-        // Response: nonce[8] | channel_id[4] | ...
-        self.channel_id.copy_from_slice(
-            response
-                .get(8..12)
-                .ok_or_else(|| Error::Protocol("CTAPHID_INIT response too short".into()))?,
-        );
+        self.channel_id = wait_for_init_response(&mut || self.read_frame(), nonce, Duration::from_secs(5))?;
         log::debug!("CTAPHID_INIT: assigned channel_id {}", hex::encode(self.channel_id));
         Ok(())
     }
@@ -268,89 +259,126 @@ impl HidTransport {
     /// returns a CTAPHID error, a HID read fails, or the frames cannot be
     /// reassembled.
     pub fn recv_response(&self, expected_cmd: u8, timeout: Duration) -> Result<Vec<u8>> {
-        log::debug!("HID recv: waiting for cmd=0x{expected_cmd:02X}");
-        let start = Instant::now();
-        let mut frames: Vec<CtapHidFrame> = Vec::new();
-        let mut total_bcnt: Option<usize> = None;
-        let mut collected: usize = 0;
+        receive_message(&mut || self.read_frame(), self.channel_id, expected_cmd, timeout)
+    }
+}
 
-        loop {
-            if start.elapsed() > timeout {
-                return Err(Error::Timeout);
-            }
-            let Some(frame) = self.read_frame()? else {
-                continue;
-            };
+/// Read frames from `read_frame` until one complete message for `channel_id`
+/// with command `expected_cmd` has arrived.
+fn receive_message(
+    read_frame: &mut impl FnMut() -> Result<Option<CtapHidFrame>>,
+    channel_id: [u8; 4],
+    expected_cmd: u8,
+    timeout: Duration,
+) -> Result<Vec<u8>> {
+    log::debug!("HID recv: waiting for cmd=0x{expected_cmd:02X}");
+    let start = Instant::now();
+    let mut frames: Vec<CtapHidFrame> = Vec::new();
+    let mut total_bcnt: Option<usize> = None;
+    let mut collected: usize = 0;
 
-            // Skip frames not for our channel (unless this is INIT response on broadcast)
-            let for_us = frame.channel_id == self.channel_id || frame.channel_id == CTAPHID_BROADCAST_CID;
-            if !for_us {
-                log::debug!("HID recv: ignoring frame for channel {}", hex::encode(frame.channel_id));
-                continue;
-            }
+    loop {
+        if start.elapsed() > timeout {
+            return Err(Error::Timeout);
+        }
+        let Some(frame) = read_frame()? else {
+            continue;
+        };
 
-            match &frame.payload {
-                FramePayload::Init { cmd, bcnt, data } => {
-                    // Check for error
-                    if *cmd == 0x3F {
-                        // CTAPHID_ERROR
-                        let code = data.first().copied().unwrap_or(0);
-                        log::debug!("HID recv: CTAPHID_ERROR code=0x{code:02X}");
-                        return Err(Error::Protocol(format!("CTAPHID error: {code:02x}")));
-                    }
+        // Skip frames not for our channel (unless this is INIT response on broadcast)
+        let for_us = frame.channel_id == channel_id || frame.channel_id == CTAPHID_BROADCAST_CID;
+        if !for_us {
+            log::debug!("HID recv: ignoring frame for channel {}", hex::encode(frame.channel_id));
+            continue;
+        }
+
+        match &frame.payload {
+            FramePayload::Init { cmd, bcnt, data } => {
+                // Check for error
+                if *cmd == 0x3F {
+                    // CTAPHID_ERROR
+                    let code = data.first().copied().unwrap_or(0);
+                    log::debug!("HID recv: CTAPHID_ERROR code=0x{code:02X}");
+                    return Err(Error::Protocol(format!("CTAPHID error: {code:02x}")));
+                }
+                log::debug!(
+                    "HID recv: init frame cmd=0x{:02X} bcnt={} first_data={}",
+                    cmd,
+                    bcnt,
+                    hex::encode(data.get(..data.len().min(16)).unwrap_or(data))
+                );
+                if *cmd != (expected_cmd & 0x7F) {
                     log::debug!(
-                        "HID recv: init frame cmd=0x{:02X} bcnt={} first_data={}",
+                        "HID recv: unexpected cmd 0x{:02X} (want 0x{:02X}), skipping",
                         cmd,
-                        bcnt,
-                        hex::encode(data.get(..data.len().min(16)).unwrap_or(data))
+                        expected_cmd & 0x7F
                     );
-                    if *cmd != (expected_cmd & 0x7F) {
-                        log::debug!(
-                            "HID recv: unexpected cmd 0x{:02X} (want 0x{:02X}), skipping",
-                            cmd,
-                            expected_cmd & 0x7F
-                        );
-                        continue;
-                    }
-                    total_bcnt = Some(usize::from(*bcnt));
-                    collected = data.len().min(usize::from(*bcnt));
-                    frames.clear();
-                    frames.push(frame);
+                    continue;
                 }
-                FramePayload::Cont { seq, .. } => {
-                    log::debug!("HID recv: cont frame seq={seq}");
-                    if let Some(tb) = total_bcnt {
-                        frames.push(frame.clone());
-                        if let FramePayload::Cont { data, .. } = &frame.payload {
-                            collected = collected
-                                .checked_add(data.len())
-                                .ok_or_else(|| Error::Protocol("response length overflow".into()))?;
-                        }
-                        if collected >= tb {
-                            break;
-                        }
-                    }
-                }
+                total_bcnt = Some(usize::from(*bcnt));
+                collected = data.len().min(usize::from(*bcnt));
+                frames.clear();
+                frames.push(frame);
             }
-
-            if let Some(tb) = total_bcnt
-                && (collected >= tb || frames.len() == 1 && tb <= 57)
-            {
-                break;
+            FramePayload::Cont { seq, .. } => {
+                log::debug!("HID recv: cont frame seq={seq}");
+                if let Some(tb) = total_bcnt {
+                    frames.push(frame.clone());
+                    if let FramePayload::Cont { data, .. } = &frame.payload {
+                        collected = collected
+                            .checked_add(data.len())
+                            .ok_or_else(|| Error::Protocol("response length overflow".into()))?;
+                    }
+                    if collected >= tb {
+                        break;
+                    }
+                }
             }
         }
 
-        let (_, payload) = reassemble_frames(&frames)?;
-        log::debug!(
-            "HID recv: reassembled {} bytes: {}",
-            payload.len(),
-            if payload.len() <= 32 {
-                hex::encode(&payload)
-            } else {
-                format!("{}...", hex::encode(payload.get(..32).unwrap_or(&payload)))
-            }
-        );
-        Ok(payload)
+        if let Some(tb) = total_bcnt
+            && (collected >= tb || frames.len() == 1 && tb <= 57)
+        {
+            break;
+        }
+    }
+
+    let (_, payload) = reassemble_frames(&frames)?;
+    log::debug!(
+        "HID recv: reassembled {} bytes: {}",
+        payload.len(),
+        if payload.len() <= 32 {
+            hex::encode(&payload)
+        } else {
+            format!("{}...", hex::encode(payload.get(..32).unwrap_or(&payload)))
+        }
+    );
+    Ok(payload)
+}
+
+/// Read frames until the `CTAPHID_INIT` response that echoes `nonce` arrives,
+/// and return the channel id it assigns.
+///
+/// Responses for other nonces belong to other applications on the broadcast
+/// channel. They are ignored.
+fn wait_for_init_response(
+    read_frame: &mut impl FnMut() -> Result<Option<CtapHidFrame>>,
+    nonce: [u8; 8],
+    timeout: Duration,
+) -> Result<[u8; 4]> {
+    let start = Instant::now();
+    loop {
+        let remaining = timeout.checked_sub(start.elapsed()).ok_or(Error::Timeout)?;
+        let response = receive_message(read_frame, CTAPHID_BROADCAST_CID, CTAPHID_INIT, remaining)?;
+        // Response: nonce[8] | channel_id[4] | ...
+        if response.get(..8) != Some(nonce.as_slice()) {
+            log::debug!("CTAPHID_INIT: ignoring response with a different nonce");
+            continue;
+        }
+        return response
+            .get(8..12)
+            .and_then(|cid| <[u8; 4]>::try_from(cid).ok())
+            .ok_or_else(|| Error::Protocol("CTAPHID_INIT response too short".into()));
     }
 }
 
@@ -366,7 +394,19 @@ impl crate::HidDevice for HidTransport {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use std::collections::VecDeque;
+
     use super::*;
+
+    /// Frames as the device would send them: full 64-byte reports, parsed back.
+    fn wire(cid: [u8; 4], cmd: u8, data: &[u8]) -> VecDeque<CtapHidFrame> {
+        build_ctaphid_frames(&cid, cmd, data)
+            .unwrap()
+            .iter()
+            .map(|f| CtapHidFrame::parse(f.encode().unwrap().get(1..).unwrap()).unwrap())
+            .collect()
+    }
 
     const SOLO_LIKE: DeviceFilter = DeviceFilter::UsbId {
         vendor_id: 0x1234,
@@ -406,6 +446,35 @@ mod tests {
         assert!(SOLO_LIKE_FIDO.matches_ids(&ids(0x1234, 0x5678, FIDO_USAGE_PAGE, FIDO_USAGE)));
         assert!(!SOLO_LIKE_FIDO.matches_ids(&ids(0x1234, 0x5678, 0x0001, 0x06)));
         assert!(!SOLO_LIKE_FIDO.matches_ids(&ids(0xAAAA, 0xBBBB, FIDO_USAGE_PAGE, FIDO_USAGE)));
+    }
+
+    /// A nonce that differs from `nonce` in the first byte.
+    fn other_nonce(mut nonce: [u8; 8]) -> [u8; 8] {
+        nonce[0] ^= 0xFF;
+        nonce
+    }
+
+    #[test]
+    fn test_init_ignores_response_with_other_nonce() {
+        let nonce = rand::random::<[u8; 8]>();
+        let mut other = other_nonce(nonce).to_vec();
+        other.extend_from_slice(&[0xAA; 4]);
+        let mut ours = nonce.to_vec();
+        ours.extend_from_slice(&[0xBB; 4]);
+        let mut queue = wire(CTAPHID_BROADCAST_CID, CTAPHID_INIT, &other);
+        queue.extend(wire(CTAPHID_BROADCAST_CID, CTAPHID_INIT, &ours));
+        let cid = wait_for_init_response(&mut || Ok(queue.pop_front()), nonce, Duration::from_secs(1)).unwrap();
+        assert_eq!(cid, [0xBB; 4]);
+    }
+
+    #[test]
+    fn test_init_times_out_when_only_other_nonces_answer() {
+        let nonce = rand::random::<[u8; 8]>();
+        let mut other = other_nonce(nonce).to_vec();
+        other.extend_from_slice(&[0xAA; 4]);
+        let mut queue = wire(CTAPHID_BROADCAST_CID, CTAPHID_INIT, &other);
+        let err = wait_for_init_response(&mut || Ok(queue.pop_front()), nonce, Duration::from_millis(50)).unwrap_err();
+        assert!(matches!(err, Error::Timeout));
     }
 
     #[test]
