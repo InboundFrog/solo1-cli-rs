@@ -167,7 +167,7 @@ fn run_key_command(
 
         KeyCommands::Update { firmware } => {
             key.require(Model::Solo1, "key update")?;
-            key::cmd_update(hid, firmware.as_deref())?;
+            key::cmd_update(hid, firmware.as_deref(), serial, timeout)?;
         }
 
         KeyCommands::Credential { command } => match command {
