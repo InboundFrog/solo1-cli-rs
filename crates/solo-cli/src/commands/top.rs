@@ -64,13 +64,13 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
 /// Write the signing private key to `path`, restricting access to the owner.
 ///
 /// On Unix the file is created with mode 0o600 so the key is not readable
-/// by other local users. An existing file is truncated and overwritten,
-/// matching the behavior of `std::fs::write` (note: a pre-existing file
-/// keeps its original permissions; the mode applies on creation).
+/// by other local users. If the file already exists, its mode is also set to
+/// 0o600 before any key byte is written. The file is then truncated and
+/// overwritten, like `std::fs::write`.
 #[cfg(unix)]
 fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -78,6 +78,9 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
         .truncate(true)
         .mode(0o600)
         .open(path)?;
+    // The mode above only applies when the file is created. Fix an existing
+    // file on the open handle, so there is no race on the path.
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     file.write_all(contents.as_bytes())
 }
 
@@ -202,6 +205,21 @@ mod tests {
     fn test_write_private_key_sets_owner_only_permissions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("signing-key.pem");
+
+        write_private_key(&path, KEY_PEM).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
+    }
+
+    /// An existing file with wider permissions must be restricted to 0o600.
+    #[test]
+    fn test_write_private_key_restricts_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
 
         write_private_key(&path, KEY_PEM).unwrap();
 
