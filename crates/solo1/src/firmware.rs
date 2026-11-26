@@ -1,7 +1,7 @@
 //! Firmware file handling: Intel HEX parsing, merging, signing, and the
 //! firmware JSON format used by the Solo bootloader.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use ihex::Record;
@@ -446,88 +446,85 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
     0x87, 0x61, 0x82, 0xd8, 0xcd, 0x48, 0xfc, 0x57,
 ];
 
-/// Write the boot-authorisation bytes into the byte map.
+/// A sparse flash image: bytes at 32-bit addresses.
+///
+/// A later write to the same address replaces the earlier byte. This matches
+/// the Python `IntelHex` merge with `overlap="replace"`.
+#[derive(Default)]
+struct FlashImage {
+    bytes: BTreeMap<u32, u8>,
+}
+
+impl FlashImage {
+    /// Write `data` at `addr`, replacing any bytes already there.
+    ///
+    /// # Errors
+    /// Returns [`Error::Firmware`] if an address in the range overflows 32 bits.
+    fn write(&mut self, addr: u32, data: &[u8]) -> Result<()> {
+        let overflow = || Error::Firmware("flash address overflow".into());
+        let mut next = Some(addr);
+        for &b in data {
+            let a = next.ok_or_else(overflow)?;
+            self.bytes.insert(a, b);
+            next = a.checked_add(1);
+        }
+        Ok(())
+    }
+
+    /// Join runs of consecutive addresses into `(start, bytes)` segments, sorted by address.
+    fn segments(&self) -> Vec<(u32, Vec<u8>)> {
+        let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
+        let mut prev: Option<u32> = None;
+        for (&addr, &b) in &self.bytes {
+            let joins = prev.and_then(|p| p.checked_add(1)) == Some(addr);
+            match segments.last_mut() {
+                Some((_, data)) if joins => data.push(b),
+                _ => segments.push((addr, vec![b])),
+            }
+            prev = Some(addr);
+        }
+        segments
+    }
+}
+
+/// Write the boot-authorisation bytes into the image.
 ///
 /// Sets the two-byte marker at `flash_addr(application_end_page - 1)` to
 /// `0x41 0x41` ('A' 'A'), then writes the 8-byte `AUTH_WORD` at `auth_word_addr`:
 /// bytes 0–3 are `0x00` (authorise boot) and bytes 4–7 are `0xFF` (enable
 /// bootloader).
-fn patch_auth_word(byte_map: &mut HashMap<u32, u8>, app_end_page_start: u32, auth_word_addr: u32) -> Result<()> {
-    let overflow = || Error::Firmware("auth word address overflow".into());
-
+fn patch_auth_word(image: &mut FlashImage, app_end_page_start: u32, auth_word_addr: u32) -> Result<()> {
     // Boot marker: flash_addr(APPLICATION_END_PAGE - 1) = 'A' 'A'
-    byte_map.insert(app_end_page_start, 0x41);
-    byte_map.insert(app_end_page_start.checked_add(1).ok_or_else(overflow)?, 0x41);
-
-    // AUTH_WORD[0..3] = 0 (authorise boot)
-    for i in 0..4u32 {
-        byte_map.insert(auth_word_addr.checked_add(i).ok_or_else(overflow)?, 0x00);
-    }
-    // AUTH_WORD[4..7] = 0xFF (enable bootloader)
-    for i in 4..8u32 {
-        byte_map.insert(auth_word_addr.checked_add(i).ok_or_else(overflow)?, 0xFF);
-    }
-    Ok(())
+    image.write(app_end_page_start, &[0x41, 0x41])?;
+    // AUTH_WORD[0..3] = 0 (authorise boot), AUTH_WORD[4..7] = 0xFF (enable bootloader)
+    image.write(auth_word_addr, &[0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF])
 }
 
-/// Write the attestation region into the byte map starting at `attest_addr`.
+/// Write the attestation region into the image starting at `attest_addr`.
 ///
 /// Layout at `attest_addr`:
 ///   [+0]:  32 bytes attestation key (first 32 bytes of `key`)
 ///   [+32]:  8 bytes device settings (little-endian u64: `0xAA551E7900000000`)
 ///   [+40]:  8 bytes cert size (little-endian u64)
 ///   [+48]:  N bytes certificate
-fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u8], cert: &[u8]) -> Result<()> {
-    let idx_err = || Error::Firmware("attestation index too large".into());
+fn patch_attestation(image: &mut FlashImage, attest_addr: u32, key: &[u8], cert: &[u8]) -> Result<()> {
     let overflow = || Error::Firmware("attestation address overflow".into());
+    let at = |offset: u32| attest_addr.checked_add(offset).ok_or_else(overflow);
 
     // Attestation key at ATTEST_ADDR+0 (32 bytes)
-    for (i, &b) in key.iter().take(32).enumerate() {
-        let iu = u32::try_from(i).map_err(|_| idx_err())?;
-        byte_map.insert(attest_addr.checked_add(iu).ok_or_else(overflow)?, b);
-    }
+    image.write(attest_addr, key.get(..32).unwrap_or(key))?;
 
     // Device settings at ATTEST_ADDR+32 (8 bytes little-endian u64)
     // 0xAA551E7900000000 | lock_byte (lock_byte=0 since no --lock flag)
     let device_settings: u64 = 0xAA55_1E79_0000_0000_u64;
-    let ds_bytes = device_settings.to_le_bytes();
-    for (i, &b) in ds_bytes.iter().enumerate() {
-        let iu = u32::try_from(i).map_err(|_| idx_err())?;
-        byte_map.insert(
-            attest_addr
-                .checked_add(32)
-                .and_then(|a| a.checked_add(iu))
-                .ok_or_else(overflow)?,
-            b,
-        );
-    }
+    image.write(at(32)?, &device_settings.to_le_bytes())?;
 
     // Cert size at ATTEST_ADDR+40 (8 bytes little-endian u64)
     let cert_size: u64 = u64::try_from(cert.len()).map_err(|_| Error::Firmware("cert too large".into()))?;
-    let cs_bytes = cert_size.to_le_bytes();
-    for (i, &b) in cs_bytes.iter().enumerate() {
-        let iu = u32::try_from(i).map_err(|_| idx_err())?;
-        byte_map.insert(
-            attest_addr
-                .checked_add(40)
-                .and_then(|a| a.checked_add(iu))
-                .ok_or_else(overflow)?,
-            b,
-        );
-    }
+    image.write(at(40)?, &cert_size.to_le_bytes())?;
 
     // Certificate at ATTEST_ADDR+48
-    for (i, &b) in cert.iter().enumerate() {
-        let iu = u32::try_from(i).map_err(|_| idx_err())?;
-        byte_map.insert(
-            attest_addr
-                .checked_add(48)
-                .and_then(|a| a.checked_add(iu))
-                .ok_or_else(overflow)?,
-            b,
-        );
-    }
-    Ok(())
+    image.write(at(48)?, cert)
 }
 
 /// Returns the 32 attestation key bytes from the contents of a key file.
@@ -646,9 +643,8 @@ pub fn merge_hex_files(
     // ATTEST_ADDR = flash_addr(PAGES - 15) = flash_addr(113)
     let attest_addr = flash_addr(FLASH_PAGES - 15);
 
-    // Build a flat address-indexed byte map to allow overlap replacement
-    // (later files override earlier, matching Python IntelHex merge with overlap="replace")
-    let mut byte_map: HashMap<u32, u8> = HashMap::new();
+    // Later files override earlier ones on overlap.
+    let mut image = FlashImage::default();
 
     for input_path in inputs {
         let content = std::fs::read_to_string(input_path)?;
@@ -657,55 +653,17 @@ pub fn merge_hex_files(
             .map_err(|e| Error::Firmware(format!("HEX parse error in {}: {e:?}", input_path.display())))?;
 
         for (addr, data) in hex_records_to_segments(&records)? {
-            for (i, &b) in data.iter().enumerate() {
-                let iu = u32::try_from(i).map_err(|_| Error::Firmware("HEX segment index too large".into()))?;
-                byte_map.insert(
-                    addr.checked_add(iu)
-                        .ok_or_else(|| Error::Firmware("HEX address overflow".into()))?,
-                    b,
-                );
-            }
+            image.write(addr, &data)?;
         }
     }
 
     // Patch boot authorization bytes and attestation region
     let app_end_page_start = flash_addr(application_end_page - 1);
-    patch_auth_word(&mut byte_map, app_end_page_start, auth_word_addr)?;
-    patch_attestation(&mut byte_map, attest_addr, &key_bytes, &cert_bytes)?;
+    patch_auth_word(&mut image, app_end_page_start, auth_word_addr)?;
+    patch_attestation(&mut image, attest_addr, &key_bytes, &cert_bytes)?;
 
-    // Convert byte_map back to sorted segments for HEX output
-    let mut addrs: Vec<u32> = byte_map.keys().copied().collect();
-    addrs.sort_unstable();
-
-    let missing = || Error::Firmware("byte map missing address".into());
-    let idx_overflow = || Error::Firmware("address index overflow".into());
-
-    let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
-    let mut i: usize = 0;
-    // Coalesce runs of consecutive addresses into single segments (identical
-    // grouping to the original index-based loop).
-    while let Some(&start) = addrs.get(i) {
-        let mut data = vec![*byte_map.get(&start).ok_or_else(missing)?];
-        let mut cur = start;
-        loop {
-            let next_i = i.checked_add(1).ok_or_else(idx_overflow)?;
-            let Some(&next_addr) = addrs.get(next_i) else {
-                break;
-            };
-            let expected = cur
-                .checked_add(1)
-                .ok_or_else(|| Error::Firmware("address overflow".into()))?;
-            if next_addr != expected {
-                break;
-            }
-            i = next_i;
-            cur = next_addr;
-            data.push(*byte_map.get(&next_addr).ok_or_else(missing)?);
-        }
-        segments.push((start, data));
-        i = i.checked_add(1).ok_or_else(idx_overflow)?;
-    }
-
+    // Join consecutive addresses into segments for HEX output
+    let segments = image.segments();
     write_hex_file(output, &segments)
 }
 
@@ -1137,6 +1095,40 @@ mod tests {
         let (base, bytes) = hex_records_to_binary(&records).unwrap();
         assert_eq!(base, 0x0800_0000);
         assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04, 0x05, 0x06]);
+    }
+
+    #[test]
+    fn test_flash_image_later_write_replaces() {
+        let mut img = FlashImage::default();
+        img.write(0x100, &[1, 2, 3, 4]).unwrap();
+        img.write(0x102, &[9, 9]).unwrap();
+        assert_eq!(img.segments(), vec![(0x100, vec![1, 2, 9, 9])]);
+    }
+
+    #[test]
+    fn test_flash_image_gap_splits_segments() {
+        let mut img = FlashImage::default();
+        img.write(0x200, &[3]).unwrap();
+        img.write(0x100, &[1, 2]).unwrap();
+        assert_eq!(img.segments(), vec![(0x100, vec![1, 2]), (0x200, vec![3])]);
+    }
+
+    #[test]
+    fn test_flash_image_touching_ranges_join() {
+        let mut img = FlashImage::default();
+        img.write(0x102, &[3, 4]).unwrap();
+        img.write(0x100, &[1, 2]).unwrap();
+        assert_eq!(img.segments(), vec![(0x100, vec![1, 2, 3, 4])]);
+    }
+
+    #[test]
+    fn test_flash_image_address_overflow_is_error() {
+        let mut img = FlashImage::default();
+        assert!(img.write(u32::MAX, &[1, 2]).is_err());
+        // The last address itself is valid.
+        let mut img = FlashImage::default();
+        img.write(u32::MAX, &[1]).unwrap();
+        assert_eq!(img.segments(), vec![(u32::MAX, vec![1])]);
     }
 
     #[test]
