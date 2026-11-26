@@ -344,7 +344,7 @@ fn receive_message(
         }
 
         if let Some(tb) = total_bcnt
-            && (collected >= tb || frames.len() == 1 && tb <= 57)
+            && collected >= tb
         {
             break;
         }
@@ -513,6 +513,25 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, Error::Protocol(_)));
+    }
+
+    #[test]
+    fn test_receive_does_not_return_short_message() {
+        let cid = [1, 2, 3, 4];
+        // The init frame announces 20 bytes but the report carries only 10.
+        let mut raw = [0u8; 17];
+        raw[..4].copy_from_slice(&cid);
+        raw[4] = crate::protocol::CTAPHID_PING;
+        raw[6] = 20;
+        let mut queue = VecDeque::from([CtapHidFrame::parse(&raw).unwrap()]);
+        let err = receive_message(
+            &mut || Ok(queue.pop_front()),
+            cid,
+            crate::protocol::CTAPHID_PING,
+            Duration::from_millis(50),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Timeout));
     }
 
     #[test]

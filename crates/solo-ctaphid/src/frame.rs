@@ -179,7 +179,8 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
 ///
 /// # Errors
 /// Returns an error if `frames` is empty, if the first frame is not an init
-/// frame, or if a continuation position contains an init frame.
+/// frame, if a continuation position contains an init frame, or if the frames
+/// carry fewer bytes than the init frame announced.
 pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     if frames.is_empty() {
         return Err(Error::Protocol("No frames to reassemble".into()));
@@ -201,6 +202,12 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
             FramePayload::Cont { data, .. } => payload.extend_from_slice(data),
             FramePayload::Init { .. } => return Err(Error::Protocol("Unexpected init frame in continuation".into())),
         }
+    }
+    if payload.len() < bcnt {
+        return Err(Error::Protocol(format!(
+            "CTAPHID message too short: got {} bytes, expected {bcnt}",
+            payload.len()
+        )));
     }
     payload.truncate(bcnt);
     Ok((cmd, payload))
@@ -335,6 +342,15 @@ mod tests {
             }
             FramePayload::Init { .. } => panic!("Expected cont frame"),
         }
+    }
+
+    #[test]
+    fn test_reassemble_short_message_err() {
+        let cid = [0x01, 0x02, 0x03, 0x04];
+        let mut frames = build_ctaphid_frames(&cid, 0x81, &[0x11; 120]).unwrap();
+        frames.pop(); // the last continuation frame never arrived
+        let err = reassemble_frames(&frames).unwrap_err();
+        assert!(matches!(err, Error::Protocol(_)));
     }
 
     #[test]
