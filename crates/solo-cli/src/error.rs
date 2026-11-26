@@ -147,7 +147,7 @@ mod tests {
     fn test_ctap2_errors_map_to_existing_variants() {
         let e = SoloError::from(solo_ctap2::Error::Authenticator {
             code: 0x31,
-            message: "PIN blocked",
+            message: "PIN invalid",
         });
         assert!(matches!(e, SoloError::AuthenticatorError { code: 0x31, .. }));
 
