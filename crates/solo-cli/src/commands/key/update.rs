@@ -155,18 +155,18 @@ mod tests {
     fn retry_open_returns_last_error_at_deadline() {
         let mut calls = 0;
         let mut reports: Vec<String> = Vec::new();
-        let r: std::result::Result<(), &str> = retry_open(
+        let r: std::result::Result<(), i32> = retry_open(
             TICK,
             Duration::from_millis(20),
             || {
                 calls += 1;
-                Err("down")
+                Err(calls)
             },
             |m| reports.push(m.to_owned()),
         );
-        assert_eq!(r, Err("down"));
+        assert_eq!(r, Err(calls));
         assert!(calls > 1);
-        assert_eq!(reports, ["down"]);
+        assert_eq!(reports, (1..calls).map(|n| n.to_string()).collect::<Vec<_>>());
     }
 
     #[test]
