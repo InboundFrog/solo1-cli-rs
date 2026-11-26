@@ -1,21 +1,21 @@
 # solo1-cli-rs
 
-**WARN:** Not everything has been fully tested with a SoloKey v1 yet, so use at your own
+**Warning:** Not everything is fully tested with a Solo 1 key yet. Use this tool at your own
 risk.
 
 ## Note
 
 This is a port of the official [solokeys/solo1-cli](https://github.com/solokeys/solo1-cli) Python tool to Rust.
 
-[Claude](https://claude.com/product/claude-code) did all the hard yards
-porting the protocol implementation, working through the bootloader
-protocol details, and debugging firmware update issues along the way.
+[Claude](https://claude.com/product/claude-code) did all the hard work. It ported
+the protocol code, worked out the bootloader protocol details, and fixed
+firmware update bugs.
 
 ## Overview
 
-A Rust CLI for managing [SoloKeys Solo 1](https://solokeys.com/) hardware security keys.
-Supports firmware updates, FIDO2 operations, credential management, and low-level
-bootloader/DFU programming.
+A Rust command-line tool for [SoloKeys Solo 1](https://solokeys.com/) hardware security keys.
+It can update firmware, run FIDO2 operations, manage credentials, and flash firmware
+through the bootloader or ST DFU at a low level.
 
 ---
 
@@ -25,7 +25,7 @@ bootloader/DFU programming.
 cargo build --release
 ```
 
-The binary ends up at `target/release/solo`. (It used to be called `solo1`.)
+The binary is `target/release/solo`. Its old name was `solo1`.
 
 ### Workspace layout
 
@@ -37,18 +37,23 @@ The binary ends up at `target/release/solo`. (It used to be called `solo1`.)
 | `solo2`        | `crates/solo2`        | Solo 2 USB IDs and admin-app vendor commands (version, uuid, locked, rng).                         |
 | `solo-cli`     | `crates/solo-cli`     | The `solo` binary: argument parsing, prompts, output, and firmware downloads.                      |
 
-Device crates build on `solo-ctaphid` (and `solo-ctap2` where they need CTAP2). Only `solo-cli` touches the terminal or
-the network.
+The device crates build on `solo-ctaphid`. They also use `solo-ctap2` where they need CTAP2.
+Only `solo-cli` uses the terminal or the network.
 
 ### Supported devices
 
-`solo ls` and every `solo key` command find both Solo 1 and Solo 2. On Solo 2,
-everything that is plain CTAPHID or CTAP2 works: `ping`, `wink`, `reset`, `set-pin`,
-`change-pin`, `credential …`, `challenge-response` and `sign-file`, as do `version`
-and `rng`. The rest of `solo key` (`verify`, `keyboard`, `probe`, `update`,
-`disable-updates`) is Solo 1 only for now; on a Solo 2 those commands stop with "not
-supported on Solo 2 yet" before sending anything. `solo program` only looks for Solo 1
-devices. Solo 2 firmware updates are not implemented. None of the Solo 2 support has been tested on hardware yet.
+`solo ls` and every `solo key` command find both Solo 1 and Solo 2 keys.
+
+These commands work on Solo 2 because they use only CTAPHID or CTAP2: `ping`, `wink`,
+`reset`, `set-pin`, `change-pin`, `credential …`, `challenge-response` and `sign-file`.
+`version` and `rng` also work. They use Solo 2 admin-app commands.
+
+For now, these commands work on Solo 1 only: `verify`, `keyboard`, `probe`, `update` and
+`disable-updates`. On a Solo 2 they stop with "not supported on Solo 2 yet" and send
+nothing to the key.
+
+`solo program` finds Solo 1 keys only. Solo 2 firmware updates are not implemented.
+No Solo 2 support is tested on hardware yet.
 
 ---
 
@@ -65,9 +70,10 @@ Global options:
 | `-v`, `--verbose`  | Enable verbose output (HID frames, bootloader packets, etc.) |
 | `--timeout <SECS>` | Timeout in seconds for device responses (default: 30)        |
 
-`--json` is available on commands that produce structured output (`version`, `genkey`, `ls`, and all `key` subcommands).
-Commands that always output JSON (`sign`) or produce no structured output (`mergehex`, `monitor`, `program`) do not
-expose this flag.
+The `--json` flag works on commands that print structured output: `version`, `genkey`,
+`ls` and all `key` subcommands. `sign` always prints JSON. `mergehex`, `monitor` and
+`program` print no structured output. `sign`, `mergehex`, `monitor` and `program` have
+no `--json` flag.
 
 ---
 
@@ -165,23 +171,23 @@ solo monitor <PORT>
 
 ## Firmware update notes
 
-- Firmware JSON files are available from the [solo1 releases page](https://github.com/solokeys/solo1/releases).
-- The bootloader enforces **anti-rollback protection** — you cannot downgrade to a
-  firmware version older than what is currently installed.
-- If `key update` is used without `--firmware`, the latest release is downloaded automatically.
+- Get firmware JSON files from the [solo1 releases page](https://github.com/solokeys/solo1/releases).
+- The bootloader enforces **anti-rollback protection**. You cannot install a firmware version
+  older than the one on the key.
+- If you run `key update` without `--firmware`, it downloads the latest release.
 
 ---
 
 ## Key verification and SPKI fingerprints
 
-`solo key verify` performs attestation by making a FIDO2 credential and checking the
-attestation certificate against known fingerprints. Two fingerprint types are computed:
+`solo key verify` checks the key by making a FIDO2 credential. It then compares the
+attestation certificate with known fingerprints. It computes two kinds of fingerprint:
 
-- **Full-DER fingerprint** — SHA-256 of the complete certificate DER bytes. Changes if
-  the certificate is reissued.
-- **SPKI fingerprint** — SHA-256 of the `SubjectPublicKeyInfo` structure only. Stable
-  across certificate renewals as long as the key is the same. Intended for future
-  certificate pinning.
+- **Full-DER fingerprint** — SHA-256 of the complete certificate DER bytes. It changes
+  when the certificate is reissued.
+- **SPKI fingerprint** — SHA-256 of the `SubjectPublicKeyInfo` structure only. It stays
+  the same when the certificate is renewed, if the key is the same. It is meant for
+  certificate pinning in the future.
 
 ### Known SPKI fingerprints
 
@@ -194,11 +200,11 @@ attestation certificate against known fingerprints. Two fingerprint types are co
 | Solo Hacker          | not yet collected                                                               |
 | Emulation/simulation | not yet collected                                                               |
 
-The missing values must be obtained by running `solo key verify --json` against real
-hardware and reading the `spki_fingerprint` field from the output. If you have one of
-these devices please contribute the value by opening an issue at
+To get a missing value, run `solo key verify --json` with a real key. Read the
+`spki_fingerprint` field in the output. If you have one of these devices, please send
+us the value by opening an issue at
 <https://github.com/InboundFrog/solo1-cli-rs/issues>.
 
-Verification still works without the SPKI fingerprints — full-DER fingerprints are used
-for device identification today. The SPKI constants are reserved for a future pinning
-mode that will tolerate certificate renewal without requiring a tool update.
+Verification works without the SPKI fingerprints. Today the tool identifies devices by
+the full-DER fingerprints. The SPKI values are kept for a future pinning mode. That mode
+will accept a renewed certificate without a tool update.
