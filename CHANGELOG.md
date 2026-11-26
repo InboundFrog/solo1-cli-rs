@@ -42,6 +42,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `solo1` name; the binary is still `solo1`.
 - **Breaking:** the binary is renamed from `solo1` to `solo`, ahead of support for other SoloKeys devices. The CLI crate
   moved to `crates/solo-cli` and the root `Cargo.toml` is now a workspace-only manifest.
+- **Breaking:** `solo key verify` now exits with a non-zero code when the attestation signature is invalid or the
+  certificate fingerprint is unknown. The report is still printed first. (#107)
+- `HidTransport` fields are now private; use the new `info()` accessor to read device info. (#109)
+- HEX merging uses a sorted flash image type instead of a hash map, with no change to the output. (#110)
+- Known attestation fingerprints now live in one table that `check_attestation_fingerprint` uses. (#108)
+- Authenticator data from makeCredential and getAssertion is now parsed by one typed parser. (#116)
+- Added a typed text getter for CBOR maps and used it when parsing credential management responses. (#114)
+- Simplified firmware version parsing and named the Solo 1 application start address. (#113)
+- Updated Rust dependencies and stopped Dependabot from ignoring `rand` updates. (#115)
+- Rewrote comments, `--help` text and the README in plain English, and corrected comments and README details that did
+  not match the code. (#118, #119, #120, #121, #122)
+
+### Removed
+
+- **Breaking:** the `--udp` flags of `key` and `program` and the `--entropy` option of `genkey`. They were accepted but
+  ignored. (#106)
+
+### Fixed
+
+- CTAP2 status messages were shifted by one code (for example, a wrong PIN was reported as "PIN blocked"). (#96)
+- `solo sign` now signs a single SHA-256 digest and writes a raw 64-byte signature, as the Solo 1 bootloader expects.
+  Sign again any firmware file that an earlier version of this tool signed. (#98)
+- `solo sign` now writes firmware JSON version entries in a stable sorted order, and overlapping version constraints
+  pick the same signature every time. (#97)
+- `solo mergehex` now writes correct Intel HEX when an image crosses a 64 KiB boundary. (#100)
+- `solo mergehex` now rejects attestation key files that are not 32 raw bytes or 64 hex digits, instead of writing a
+  wrong key. (#99)
+- CTAPHID receive now checks the INIT nonce, accepts only the expected channel, validates continuation sequence numbers,
+  and rejects short messages and oversized frame data. (#111)
+- `key reset` now reports an error when the key refuses the reset instead of claiming the credentials are gone. (#94)
+- `solo monitor` no longer drops data when a read times out in the middle of a line, and no longer stops on bytes that
+  are not valid UTF-8. A real read error now ends the command with a non-zero exit code. (#95)
+- `program dfu` now erases flash, writes to the firmware's own addresses and no longer detaches at the end, and
+  `program aux leave-dfu` works over ST DFU, following the reference tool. It now writes the option bytes (sets nBOOT0
+  and clears nSWBOOT0) and no longer sends a bootloader reboot. Not yet tested on hardware. (#117)
+- `set-pin` and `change-pin` now reject new PINs shorter than 4 characters or longer than 63 bytes, instead of cutting
+  off PINs longer than 64 bytes, and no longer send an unused version query. (#104)
+- `key update` now reconnects to the selected serial after entering the bootloader, honours `--timeout`, and retries
+  until the device returns. (#103)
+- The `sign-file` help text now says that the credential id is hex. (#106)
+- `key rng feedkernel` now prints the kernel entropy count as a decimal number, without a misleading `0x` prefix. (#102)
+- Firmware writes to the Solo 1 bootloader now fail on a flash address overflow instead of repeatedly writing to the
+  last address. (#112)
+
+### Security
+
+- `solo genkey` now restricts an existing output key file to mode 0600 before writing the private key.
+  It fails if it cannot set the mode. (#101)
+- Firmware downloads now have timeouts, fail on an HTTP error status, and are limited to 8 MiB. (#105)
+- PIN strings, the padded PIN block, the PIN hash and the ECDH shared secret are wiped from memory after use. (#104)
 
 ## [0.2.1] - 2026-04-14
 
