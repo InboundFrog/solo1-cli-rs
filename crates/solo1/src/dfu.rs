@@ -2,7 +2,7 @@
 //!
 //! Implements USB DFU over control transfers for STM32 devices.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusb::{Context, DeviceHandle, UsbContext};
 
@@ -24,6 +24,20 @@ pub const DFU_STATE_DOWNLOAD_SYNC: u8 = 0x03;
 pub const DFU_STATE_ERROR: u8 = 0x0A;
 pub const DFU_STATE_MANIFEST_SYNC: u8 = 0x06;
 pub const DFU_STATE_MANIFEST: u8 = 0x07;
+
+/// Longest single sleep between status polls. The device reports its own poll
+/// time (up to 24 bits of milliseconds), so a bad value must not stall us.
+pub const DFU_MAX_POLL_SLEEP: Duration = Duration::from_secs(1);
+
+/// Longest total time to wait for the device to leave the busy state. A mass
+/// erase can take several seconds.
+pub const DFU_BUSY_DEADLINE: Duration = Duration::from_secs(30);
+
+/// How often `get_status` retries after a pipe error (as in the reference).
+const DFU_STATUS_RETRIES: u8 = 3;
+
+/// Pause between `get_status` retries.
+const DFU_STATUS_RETRY_PAUSE: Duration = Duration::from_millis(10);
 
 pub const DFU_INTERFACE: u8 = 0;
 pub const DFU_ALT: u8 = 0;
@@ -60,6 +74,11 @@ impl DfuStatus {
     pub const fn is_ok(&self) -> bool {
         self.status == 0x00
     }
+}
+
+/// How long to sleep for a device poll time, capped at `DFU_MAX_POLL_SLEEP`.
+fn poll_sleep(poll_timeout_ms: u32) -> Duration {
+    Duration::from_millis(u64::from(poll_timeout_ms)).min(DFU_MAX_POLL_SLEEP)
 }
 
 /// Open the DFU device via libusb.
@@ -139,7 +158,21 @@ impl DfuDevice {
     /// response cannot be parsed.
     pub fn get_status(&self) -> Result<DfuStatus> {
         let mut buf = [0u8; 6];
-        self.control_in(DFU_GETSTATUS, 0, &mut buf)?;
+        let mut retries = DFU_STATUS_RETRIES;
+        // The reference retries when the device stalls the transfer (pipe error).
+        loop {
+            match self.control_in(DFU_GETSTATUS, 0, &mut buf) {
+                Ok(_) => break,
+                Err(Error::Usb(rusb::Error::Pipe)) if retries > 0 => {
+                    retries = retries.saturating_sub(1);
+                    std::thread::sleep(DFU_STATUS_RETRY_PAUSE);
+                }
+                Err(Error::Usb(rusb::Error::Pipe)) => {
+                    return Err(Error::Device("Failed to get status from DFU".into()));
+                }
+                Err(e) => return Err(e),
+            }
+        }
         let status = DfuStatus::parse(&buf)?;
         log::debug!(
             "DFU_GETSTATUS: status=0x{:02X} state=0x{:02X} poll_ms={}",
@@ -153,9 +186,10 @@ impl DfuDevice {
     /// Wait while device is in DNBUSY state.
     ///
     /// # Errors
-    /// Returns an error if a status query fails or the device reports an error
-    /// status.
+    /// Returns an error if a status query fails, the device reports an error
+    /// status, or the device is still busy after `DFU_BUSY_DEADLINE`.
     pub fn wait_while_busy(&self) -> Result<DfuStatus> {
+        let start = Instant::now();
         loop {
             let status = self.get_status()?;
             if !status.is_ok() {
@@ -165,10 +199,10 @@ impl DfuDevice {
                 )));
             }
             if status.state == DFU_STATE_BUSY {
-                let ms = status.poll_timeout_ms;
-                if ms > 0 {
-                    std::thread::sleep(Duration::from_millis(u64::from(ms)));
+                if start.elapsed() >= DFU_BUSY_DEADLINE {
+                    return Err(Error::Device("Timed out waiting for the DFU device to finish".into()));
                 }
+                std::thread::sleep(poll_sleep(status.poll_timeout_ms));
                 continue;
             }
             return Ok(status);
@@ -268,6 +302,14 @@ mod tests {
         let status = DfuStatus::parse(&bytes).unwrap();
         assert!(!status.is_ok());
         assert_eq!(status.state, DFU_STATE_ERROR);
+    }
+
+    #[test]
+    fn test_poll_sleep_is_capped() {
+        assert_eq!(poll_sleep(0), Duration::ZERO);
+        assert_eq!(poll_sleep(10), Duration::from_millis(10));
+        // The largest 24-bit poll time (about 4.6 hours) is cut to the cap.
+        assert_eq!(poll_sleep(0x00FF_FFFF), DFU_MAX_POLL_SLEEP);
     }
 
     #[test]
