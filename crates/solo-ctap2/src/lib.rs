@@ -714,6 +714,8 @@ mod tests {
         assert_eq!(devanagari.len(), 33);
         assert_eq!(nfc_pin(&devanagari).unwrap().len(), 66);
         assert!(validate_new_pin(&devanagari).is_err());
+        // NFC leaves compatibility characters alone (NFKC would change them).
+        assert_eq!(nfc_pin("\u{FB01}\u{FF11}").unwrap().as_str(), "\u{FB01}\u{FF11}");
     }
 
     #[test]
@@ -728,6 +730,8 @@ mod tests {
         let mut expected = [0u8; 64];
         expected[..composed.len()].copy_from_slice(composed.as_bytes());
         assert_eq!(dec, expected);
+        // 6 code points raw, 3 after NFC: the NFC length is what counts.
+        assert!(session.encrypt_pin(&"e\u{301}".repeat(3)).is_err());
     }
 
     #[test]
