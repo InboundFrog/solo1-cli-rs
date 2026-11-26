@@ -61,26 +61,35 @@ pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool
     Ok(())
 }
 
-/// Write the signing private key to `path`, restricting access to the owner.
+/// Write the signing private key to a new file at `path` with mode 0o600.
 ///
-/// On Unix the file is created with mode 0o600 so the key is not readable
-/// by other local users. If the file already exists, its mode is also set to
-/// 0o600 before any key byte is written. The file is then truncated and
-/// overwritten, like `std::fs::write`.
+/// An existing regular file or symbolic link at the path is removed first and
+/// never written into, so a handle that another program opened earlier cannot
+/// read the new key. Any other kind of existing path gives an error.
 #[cfg(unix)]
 fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    use std::os::unix::fs::OpenOptionsExt;
 
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_file() || meta.file_type().is_symlink() => {
+            // ponytail: the old file is removed before the new one is written, so a failed write loses the old key (truncating did too). Write a temporary file and rename it if the old key must survive.
+            std::fs::remove_file(path)?;
+        }
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "output path exists and is not a regular file",
+            ));
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .mode(0o600)
         .open(path)?;
-    // The mode above only applies when the file is created. Fix an existing
-    // file on the open handle, so there is no race on the path.
-    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     file.write_all(contents.as_bytes())
 }
 
@@ -238,5 +247,61 @@ mod tests {
         write_private_key(&path, KEY_PEM).unwrap();
 
         assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
+    }
+
+    /// A handle opened on the old file before the call must not read the new key.
+    #[test]
+    fn test_write_private_key_does_not_reach_open_handles() {
+        use std::os::unix::fs::{FileExt, MetadataExt};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let handle = std::fs::File::open(&path).unwrap();
+
+        write_private_key(&path, KEY_PEM).unwrap();
+
+        let mut buf = vec![0_u8; 4096];
+        let n = handle.read_at(&mut buf, 0).unwrap();
+        assert_eq!(&buf[..n], b"old");
+        assert_ne!(
+            handle.metadata().unwrap().ino(),
+            std::fs::metadata(&path).unwrap().ino()
+        );
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
+    }
+
+    /// A symbolic link at the path is replaced and its target is left alone.
+    #[test]
+    fn test_write_private_key_replaces_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target");
+        let path = dir.path().join("signing-key.pem");
+        std::fs::write(&target, "target").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        write_private_key(&path, KEY_PEM).unwrap();
+
+        let meta = std::fs::symlink_metadata(&path).unwrap();
+        assert!(meta.file_type().is_file());
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "target");
+    }
+
+    /// A path that is a directory gives an error and is left untouched.
+    #[test]
+    fn test_write_private_key_rejects_non_regular_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+        std::fs::create_dir(&path).unwrap();
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(path.is_dir());
     }
 }
