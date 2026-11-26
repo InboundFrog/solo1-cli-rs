@@ -64,11 +64,11 @@ pub const fn ctap2_status_message(code: u8) -> &'static str {
     }
 }
 
-/// All-zero IV as mandated by the CTAP2 specification for clientPIN AES-256-CBC operations
-/// (PIN/UV Auth Protocol One, §6.5.6).
+/// The all-zero IV that the CTAP2 specification requires for clientPIN AES-256-CBC
+/// operations (PIN/UV Auth Protocol One, §6.5.6).
 ///
-/// This is safe because the AES key is derived from a fresh ephemeral ECDH exchange for each
-/// session and is never reused across sessions, so the zero IV does not leak information about
+/// This is safe because each session gets a fresh AES key from a new ephemeral ECDH exchange.
+/// The key is never reused across sessions, so the zero IV does not leak information about
 /// the plaintext.
 ///
 /// Reference: <https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1>
@@ -173,8 +173,8 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
         .collect()
 }
 
-/// Validate a raw CTAP2 response: checks it is non-empty and the status byte is 0x00.
-/// Returns `Ok(())` on success, `Err` with a context-tagged message otherwise.
+/// Check a raw CTAP2 response: it must be non-empty and its status byte must be 0x00.
+/// Returns `Ok(())` on success, or an error that names the failed step.
 ///
 /// # Errors
 /// Returns [`Error::MalformedResponse`] if `response` is empty, or
@@ -190,7 +190,8 @@ pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
     Ok(())
 }
 
-/// Parse a raw CTAP2 response as a CBOR map: validates status, parses CBOR, checks it is a map.
+/// Parse a raw CTAP2 response as a CBOR map.
+/// This checks the status byte, parses the CBOR, and checks that it is a map.
 /// Returns the map pairs on success.
 ///
 /// # Errors
@@ -204,8 +205,8 @@ pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Va
     parse_map_payload(payload, context)
 }
 
-/// Like [`parse_cbor_map_response`], but tolerates a response consisting of a
-/// lone success status byte with no CBOR payload, returning an empty map.
+/// Like [`parse_cbor_map_response`], but also accepts a response that is only
+/// a success status byte with no CBOR payload. It returns an empty map then.
 ///
 /// Some credMgmt subcommands (e.g. enumerating an empty device) reply this way.
 ///
