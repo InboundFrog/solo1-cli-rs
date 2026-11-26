@@ -66,13 +66,16 @@ impl DfuStatus {
 ///
 /// # Errors
 /// Returns an error if the libusb context cannot be created, the device list
-/// or a device descriptor cannot be read, opening the device fails, or no ST
-/// DFU device (PID 0xDF11) is present.
+/// cannot be read, opening the device fails, or no ST DFU device (PID 0xDF11)
+/// is present. Devices whose descriptor cannot be read are skipped.
 pub fn open_dfu_device() -> Result<DeviceHandle<Context>> {
     let context = Context::new()?;
     let devices = context.devices()?;
     for device in devices.iter() {
-        let desc = device.device_descriptor()?;
+        // A device we cannot read is not ours. Skip it and keep scanning.
+        let Ok(desc) = device.device_descriptor() else {
+            continue;
+        };
         if desc.vendor_id() == SOLO_VID && desc.product_id() == SOLO_DFU_PID {
             let handle = device.open()?;
             return Ok(handle);
