@@ -97,10 +97,6 @@ pub struct KeyArgs {
     #[arg(long)]
     pub serial: Option<String>,
 
-    /// Use UDP transport (for simulation)
-    #[arg(long)]
-    pub udp: bool,
-
     /// Output results as JSON (for scripting)
     #[arg(long, global = true)]
     pub json: bool,
@@ -252,10 +248,6 @@ pub struct ProgramArgs {
     /// Serial number of device to use
     #[arg(long)]
     pub serial: Option<String>,
-
-    /// Use UDP transport (for simulation)
-    #[arg(long)]
-    pub udp: bool,
 
     #[command(subcommand)]
     pub command: ProgramCommands,

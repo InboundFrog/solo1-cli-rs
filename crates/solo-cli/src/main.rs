@@ -260,6 +260,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn udp_flag_is_rejected() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "key", "--udp", "wink"]).is_err());
+        assert!(Cli::try_parse_from(["solo", "program", "--udp", "aux", "reboot"]).is_err());
+    }
+
+    #[test]
     fn cli_timeout_default_is_30() {
         use clap::Parser;
         let cli = Cli::try_parse_from(["solo", "ls"]).unwrap();
