@@ -168,7 +168,7 @@ pub enum KeyCommands {
 
     /// Sign file with resident credential
     SignFile {
-        /// Credential ID (base64-encoded from make-credential)
+        /// Credential ID (hex-encoded)
         credential_id: String,
         /// File to sign
         filename: PathBuf,
