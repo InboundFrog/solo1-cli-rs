@@ -6,7 +6,7 @@ use hidapi::{DeviceInfo, HidApi, HidDevice as HidApiDevice};
 
 use crate::error::{Error, Result};
 use crate::frame::{CtapHidFrame, FramePayload, build_ctaphid_frames, reassemble_frames};
-use crate::protocol::{CTAPHID_BROADCAST_CID, CTAPHID_INIT, FIDO_USAGE, FIDO_USAGE_PAGE};
+use crate::protocol::{CTAPHID_BROADCAST_CID, CTAPHID_ERROR, CTAPHID_INIT, FIDO_USAGE, FIDO_USAGE_PAGE};
 
 /// Selects which HID devices [`list_devices`] and [`HidTransport::open`] consider.
 ///
@@ -295,8 +295,7 @@ fn receive_message(
         match &frame.payload {
             FramePayload::Init { cmd, bcnt, data } => {
                 // Check for error
-                if *cmd == 0x3F {
-                    // CTAPHID_ERROR
+                if *cmd == CTAPHID_ERROR & 0x7F {
                     let code = data.first().copied().unwrap_or(0);
                     log::debug!("HID recv: CTAPHID_ERROR code=0x{code:02X}");
                     return Err(Error::Protocol(format!("CTAPHID error: {code:02x}")));
@@ -532,6 +531,20 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, Error::Timeout));
+    }
+
+    #[test]
+    fn test_receive_reports_ctaphid_error() {
+        let cid = [1, 2, 3, 4];
+        let mut queue = wire(cid, CTAPHID_ERROR, &[0x06]);
+        let err = receive_message(
+            &mut || Ok(queue.pop_front()),
+            cid,
+            crate::protocol::CTAPHID_PING,
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(matches!(&err, Error::Protocol(m) if m.contains("06")));
     }
 
     #[test]
