@@ -446,27 +446,55 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
     0x87, 0x61, 0x82, 0xd8, 0xcd, 0x48, 0xfc, 0x57,
 ];
 
+/// Number of addresses in one page of a [`FlashImage`].
+const IMAGE_PAGE_LEN: usize = 256;
+
 /// A sparse flash image: bytes at 32-bit addresses.
+///
+/// The address space is cut into pages of 256 addresses. A page is created
+/// the first time a byte is written into it, and each address in a page is
+/// either empty or holds one byte. Addresses that were never written stay
+/// empty (holes); holes are never filled in.
 ///
 /// A later write to the same address replaces the earlier byte. This matches
 /// the Python `IntelHex` merge with `overlap="replace"`.
+///
+/// Cost: about 2 bytes of memory per address of each touched page, and the
+/// same time per byte whatever order the writes come in.
 #[derive(Default)]
 struct FlashImage {
-    bytes: BTreeMap<u32, u8>,
+    /// Page number (address / 256) -> one slot per address in that page.
+    /// A slot is `None` until a byte is written to it.
+    pages: BTreeMap<u32, Box<[Option<u8>; IMAGE_PAGE_LEN]>>,
 }
 
 impl FlashImage {
     /// Write `data` at `addr`, replacing any bytes already there.
     ///
+    /// If the write fails, the image is not changed.
+    ///
     /// # Errors
     /// Returns [`Error::Firmware`] if an address in the range overflows 32 bits.
     fn write(&mut self, addr: u32, data: &[u8]) -> Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        // Check the last address first, so a failed write changes nothing.
         let overflow = || Error::Firmware("flash address overflow".into());
-        let mut next = Some(addr);
+        let extra = u32::try_from(data.len().saturating_sub(1)).map_err(|_| overflow())?;
+        addr.checked_add(extra).ok_or_else(overflow)?;
+        let mut a = addr;
         for &b in data {
-            let a = next.ok_or_else(overflow)?;
-            self.bytes.insert(a, b);
-            next = a.checked_add(1);
+            let page = self
+                .pages
+                .entry(a >> 8)
+                .or_insert_with(|| Box::new([None; IMAGE_PAGE_LEN]));
+            let [low, ..] = a.to_le_bytes();
+            if let Some(slot) = page.get_mut(usize::from(low)) {
+                *slot = Some(b);
+            }
+            // The last step may wrap; that value is not used.
+            a = a.wrapping_add(1);
         }
         Ok(())
     }
@@ -475,13 +503,17 @@ impl FlashImage {
     fn segments(&self) -> Vec<(u32, Vec<u8>)> {
         let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
         let mut prev: Option<u32> = None;
-        for (&addr, &b) in &self.bytes {
-            let joins = prev.and_then(|p| p.checked_add(1)) == Some(addr);
-            match segments.last_mut() {
-                Some((_, data)) if joins => data.push(b),
-                _ => segments.push((addr, vec![b])),
+        for (&page, slots) in &self.pages {
+            for (low, slot) in (0..=u8::MAX).zip(slots.iter()) {
+                let Some(b) = *slot else { continue };
+                let addr = (page << 8) | u32::from(low);
+                let joins = prev.and_then(|p| p.checked_add(1)) == Some(addr);
+                match segments.last_mut() {
+                    Some((_, data)) if joins => data.push(b),
+                    _ => segments.push((addr, vec![b])),
+                }
+                prev = Some(addr);
             }
-            prev = Some(addr);
         }
         segments
     }
@@ -1090,6 +1122,222 @@ mod tests {
         let mut img = FlashImage::default();
         img.write(u32::MAX, &[1]).unwrap();
         assert_eq!(img.segments(), vec![(u32::MAX, vec![1])]);
+    }
+
+    type Segs = Vec<(u32, Vec<u8>)>;
+
+    /// Image with ranges `[10..14)`, `[20..24)` and `[30..34)`, filled with 1, 2 and 3.
+    fn three_ranges() -> FlashImage {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(20, &[2; 4]).unwrap();
+        img.write(30, &[3; 4]).unwrap();
+        img
+    }
+
+    #[test]
+    fn test_flash_image_write_inside_keeps_both_sides() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 6]).unwrap();
+        img.write(12, &[9, 9]).unwrap();
+        assert_eq!(img.segments(), vec![(10, vec![1, 1, 9, 9, 1, 1])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_overlaps_start() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(8, &[9; 4]).unwrap();
+        assert_eq!(img.segments(), vec![(8, vec![9, 9, 9, 9, 1, 1])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_overlaps_end() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(12, &[9; 4]).unwrap();
+        assert_eq!(img.segments(), vec![(10, vec![1, 1, 9, 9, 9, 9])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_exactly_covers() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1; 4]).unwrap();
+        img.write(10, &[9; 4]).unwrap();
+        assert_eq!(img.segments(), vec![(10, vec![9; 4])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_bridges_three_ranges_and_holes() {
+        let mut img = three_ranges();
+        img.write(12, &[9; 20]).unwrap();
+        let mut want = vec![1, 1];
+        want.extend([9; 20]);
+        want.extend([3, 3]);
+        assert_eq!(img.segments(), vec![(10, want)]);
+    }
+
+    #[test]
+    fn test_flash_image_touching_front_joins() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1, 2]).unwrap();
+        img.write(8, &[7, 8]).unwrap();
+        assert_eq!(img.segments(), vec![(8, vec![7, 8, 1, 2])]);
+    }
+
+    #[test]
+    fn test_flash_image_touching_back_joins() {
+        let mut img = FlashImage::default();
+        img.write(10, &[1, 2]).unwrap();
+        img.write(12, &[7, 8]).unwrap();
+        assert_eq!(img.segments(), vec![(10, vec![1, 2, 7, 8])]);
+    }
+
+    #[test]
+    fn test_flash_image_empty_write_is_noop() {
+        let mut img = FlashImage::default();
+        img.write(5, &[]).unwrap();
+        img.write(u32::MAX, &[]).unwrap();
+        assert_eq!(img.segments(), Segs::new());
+        let mut img = three_ranges();
+        let before = img.segments();
+        img.write(12, &[]).unwrap();
+        img.write(u32::MAX, &[]).unwrap();
+        assert_eq!(img.segments(), before);
+    }
+
+    #[test]
+    fn test_flash_image_two_bytes_ending_at_u32_max_is_valid() {
+        let mut img = FlashImage::default();
+        img.write(u32::MAX - 1, &[1, 2]).unwrap();
+        assert_eq!(img.segments(), vec![(u32::MAX - 1, vec![1, 2])]);
+    }
+
+    #[test]
+    fn test_flash_image_failed_overflow_write_leaves_image_unchanged() {
+        let mut img = three_ranges();
+        let before = img.segments();
+        assert!(img.write(u32::MAX - 1, &[1, 2, 3]).is_err());
+        assert_eq!(img.segments(), before);
+    }
+
+    #[test]
+    fn test_flash_image_write_crossing_page_boundary_is_one_segment() {
+        let mut img = FlashImage::default();
+        img.write(0x0000_00FE, &[1, 2, 3, 4]).unwrap();
+        assert_eq!(img.segments(), vec![(0xFE, vec![1, 2, 3, 4])]);
+    }
+
+    #[test]
+    fn test_flash_image_write_longer_than_two_pages_round_trips() {
+        let data: Vec<u8> = (0..600_u32).map(|i| (i % 251) as u8).collect();
+        let mut img = FlashImage::default();
+        img.write(0x1080, &data).unwrap();
+        assert_eq!(img.segments(), vec![(0x1080, data)]);
+    }
+
+    #[test]
+    fn test_flash_image_last_slot_and_first_slot_of_next_page_join() {
+        let mut img = FlashImage::default();
+        img.write(0x1FF, &[1]).unwrap();
+        img.write(0x200, &[2]).unwrap();
+        assert_eq!(img.segments(), vec![(0x1FF, vec![1, 2])]);
+    }
+
+    #[test]
+    fn test_flash_image_hole_inside_page_splits() {
+        let mut img = FlashImage::default();
+        img.write(0x110, &[1]).unwrap();
+        img.write(0x112, &[2]).unwrap();
+        assert_eq!(img.segments(), vec![(0x110, vec![1]), (0x112, vec![2])]);
+    }
+
+    #[test]
+    fn test_flash_image_hole_of_missing_pages_splits() {
+        let mut img = FlashImage::default();
+        img.write(0x0FF, &[1]).unwrap();
+        img.write(0x500, &[2]).unwrap();
+        assert_eq!(img.segments(), vec![(0x0FF, vec![1]), (0x500, vec![2])]);
+    }
+
+    #[test]
+    fn test_flash_image_last_page_of_address_space() {
+        let mut img = FlashImage::default();
+        img.write(u32::MAX, &[7]).unwrap();
+        img.write(u32::MAX - 3, &[1, 2]).unwrap();
+        assert_eq!(img.segments(), vec![(u32::MAX - 3, vec![1, 2]), (u32::MAX, vec![7])]);
+    }
+
+    #[test]
+    fn test_flash_image_matches_per_byte_model() {
+        // Reference model: one map entry per byte (the old implementation).
+        fn model_segments(model: &BTreeMap<u32, u8>) -> Segs {
+            let mut out: Segs = Vec::new();
+            for (&a, &b) in model {
+                match out.last_mut() {
+                    Some((s, d)) if u64::from(*s) + d.len() as u64 == u64::from(a) => d.push(b),
+                    _ => out.push((a, vec![b])),
+                }
+            }
+            out
+        }
+        // (first address, window width): at 0, mid-page, across a page
+        // boundary, about 600 wide, and ending at u32::MAX.
+        let windows: [(u32, u32); 5] = [
+            (0, 64),
+            (0x0000_0840, 24),
+            (0x0000_00F0, 0x20),
+            (0x0000_1000, 600),
+            (u32::MAX - 299, 300),
+        ];
+        let mut total = 0_u32;
+        let mut failures = 0_u32;
+        for seed in 1..=10_u64 {
+            for &(base, width) in &windows {
+                let mut img = FlashImage::default();
+                let mut model: BTreeMap<u32, u8> = BTreeMap::new();
+                let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ u64::from(base);
+                let mut next = move || {
+                    state = state
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    (state >> 33) as u32
+                };
+                for i in 0..120_u32 {
+                    // Start a little before the window, and sometimes past its end.
+                    let start = u64::from(base) + u64::from(next() % (width + 8));
+                    let addr = u32::try_from(start.saturating_sub(4)).unwrap_or(u32::MAX);
+                    let len = match next() % 4 {
+                        0 => 0,
+                        1 => next() % 4,
+                        2 => next() % (width + 1),
+                        _ => width + next() % 40, // longer than the window
+                    };
+                    let data: Vec<u8> = (0..len).map(|j| (i as u8).wrapping_add(j as u8) | 1).collect();
+                    let before = img.segments();
+                    let fits = u64::from(addr) + u64::from(len) <= 1 << 32;
+                    let res = img.write(addr, &data);
+                    assert_eq!(res.is_ok(), fits, "seed {seed} base {base:#x} write {i}");
+                    total += 1;
+                    if fits {
+                        for (j, &b) in data.iter().enumerate() {
+                            model.insert(addr + j as u32, b);
+                        }
+                    } else {
+                        failures += 1;
+                        assert_eq!(img.segments(), before, "failed write changed image");
+                    }
+                    let segs = img.segments();
+                    assert_eq!(segs, model_segments(&model), "seed {seed} base {base:#x} write {i}");
+                    assert!(segs.iter().all(|(_, d)| !d.is_empty()));
+                    for w in segs.windows(2) {
+                        assert!(u64::from(w[0].0) + (w[0].1.len() as u64) < u64::from(w[1].0));
+                    }
+                }
+            }
+        }
+        assert!(total >= 6000);
+        assert!(failures > 0, "the sequences must include overflowing writes");
     }
 
     #[test]
