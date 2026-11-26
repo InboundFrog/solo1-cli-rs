@@ -530,6 +530,26 @@ fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u
     Ok(())
 }
 
+/// Returns the 32 attestation key bytes from the contents of a key file.
+///
+/// A file of exactly 32 bytes is a raw key. Any other file must be UTF-8 text
+/// that holds 64 hex digits, with optional white space around them.
+fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
+    if raw.len() == 32 {
+        return Ok(raw.to_vec());
+    }
+    let text = std::str::from_utf8(raw)
+        .map_err(|_| Error::Firmware("Attestation key file must be 32 raw bytes or 64 hex digits".into()))?;
+    let key = hex::decode(text.trim()).map_err(|e| Error::Firmware(format!("Invalid attestation key hex: {e}")))?;
+    if key.len() != 32 {
+        return Err(Error::Firmware(format!(
+            "Attestation key must be 32 bytes, got {}",
+            key.len()
+        )));
+    }
+    Ok(key)
+}
+
 /// Merge multiple Intel HEX files into one output HEX file.
 ///
 /// Matches the Python reference (operations.py mergehex) which:
@@ -575,14 +595,7 @@ pub fn merge_hex_files(
 
     // Read attestation key bytes (32 bytes raw)
     let key_bytes: Vec<u8> = if let Some(key_path) = attestation_key {
-        let raw = std::fs::read(key_path)?;
-        if raw.len() == 64 || raw.len() == 65 {
-            // Hex-encoded key file
-            hex::decode(std::str::from_utf8(&raw).unwrap_or("").trim())
-                .map_err(|e| Error::Firmware(format!("Invalid attestation key hex: {e}")))?
-        } else {
-            raw
-        }
+        parse_attestation_key(&std::fs::read(key_path)?)?
     } else {
         hex::decode(HACKER_ATTESTATION_KEY_HEX)?
     };
@@ -1134,6 +1147,29 @@ mod tests {
         let app_end_page = FLASH_PAGES - 20; // 108
         let auth_word_addr = flash_addr(app_end_page) - 8;
         assert_eq!(auth_word_addr, 0x0803_5FF8);
+    }
+
+    #[test]
+    fn test_parse_attestation_key_formats() {
+        let key = [0xabu8; 32];
+        let hex_key = "ab".repeat(32);
+        assert_eq!(parse_attestation_key(&key).unwrap(), key);
+        let lf = parse_attestation_key(format!("{hex_key}\n").as_bytes()).unwrap();
+        let crlf = parse_attestation_key(format!("{hex_key}\r\n").as_bytes()).unwrap();
+        assert_eq!(lf, key);
+        assert_eq!(crlf, key);
+        assert_eq!(parse_attestation_key(hex_key.as_bytes()).unwrap(), key);
+    }
+
+    #[test]
+    fn test_parse_attestation_key_rejects_bad_files() {
+        assert!(parse_attestation_key(&[1u8; 31]).is_err());
+        assert!(parse_attestation_key(&[1u8; 33]).is_err());
+        assert!(parse_attestation_key(&[0xffu8; 64]).is_err());
+        assert!(parse_attestation_key(&[0xffu8; 65]).is_err());
+        assert!(parse_attestation_key("zz".repeat(32).as_bytes()).is_err());
+        assert!(parse_attestation_key(b"abcd").is_err());
+        assert!(parse_attestation_key(b"").is_err());
     }
 
     #[test]
