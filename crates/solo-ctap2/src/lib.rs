@@ -13,6 +13,7 @@ use hmac::{Hmac, KeyInit as _, Mac as _};
 use p256::Sec1Point as EncodedPoint;
 use p256::elliptic_curve::Generate;
 use sha2::{Digest as _, Sha256};
+use zeroize::Zeroizing;
 
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
 use solo_ctaphid::{CTAPHID_CBOR, HidDevice};
@@ -404,7 +405,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
 pub fn maybe_pin_uv_auth<E: From<Error>>(
     hid: &impl HidDevice,
     msg: &[u8],
-    get_pin: impl FnOnce() -> std::result::Result<String, E>,
+    get_pin: impl FnOnce() -> std::result::Result<Zeroizing<String>, E>,
 ) -> std::result::Result<Option<Vec<u8>>, E> {
     if !get_info_client_pin_set(hid)? {
         return Ok(None);
@@ -498,7 +499,7 @@ pub fn validate_new_pin(pin: &str) -> Result<()> {
 
 /// Represents an established shared secret with a CTAP2 device.
 pub struct ClientPinSession {
-    shared_secret: [u8; 32],
+    shared_secret: Zeroizing<[u8; 32]>,
     pub ephemeral_pub_key: Value,
 }
 
@@ -513,7 +514,7 @@ impl ClientPinSession {
         let platform_scalar = p256::NonZeroScalar::generate_from_rng(&mut rand::rng());
         let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar)?;
         Ok(Self {
-            shared_secret,
+            shared_secret: Zeroizing::new(shared_secret),
             ephemeral_pub_key,
         })
     }
@@ -528,13 +529,13 @@ impl ClientPinSession {
     pub fn encrypt_pin(&self, pin: &str) -> Result<Vec<u8>> {
         validate_new_pin(pin)?;
         let pin_bytes = pin.as_bytes();
-        let mut padded_pin = [0u8; 64];
+        let mut padded_pin = Zeroizing::new([0u8; 64]);
         padded_pin
             .get_mut(..pin_bytes.len())
             .ok_or_else(|| Error::Crypto("PIN buffer out of range".into()))?
             .copy_from_slice(pin_bytes);
 
-        aes256_cbc_encrypt(&self.shared_secret, &padded_pin)
+        aes256_cbc_encrypt(&self.shared_secret, padded_pin.as_slice())
     }
 
     /// Compute pinUvAuthParam for a message.
@@ -542,7 +543,7 @@ impl ClientPinSession {
     /// # Errors
     /// Returns [`Error::Crypto`] if the underlying HMAC computation fails.
     pub fn authenticate(&self, message: &[u8]) -> Result<Vec<u8>> {
-        pin_uv_auth(&self.shared_secret, message)
+        pin_uv_auth(self.shared_secret.as_slice(), message)
     }
 
     /// Encrypt the PIN hash for getPinToken.
@@ -551,7 +552,7 @@ impl ClientPinSession {
     /// Returns [`Error::Crypto`] if the SHA-256 PIN hash is too short to truncate
     /// or the AES-256-CBC encryption fails.
     pub fn encrypt_pin_hash(&self, pin: &str) -> Result<[u8; 16]> {
-        let pin_hash_full = Sha256::digest(pin.as_bytes());
+        let pin_hash_full = Zeroizing::new(<[u8; 32]>::from(Sha256::digest(pin.as_bytes())));
         let pin_hash_prefix = pin_hash_full
             .get(..16)
             .ok_or_else(|| Error::Crypto("PIN hash too short".into()))?;

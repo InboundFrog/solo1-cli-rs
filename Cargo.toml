@@ -38,6 +38,7 @@ serialport = "4"
 sha2 = "0.11"
 thiserror = "2"
 x509-cert = "0.3"
+zeroize = "1"
 
 # Dev-only
 rcgen = "0.14"

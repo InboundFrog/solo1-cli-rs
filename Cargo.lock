@@ -2117,6 +2117,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "time",
+ "zeroize",
 ]
 
 [[package]]
@@ -2132,6 +2133,7 @@ dependencies = [
  "sha2",
  "solo-ctaphid",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
