@@ -65,7 +65,7 @@ pub const fn ctap2_status_message(code: u8) -> &'static str {
 }
 
 /// All-zero IV as mandated by the CTAP2 specification for clientPIN AES-256-CBC operations
-/// (PIN/UV Auth Protocol One, §6.5.4).
+/// (PIN/UV Auth Protocol One, §6.5.6).
 ///
 /// This is safe because the AES key is derived from a fresh ephemeral ECDH exchange for each
 /// session and is never reused across sessions, so the zero IV does not leak information about

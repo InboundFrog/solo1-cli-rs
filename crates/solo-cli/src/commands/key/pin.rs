@@ -4,7 +4,7 @@ use solo_ctaphid::HidDevice;
 
 /// Change the existing PIN (prompts for old and new PIN).
 ///
-/// Implements CTAP2 authenticatorClientPIN changePin (spec section 6.5.5):
+/// Implements CTAP2 authenticatorClientPIN changePin (spec section 6.5.5.6):
 ///   1. getKeyAgreement (subcommand 0x02) to get device's public key
 ///   2. Generate ephemeral P-256 keypair
 ///   3. ECDH + SHA-256 to derive shared secret
@@ -60,7 +60,7 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 
 /// Set PIN on an unpinned key (prompts for new PIN).
 ///
-/// Implements CTAP2 authenticatorClientPIN setPin (spec section 6.5.4):
+/// Implements CTAP2 authenticatorClientPIN setPin (spec section 6.5.5.5):
 ///   1. getKeyAgreement (subcommand 0x02) to get device's public key
 ///   2. Generate ephemeral P-256 keypair
 ///   3. ECDH + SHA-256 to derive shared secret

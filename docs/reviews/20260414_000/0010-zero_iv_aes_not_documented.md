@@ -42,7 +42,7 @@ this specific context.
     /// All-zero IV as mandated by the CTAP2 spec for clientPIN AES-256-CBC operations.
     ///
     /// This is safe because the AES key is derived from a fresh ephemeral ECDH exchange
-    /// for each session and is never reused. See CTAP2 §6.5.4.
+    /// for each session and is never reused. See CTAP2 §6.5.6.
     ///
     /// Reference: https://fidoalliance.org/specs/fido-v2.1-ps-20210615/
     ///   fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1
@@ -68,4 +68,4 @@ None — this is documentation only. The cryptographic behaviour is unchanged.
 
 ## References
 
-- [CTAP2 §6.5.4 PIN/UV Auth Protocol One](https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1)
+- [CTAP2 §6.5.6 PIN/UV Auth Protocol One](https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1)
