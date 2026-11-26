@@ -6,11 +6,11 @@ use solo_ctaphid::HidDevice;
 
 /// Attestation data extracted from a makeCredential response.
 ///
-/// `cert_der` is always present (extraction fails without it).  `auth_data`
-/// and `sig` are optional so that a response missing them can be reported as
-/// a signature-verification failure rather than a transport error: a device
-/// that presents a certificate but cannot produce the matching signature is
-/// exactly the counterfeit case this command exists to catch.
+/// `cert_der` is always present. Extraction fails without it. `auth_data`
+/// and `sig` are optional. A response that lacks them is then reported as a
+/// signature-verification failure, not a transport error. A device that gives
+/// a certificate but no matching signature is the counterfeit case that this
+/// command must catch.
 #[derive(Debug)]
 struct AttestationData {
     /// DER-encoded leaf attestation certificate (`attStmt.x5c[0]`).
@@ -125,27 +125,27 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     use solo1::crypto::AttestationResult;
     use solo1::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
 
-    // clientDataHash: fixed 32-byte value (Solo does not verify it for attestation)
+    // clientDataHash is a fixed 32-byte value. Solo does not check it for attestation.
     let client_data_hash: Vec<u8> = Sha256::digest(b"solokeys_verify_test").to_vec();
 
-    // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
+    // If a PIN is set, get a PIN token and compute pinUvAuthParam.
     let pin_uv_auth = solo_ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
 
     eprintln!("Please press the button on your Solo key");
 
-    // makeCredential request with rp "solokeys.com" and user "verify"
+    // Build a makeCredential request for rp "solokeys.com" and user "verify".
     let cbor_request = solo_ctap2::build_make_credential("solokeys.com", "verify", &client_data_hash, pin_uv_auth, []);
 
     // CTAP2 makeCredential (0x01)
     let response = solo_ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
 
-    // Extract the attestation: certificate, authData, and signature
+    // Get the attestation from the response: certificate, authData and signature.
     let att = extract_attestation(&response)?;
     let cert_der = &att.cert_der;
 
     // Verify the packed attestation signature (authData || clientDataHash)
-    // against the certificate's public key.  Without this, a counterfeit
-    // device replaying a copied genuine certificate would pass.
+    // with the certificate's public key. Without this check, a counterfeit
+    // device that replays a copied genuine certificate would pass.
     let signature_valid = attestation_signature_valid(&att, &client_data_hash);
 
     let fingerprint = sha256_hex(cert_der);
@@ -154,9 +154,9 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
 
     let result = check_attestation_fingerprint(cert_der);
 
-    // Check certificate validity dates independently.  An expired cert on a
-    // genuine device is still informative — we warn rather than fail, because
-    // the fingerprint match is the primary authentication signal.
+    // Check the certificate dates separately. An expired certificate on a
+    // genuine device is still useful information. We warn and do not fail,
+    // because the fingerprint match is the main authentication signal.
     let cert_expired = check_cert_validity(cert_der).is_err();
 
     if json {

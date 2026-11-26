@@ -3,7 +3,7 @@ use solo_ctaphid::HidDevice;
 
 /// Prompt for the device PIN without echoing it, rejecting an empty entry.
 ///
-/// This is the single place to add retry logic, PIN caching, or minimum-length enforcement.
+/// Add retry logic, PIN caching or a minimum PIN length here. This is the one place to do it.
 ///
 /// # Errors
 /// Returns [`SoloError::IoError`] if the PIN prompt fails, or
