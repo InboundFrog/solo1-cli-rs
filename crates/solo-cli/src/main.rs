@@ -79,9 +79,9 @@ fn run_key_command(
     json: bool,
     timeout: std::time::Duration,
 ) -> error::Result<()> {
-    // Every key subcommand talks to a device, so open it once up front.
-    // Vendor commands are model-specific (Solo 1 and Solo 2 reuse codes), so
-    // those arms check the model first; CTAPHID and CTAP2 commands work on any.
+    // Every key subcommand talks to a device, so open it once here.
+    // Vendor commands depend on the model (Solo 1 and Solo 2 reuse codes), so
+    // those arms check the model first. CTAPHID and CTAP2 commands work on any model.
     let key = Key::open(serial, timeout)?;
     let hid = &key.hid;
     match cmd {
@@ -111,7 +111,7 @@ fn run_key_command(
         }
 
         KeyCommands::Verify => {
-            // Attestation fingerprints are only known for Solo 1 so far.
+            // Only Solo 1 attestation fingerprints are known.
             key.require(Model::Solo1, "key verify")?;
             key::cmd_verify(hid, json)?;
         }
@@ -126,7 +126,7 @@ fn run_key_command(
         }
 
         KeyCommands::Ping { count, data } => {
-            // Parse data as hex if it decodes cleanly, otherwise use as UTF-8 bytes
+            // Use the data as hex bytes if it is valid hex. Otherwise use its UTF-8 bytes.
             let ping_data = hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec());
             key::cmd_ping(hid, count, &ping_data, json)?;
         }

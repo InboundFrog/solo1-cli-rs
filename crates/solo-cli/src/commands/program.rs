@@ -73,9 +73,10 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
     println!("Flash start:   0x{flash_start:08X}");
     log::debug!("Firmware SHA256: {}", hex::encode(Sha256::digest(&firmware_bytes)));
 
-    // Query bootloader version BEFORE writing to select the correct signature.
-    // (The BootVersion command resets the internal has_erased flag; querying it
-    // before writes avoids any state confusion and mirrors the Python tool's flow.)
+    // Read the bootloader version before writing. The version decides which
+    // signature to use. The BootVersion command also clears the bootloader's
+    // internal has_erased flag, so sending it after writes start would erase
+    // the application again. The Python tool uses the same order.
     let signature = select_signature(hid, &fw)?;
     log::debug!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
 
