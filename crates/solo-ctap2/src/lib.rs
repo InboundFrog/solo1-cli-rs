@@ -29,12 +29,17 @@ pub const fn ctap2_status_message(code: u8) -> &'static str {
         0x06 => "channel busy",
         0x0A => "lock required",
         0x0B => "invalid channel",
+        0x10 => "CBOR parsing error",
         0x11 => "CBOR unexpected type",
         0x12 => "invalid CBOR",
+        0x13 => "invalid CBOR type",
         0x14 => "missing parameter",
         0x15 => "limit exceeded",
         0x16 => "unsupported extension",
+        0x17 => "too many elements",
+        0x18 => "extension not supported",
         0x19 => "credential excluded",
+        0x20 => "credential not valid",
         0x21 => "processing",
         0x22 => "invalid credential",
         0x23 => "user action pending",
@@ -43,23 +48,31 @@ pub const fn ctap2_status_message(code: u8) -> &'static str {
         0x26 => "unsupported algorithm",
         0x27 => "operation denied",
         0x28 => "key store full",
-        0x2A => "unsupported option",
-        0x2B => "invalid option",
-        0x2C => "keepalive cancel",
-        0x2D => "no credentials",
-        0x2E => "user action timeout — touch the key when the LED blinks",
-        0x2F => "not allowed",
-        0x30 => "PIN invalid",
-        0x31 => "PIN blocked",
-        0x32 => "PIN auth invalid",
-        0x33 => "PIN auth blocked",
-        0x34 => "PIN not set",
-        0x35 => "PIN required",
-        0x36 => "PIN policy violation",
-        0x37 => "PIN token expired",
-        0x38 => "request too large",
-        0x39 => "action timeout",
-        0x3A => "user presence required — touch the key",
+        0x29 => "not busy",
+        0x2A => "no operation pending",
+        0x2B => "unsupported option",
+        0x2C => "invalid option",
+        0x2D => "keepalive cancel",
+        0x2E => "no credentials",
+        0x2F => "user action timeout — touch the key when the LED blinks",
+        0x30 => "not allowed",
+        0x31 => "PIN invalid",
+        0x32 => "PIN blocked",
+        0x33 => "PIN auth invalid",
+        0x34 => "PIN auth blocked",
+        0x35 => "PIN not set",
+        0x36 => "PIN required",
+        0x37 => "PIN policy violation",
+        0x38 => "PIN token expired",
+        0x39 => "request too large",
+        0x3A => "action timeout",
+        0x3B => "user presence required — touch the key",
+        0x3C => "UV blocked",
+        0x3D => "integrity failure",
+        0x3E => "invalid subcommand",
+        0x3F => "UV invalid",
+        0x40 => "unauthorized permission",
+        0x7F => "other error",
         _ => "unknown error",
     }
 }
@@ -564,6 +577,37 @@ mod tests {
     )]
     use super::*;
     use ciborium::value::Value;
+
+    #[test]
+    fn test_status_message_table_is_pinned() {
+        let table = [
+            (0x2A, "no operation pending"),
+            (0x2B, "unsupported option"),
+            (0x2C, "invalid option"),
+            (0x2D, "keepalive cancel"),
+            (0x2E, "no credentials"),
+            (0x2F, "user action timeout"),
+            (0x30, "not allowed"),
+            (0x31, "PIN invalid"),
+            (0x32, "PIN blocked"),
+            (0x33, "PIN auth invalid"),
+            (0x34, "PIN auth blocked"),
+            (0x35, "PIN not set"),
+            (0x36, "PIN required"),
+            (0x37, "PIN policy violation"),
+            (0x38, "PIN token expired"),
+            (0x39, "request too large"),
+            (0x3A, "action timeout"),
+            (0x3B, "user presence required"),
+        ];
+        for (code, text) in table {
+            assert!(
+                ctap2_status_message(code).starts_with(text),
+                "code {code:#04x}: got {:?}, want {text:?}",
+                ctap2_status_message(code)
+            );
+        }
+    }
 
     #[test]
     fn test_check_ctap_status() {
