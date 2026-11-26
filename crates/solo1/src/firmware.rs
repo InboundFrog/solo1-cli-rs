@@ -27,6 +27,9 @@ pub struct VersionedSignature {
     pub signature: String,
 }
 
+/// Start address of the application in flash on a Solo 1 key.
+const APP_START_ADDRESS: u32 = 0x0800_5000;
+
 impl FirmwareJson {
     /// Load from a JSON file.
     ///
@@ -69,7 +72,7 @@ impl FirmwareJson {
             parse_hex_string(&hex_str)
         } else {
             // Raw binary — use the Solo 1 application start address
-            Ok((0x0800_5000, bytes))
+            Ok((APP_START_ADDRESS, bytes))
         }
     }
 
