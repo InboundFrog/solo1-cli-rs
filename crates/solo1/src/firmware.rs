@@ -38,7 +38,7 @@ impl FirmwareJson {
         Ok(serde_json::from_str(&data)?)
     }
 
-    /// Decode the raw bytes from the firmware field (may be Intel HEX text or binary).
+    /// Decode the bytes of the firmware field. They are Intel HEX text or raw binary.
     ///
     /// # Errors
     /// Returns [`Error::Firmware`] if the `firmware` field is not valid
@@ -49,9 +49,9 @@ impl FirmwareJson {
 
     /// Decode firmware to a flat binary with its base flash address.
     ///
-    /// The official `SoloKeys` firmware JSONs store Intel HEX text in the `firmware`
-    /// field (base64-encoded). This method detects that and parses it correctly.
-    /// Raw binary (from our own `cmd_sign`) is also handled.
+    /// The official `SoloKeys` firmware JSON files store Intel HEX text in the
+    /// `firmware` field, base64-encoded. This method detects the HEX text and
+    /// parses it. It also accepts raw binary (from our own `cmd_sign`).
     ///
     /// Returns `(base_address, binary_bytes)`.
     ///
@@ -94,8 +94,8 @@ impl FirmwareJson {
         version.map_or_else(|| self.signature_bytes(), |v| self.signature_for_version(v))
     }
 
-    /// Select the appropriate signature based on firmware version.
-    /// Version constraint format: "<=2.5.3" or ">2.5.3"
+    /// Select the signature whose version constraint matches `version`.
+    /// A constraint looks like "<=2.5.3" or ">2.5.3".
     ///
     /// # Errors
     /// Returns [`Error::Firmware`] if a version constraint string is
@@ -123,9 +123,9 @@ impl FirmwareJson {
 
 /// Read the Solo bootloader version from a device in bootloader mode.
 ///
-/// Returns `None` if the query fails or the device returns no data, so callers
-/// fall back to the default (latest) signature rather than incorrectly
-/// matching "<=2.5.3". A one- or two-byte response is read as `0.0.<first>`.
+/// Returns `None` if the query fails or the device returns no data. Callers
+/// then use the default (latest) signature. This avoids a wrong match with
+/// "<=2.5.3". A reply of one or two bytes is read as `0.0.<first byte>`.
 pub fn read_bootloader_version(hid: &impl HidDevice) -> Option<FirmwareVersion> {
     match bootloader_cmd(hid, CMD_VERSION, 0, &[]) {
         Ok(resp) => match resp.as_slice() {
@@ -197,7 +197,7 @@ impl std::fmt::Display for FirmwareVersion {
     }
 }
 
-/// Check if a version matches a constraint like "<=2.5.3" or ">2.5.3".
+/// Check whether a version matches a constraint like "<=2.5.3" or ">2.5.3".
 ///
 /// # Errors
 /// Returns [`Error::Firmware`] if `constraint` has no recognised
@@ -254,11 +254,11 @@ pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
 /// Maximum allowed address span (highest end address minus lowest start
 /// address) of parsed Intel HEX content.
 ///
-/// HEX content can arrive from the network (the firmware JSON downloaded by
-/// `update`), and the span determines the allocation size when flattening to
-/// a binary. Solo flash is only 256 KiB, so 16 MiB is generous while still
-/// preventing a crafted `ExtendedLinearAddress` record from forcing a multi-GB
-/// allocation.
+/// HEX content can come from the network (the firmware JSON that `update`
+/// downloads). The span sets the allocation size when the HEX is flattened to
+/// a binary. Solo flash is only 256 KiB, so 16 MiB is plenty. It still stops a
+/// crafted `ExtendedLinearAddress` record from forcing an allocation of many
+/// gigabytes.
 const MAX_FIRMWARE_SPAN: u32 = 16 * 1024 * 1024;
 
 /// Walk Intel HEX records and accumulate `(absolute_address, data)` segments.
@@ -267,9 +267,9 @@ const MAX_FIRMWARE_SPAN: u32 = 16 * 1024 * 1024;
 /// records and stops at the first `EndOfFile` record. Start-address records
 /// are ignored. Segments are returned in record order (not sorted).
 ///
-/// Rejects records whose absolute address arithmetic overflows `u32`, and
-/// content whose total address span exceeds [`MAX_FIRMWARE_SPAN`], so that
-/// untrusted HEX input cannot trigger huge allocations or address wrap-around.
+/// Rejects records whose absolute address overflows `u32`. Also rejects
+/// content whose total address span is more than [`MAX_FIRMWARE_SPAN`]. So
+/// untrusted HEX input cannot cause huge allocations or address wrap-around.
 fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
     let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
     let mut base_addr: u32 = 0;
@@ -354,8 +354,8 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
         .first()
         .ok_or_else(|| Error::Firmware("No data records in HEX file".into()))?
         .0;
-    // Per-record overflow and the MAX_FIRMWARE_SPAN cap were already enforced
-    // by hex_records_to_segments; keep checked arithmetic as defense in depth.
+    // `hex_records_to_segments` already checks overflow and `MAX_FIRMWARE_SPAN`.
+    // Keep the checked arithmetic as a second safety layer.
     let mut max_addr = min_addr;
     for (addr, data) in &segments {
         let data_len = u32::try_from(data.len()).map_err(|_| {
@@ -369,8 +369,8 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
         max_addr = max_addr.max(end);
     }
 
-    // max_addr >= min_addr by construction, and the span is capped, so this
-    // allocation is bounded by MAX_FIRMWARE_SPAN.
+    // `max_addr >= min_addr` by construction, and the span has a limit, so
+    // this allocation is at most `MAX_FIRMWARE_SPAN`.
     let size = usize::try_from(
         max_addr
             .checked_sub(min_addr)
@@ -537,12 +537,12 @@ fn patch_attestation(byte_map: &mut HashMap<u32, u8>, attest_addr: u32, key: &[u
 /// 2. Sets boot authorization bytes at `AUTH_WORD_ADDR`
 /// 3. Patches attestation key, device settings, cert size, and cert at `ATTEST_ADDR`
 ///
-/// If no `attestation_key/cert` files are provided, uses the default hacker
-/// attestation key and cert. Both must be provided or both must be None.
+/// If you pass no attestation key and cert files, it uses the default hacker
+/// attestation key and cert. Pass both files or neither.
 ///
 /// Layout constants (`APPLICATION_END_PAGE_COUNT=20`, default for new bootloaders):
 ///   `APPLICATION_END_PAGE` = 128 - 20 = 108
-///   `AUTH_WORD_ADDR` = `flash_addr(108)` - 8 = 0x080367F8
+///   `AUTH_WORD_ADDR` = `flash_addr(108)` - 8 = 0x08035FF8
 ///   `ATTEST_ADDR` = `flash_addr(128` - 15) = `flash_addr(113)` = 0x08038800
 ///
 /// Attestation layout at `ATTEST_ADDR`:
@@ -566,7 +566,7 @@ pub fn merge_hex_files(
     // APPLICATION_END_PAGE_COUNT = 20 (default, for new bootloader)
     const APPLICATION_END_PAGE_COUNT: u32 = 20;
 
-    // Validate that key and cert are either both provided or both None
+    // Pass both the key and the cert, or neither.
     if attestation_key.is_some() != attestation_cert.is_some() {
         return Err(Error::Firmware(
             "Need to provide certificate with attestation_key".into(),
@@ -756,8 +756,8 @@ pub const FLASH_PAGE_SIZE: u32 = 2048;
 /// Compute the flash address for a given page number.
 #[must_use]
 pub const fn flash_addr(page: u32) -> u32 {
-    // saturating_add / saturating_mul are const-stable and never saturate for
-    // valid page numbers, so the result is identical to `FLASH_BASE + page * FLASH_PAGE_SIZE`.
+    // Saturating math works in a `const fn`. It never saturates for valid page
+    // numbers, so the result equals `FLASH_BASE + page * FLASH_PAGE_SIZE`.
     FLASH_BASE.saturating_add(page.saturating_mul(FLASH_PAGE_SIZE))
 }
 
@@ -843,14 +843,14 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
 
 /// Create a `FirmwareJson` from the hex file text and both versioned signatures.
 ///
-/// The firmware field contains the base64 of the HEX FILE TEXT (not binary),
-/// matching the Python reference which does:
+/// The firmware field holds the base64 of the HEX FILE TEXT, not of the binary.
+/// The Python reference does the same:
 ///   fw = `base64.b64encode(open(hex_file`, "`r").read().encode()`)
 ///
 /// # Errors
 /// Returns an error if the HEX file cannot be read.
 pub fn create_firmware_json_versioned(hex_path: &Path, sig_v1: &[u8], sig_v2: &[u8]) -> Result<FirmwareJson> {
-    // Read the hex file as text and base64-encode it (matching Python reference)
+    // Read the HEX file as text and base64-encode it, as the Python reference does.
     let hex_text = std::fs::read_to_string(hex_path)?;
     let firmware_b64 = websafe_b64_encode(hex_text.as_bytes());
 
@@ -870,7 +870,7 @@ pub fn create_firmware_json_versioned(hex_path: &Path, sig_v1: &[u8], sig_v2: &[
 
     Ok(FirmwareJson {
         firmware: firmware_b64,
-        signature: websafe_b64_encode(sig_v2), // default is v2 (new bootloaders)
+        signature: websafe_b64_encode(sig_v2), // The default is v2 (new bootloaders).
         versions,
     })
 }
