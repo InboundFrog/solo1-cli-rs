@@ -198,24 +198,23 @@ impl std::fmt::Display for FirmwareVersion {
 /// comparison prefix (`<=`, `>=`, `<`, `>`, `=`), or the version it contains
 /// cannot be parsed.
 pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -> Result<bool> {
-    if let Some(rest) = constraint.strip_prefix("<=") {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version <= bound)
-    } else if let Some(rest) = constraint.strip_prefix(">=") {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version >= bound)
-    } else if let Some(rest) = constraint.strip_prefix('<') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version < bound)
-    } else if let Some(rest) = constraint.strip_prefix('>') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version > bound)
-    } else if let Some(rest) = constraint.strip_prefix('=') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version == bound)
-    } else {
-        Err(Error::Firmware(format!("Unknown version constraint: {constraint}")))
+    use std::cmp::Ordering;
+
+    // Two-character prefixes come first, so "<=" is not read as "<".
+    type Holds = fn(Ordering) -> bool;
+    let table: [(&str, Holds); 5] = [
+        ("<=", Ordering::is_le),
+        (">=", Ordering::is_ge),
+        ("<", Ordering::is_lt),
+        (">", Ordering::is_gt),
+        ("=", Ordering::is_eq),
+    ];
+    for (prefix, holds) in table {
+        if let Some(rest) = constraint.strip_prefix(prefix) {
+            return Ok(holds(version.cmp(&FirmwareVersion::parse(rest)?)));
+        }
     }
+    Err(Error::Firmware(format!("Unknown version constraint: {constraint}")))
 }
 
 /// Parse an Intel HEX file into a flat binary buffer.
