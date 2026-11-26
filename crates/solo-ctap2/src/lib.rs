@@ -2,6 +2,7 @@
 //! (PIN/UV Auth Protocol One), key agreement, and request builders.
 //!
 //! Device-neutral; runs over any [`solo_ctaphid::HidDevice`].
+pub mod authdata;
 pub mod cbor;
 pub mod error;
 
