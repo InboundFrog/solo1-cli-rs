@@ -1321,15 +1321,18 @@ mod tests {
         let bad_char = key_err(format!("{}#", "a".repeat(63)).as_bytes());
         assert!(bad_char.contains("text") && bad_char.contains("not a hex digit"));
         assert!(!bad_char.contains('#') && !bad_char.contains('\''));
+        assert!(bad_char.is_ascii());
 
         let count = key_err("7".repeat(32).as_bytes());
         assert!(count.contains("text") && count.contains("64 hex digits") && count.contains("got 32"));
         assert!(!count.contains('7'));
+        assert!(count.is_ascii());
 
         let err = parse_attestation_key(&[0xc3u8; 33]).unwrap_err();
         assert!(err.to_string().contains("raw key") && err.to_string().contains("got 33"));
         for text in [format!("{err}"), format!("{err:?}")] {
             assert!(!text.contains("c3") && !text.contains("C3") && !text.contains("195"));
+            assert!(text.is_ascii(), "message is not plain ASCII");
         }
     }
 
