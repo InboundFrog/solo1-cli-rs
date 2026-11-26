@@ -323,6 +323,13 @@ fn receive_message(
             FramePayload::Cont { seq, .. } => {
                 log::debug!("HID recv: cont frame seq={seq}");
                 if let Some(tb) = total_bcnt {
+                    // Continuation frames must count 0, 1, 2 and so on.
+                    let expected = frames.len().checked_sub(1).and_then(|n| u8::try_from(n).ok());
+                    if Some(*seq) != expected {
+                        return Err(Error::Protocol(format!(
+                            "CTAPHID frame out of order: got sequence {seq}, expected {expected:?}"
+                        )));
+                    }
                     frames.push(frame.clone());
                     if let FramePayload::Cont { data, .. } = &frame.payload {
                         collected = collected
@@ -490,6 +497,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(got, b"mine");
+    }
+
+    #[test]
+    fn test_receive_rejects_out_of_order_continuation() {
+        let cid = [1, 2, 3, 4];
+        let mut queue = wire(cid, crate::protocol::CTAPHID_PING, &[0x42; 150]);
+        // Drop the frame with sequence 0, so sequence 1 arrives first.
+        queue.remove(1);
+        let err = receive_message(
+            &mut || Ok(queue.pop_front()),
+            cid,
+            crate::protocol::CTAPHID_PING,
+            Duration::from_secs(1),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::Protocol(_)));
     }
 
     #[test]
