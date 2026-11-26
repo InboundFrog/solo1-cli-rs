@@ -52,25 +52,27 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Write the signing private key to a new file at `path` with mode 0o600.
+/// Write the signing private key to a new file at `path`.
 ///
-/// An existing regular file or symbolic link at the path is removed first and
-/// never written into, so a handle that another program opened earlier cannot
-/// read the new key. Any other kind of existing path gives an error.
+/// The new file has mode 0o600, or less if the umask removes bits. An existing
+/// regular file at the path is removed first and never written into, so a
+/// handle that another program opened earlier cannot read the new key. A
+/// symbolic link or any other kind of existing path gives an error and is left
+/// untouched.
 #[cfg(unix)]
 fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_file() || meta.file_type().is_symlink() => {
+        Ok(meta) if meta.file_type().is_file() => {
             // ponytail: the old file is removed before the new one is written, so a failed write loses the old key (truncating did too). Write a temporary file and rename it if the old key must survive.
             std::fs::remove_file(path)?;
         }
         Ok(_) => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
-                "output path exists and is not a regular file",
+                "output path exists and is not a regular file (symbolic links are not followed)",
             ));
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -265,22 +267,37 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
     }
 
-    /// A symbolic link at the path is replaced and its target is left alone.
+    /// A symbolic link at the path gives an error and its target is not changed.
     #[test]
-    fn test_write_private_key_replaces_symlink() {
+    fn test_write_private_key_rejects_symlink() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("target");
         let path = dir.path().join("signing-key.pem");
         std::fs::write(&target, "target").unwrap();
         std::os::unix::fs::symlink(&target, &path).unwrap();
 
-        write_private_key(&path, KEY_PEM).unwrap();
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
 
-        let meta = std::fs::symlink_metadata(&path).unwrap();
-        assert!(meta.file_type().is_file());
-        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(err.to_string().contains("not a regular file"));
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "target");
+    }
+
+    /// A dangling symbolic link gives an error and no file is made through it.
+    #[test]
+    fn test_write_private_key_rejects_dangling_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("missing");
+        let path = dir.path().join("signing-key.pem");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(err.to_string().contains("not a regular file"));
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert!(!target.exists());
     }
 
     /// A path that is a directory gives an error and is left untouched.
@@ -293,6 +310,7 @@ mod tests {
         let err = write_private_key(&path, KEY_PEM).unwrap_err();
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(err.to_string().contains("not a regular file"));
         assert!(path.is_dir());
     }
 }
