@@ -38,7 +38,6 @@ pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
 
 /// Stream raw random bytes to stdout.
 ///
-/// # Errors
 /// Runs until the reader of stdout closes the pipe (for example
 /// `solo key rng raw | head -c 4096`), then returns `Ok(())`.
 ///
@@ -158,6 +157,24 @@ mod tests {
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
+    }
+
+    /// Accepts every write but fails on flush, like a line-buffered stdout.
+    struct FlushFailWriter;
+    impl Write for FlushFailWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+    }
+
+    /// A `BrokenPipe` that only shows up in flush also ends the stream quietly.
+    #[test]
+    fn test_stream_rng_broken_pipe_on_flush_is_ok() {
+        let device = MockDevice::new(vec![Ok(vec![1, 2, 3])]);
+        stream_rng(&device, &mut FlushFailWriter).unwrap();
     }
 
     /// A closed stdout pipe ends the stream quietly.

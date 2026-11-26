@@ -330,6 +330,17 @@ mod tests {
             }
         }
 
+        struct FlushFail;
+        impl Write for FlushFail {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(Error::from(ErrorKind::BrokenPipe))
+            }
+        }
+
+        copy_until_eof(&b"data"[..], FlushFail).unwrap();
         copy_until_eof(&b"data"[..], Fail(ErrorKind::BrokenPipe)).unwrap();
         let err = copy_until_eof(&b"data"[..], Fail(ErrorKind::PermissionDenied)).unwrap_err();
         assert_eq!(err.kind(), ErrorKind::PermissionDenied);
