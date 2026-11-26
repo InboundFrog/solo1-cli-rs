@@ -42,6 +42,24 @@ const DFU_STATUS_RETRIES: u8 = 3;
 /// Pause between `get_status` retries.
 const DFU_STATUS_RETRY_PAUSE: Duration = Duration::from_millis(10);
 
+/// Address of the option bytes on the STM32L432.
+const OPTION_BYTES_ADDR: u32 = 0x1FFF_7800;
+
+/// Size of the option bytes block that the reference reads and writes.
+const OPTION_BYTES_LEN: usize = 16;
+
+/// Option word bit nBOOT0 (set: boot from flash, as set by the reference).
+const OPT_NBOOT0: u32 = 1 << 27;
+
+/// Option word bit nSWBOOT0 (cleared by the reference).
+const OPT_NSWBOOT0: u32 = 1 << 26;
+
+/// DFU block number that means "at the current address pointer". The
+/// reference calls `read_mem(0, 16)` and `write_page(0, m)`. Its `addr2block`
+/// then gives a negative number whose low 16 bits are 2, so both transfers
+/// use block 2.
+const BLOCK_AT_POINTER: u16 = 2;
+
 pub const DFU_INTERFACE: u8 = 0;
 /// Alternate setting of the DFU interface that the reference tool selects.
 pub const DFU_ALT: u8 = 1;
@@ -174,6 +192,18 @@ fn addr_to_block(address: u32) -> Result<u16> {
         .checked_add(2)
         .ok_or_else(|| Error::Protocol("DFU block number overflow".into()))?;
     u16::try_from(block).map_err(|_| Error::Protocol(format!("DFU address 0x{address:08X} is beyond the block range")))
+}
+
+/// Set the boot options that leave-dfu needs: nBOOT0 on, nSWBOOT0 off.
+///
+/// Only bits 26 and 27 of the first little-endian word can change. Byte 0
+/// holds the read-protection level, so it must never change.
+const fn detach_option_bytes(mut bytes: [u8; OPTION_BYTES_LEN]) -> [u8; OPTION_BYTES_LEN] {
+    if let Some(head) = bytes.first_chunk_mut::<4>() {
+        let word = u32::from_le_bytes(*head);
+        *head = ((word | OPT_NBOOT0) & !OPT_NSWBOOT0).to_le_bytes();
+    }
+    bytes
 }
 
 /// The DFU protocol steps, on top of a transport.
@@ -326,6 +356,83 @@ impl<T: Transport> Dfu<T> {
         }
         Ok(())
     }
+
+    /// Set the address pointer: `DNLOAD` block 0 with 0x21 and the address.
+    fn set_addr(&self, address: u32) -> Result<()> {
+        let [a0, a1, a2, a3] = address.to_le_bytes();
+        self.io.control_out(DFU_DNLOAD, 0, &[0x21, a0, a1, a2, a3])?;
+        self.wait_while_busy()?;
+        Ok(())
+    }
+
+    /// Read `OPTION_BYTES_LEN` bytes at the current address pointer.
+    fn read_at_pointer(&self) -> Result<Vec<u8>> {
+        self.ensure_state(&[DFU_STATE_IDLE, DFU_STATE_UPLOAD_IDLE], "reading memory")?;
+        let mut buf = [0u8; OPTION_BYTES_LEN];
+        let n = self.io.control_in(DFU_UPLOAD, BLOCK_AT_POINTER, &mut buf)?;
+        Ok(buf.get(..n).unwrap_or_default().to_vec())
+    }
+
+    /// Write 16 bytes at the current address pointer. The device may reset
+    /// when option bytes are written, so a USB error is only a warning, as in
+    /// the reference.
+    fn write_at_pointer(&self, bytes: &[u8; OPTION_BYTES_LEN]) -> Result<()> {
+        self.wait_while_busy()?;
+        let result = self
+            .write_page(BLOCK_AT_POINTER, bytes)
+            .and_then(|()| self.wait_while_busy().map(|_| ()));
+        match result {
+            Err(Error::Usb(e)) => {
+                log::warn!("USB error while writing option bytes: {e}");
+                Ok(())
+            }
+            other => other,
+        }
+    }
+
+    /// Set the boot options so that the key boots its firmware or the Solo
+    /// bootloader after a power cycle. Follows the reference tool.
+    fn prepare_options_bytes_detach(&self) -> Result<()> {
+        // From the reference: read 16 bytes and write them back before the
+        // option bytes are touched. Its comment says "Necessary to prevent
+        // future errors". We write only when exactly 16 bytes came back.
+        match <[u8; OPTION_BYTES_LEN]>::try_from(self.read_at_pointer()?.as_slice()) {
+            Ok(bytes) => self.write_at_pointer(&bytes)?,
+            Err(_) => log::warn!("Short read before the option bytes. Skipping the write-back."),
+        }
+
+        self.set_addr(OPTION_BYTES_ADDR)?;
+        let old = <[u8; OPTION_BYTES_LEN]>::try_from(self.read_at_pointer()?.as_slice())
+            .map_err(|_| Error::Device("Could not read all 16 option bytes. Nothing was written.".into()))?;
+        let new = detach_option_bytes(old);
+        if new != old {
+            log::info!("Rewriting option bytes...");
+            self.write_at_pointer(&new)?;
+        }
+        Ok(())
+    }
+
+    /// Ask the device to leave DFU mode: a zero-length `DNLOAD`, then a status
+    /// read.
+    fn detach(&self) -> Result<()> {
+        self.ensure_state(&[DFU_STATE_IDLE, DFU_STATE_DOWNLOAD_IDLE], "detaching")?;
+        self.io.control_out(DFU_DNLOAD, 0, &[])?;
+        self.get_status()?;
+        Ok(())
+    }
+
+    /// Fix the boot options, then detach. A USB error from the detach is
+    /// ignored because the device resets.
+    fn leave_dfu(&self) -> Result<()> {
+        self.prepare_options_bytes_detach()?;
+        match self.detach() {
+            Err(Error::Usb(e)) => {
+                log::debug!("USB error while detaching (the device resets): {e}");
+                Ok(())
+            }
+            other => other,
+        }
+    }
 }
 
 /// DFU programmer for STM32.
@@ -364,6 +471,22 @@ impl DfuDevice {
     /// arithmetic overflows.
     pub fn program(&self, address: u32, firmware: &[u8], on_progress: impl FnMut(usize, usize)) -> Result<()> {
         self.dfu.program(address, firmware, on_progress)
+    }
+
+    /// Set the boot options and make the device leave ST DFU mode, as the
+    /// reference `leave-dfu` does. The options only take effect after a power
+    /// cycle of the key.
+    ///
+    /// The option bytes are written only if exactly 16 bytes were read, and
+    /// only if the boot bits need to change. A USB error while detaching is
+    /// ignored because the device resets.
+    ///
+    /// # Errors
+    /// Returns an error if the option bytes cannot be read in full, a USB
+    /// transfer fails before the detach, or the device is in the wrong state
+    /// or stays busy too long.
+    pub fn leave_dfu(&self) -> Result<()> {
+        self.dfu.leave_dfu()
     }
 }
 
@@ -661,6 +784,168 @@ mod tests {
         ]));
         assert!(dfu.get_status().is_err());
         assert_eq!(dfu.io.log().len(), 1);
+    }
+
+    #[test]
+    fn test_detach_option_bytes_sets_and_clears_boot_bits() {
+        let mut input = [0u8; 16];
+        input[3] = 0x04; // nSWBOOT0 set, nBOOT0 clear
+        let out = detach_option_bytes(input);
+        assert_eq!(out[3], 0x08);
+        // Already correct: no change.
+        input[3] = 0x08;
+        assert_eq!(detach_option_bytes(input), input);
+    }
+
+    #[test]
+    fn test_detach_option_bytes_changes_only_bits_26_and_27() {
+        for b0 in 0..=255u8 {
+            for b3 in 0..=255u8 {
+                let mut input = [0xA5u8; 16];
+                for (i, b) in input.iter_mut().enumerate().skip(4) {
+                    *b = u8::try_from(i * 17).unwrap();
+                }
+                input[0] = b0;
+                input[1] = !b0;
+                input[2] = b0.rotate_left(3);
+                input[3] = b3;
+                let out = detach_option_bytes(input);
+                // Byte 0 (read-protection level), 1 and 2 never change.
+                assert_eq!(out[..3], input[..3]);
+                // Bytes 4 to 15 never change.
+                assert_eq!(out[4..], input[4..]);
+                // In byte 3 only bits 2 and 3 (word bits 26 and 27) may change.
+                assert_eq!(out[3] & !0x0C, b3 & !0x0C);
+                assert_eq!(out[3] & 0x0C, 0x08);
+            }
+        }
+    }
+
+    /// Reply script for the steps before the detach: the write-back of the
+    /// first 16 bytes, the address change, and the read of the option bytes.
+    fn option_script(first: Vec<u8>, options: Vec<u8>) -> Vec<Result<Vec<u8>>> {
+        vec![
+            st(DFU_STATE_IDLE), // read at the pointer: state check
+            Ok(first),
+            st(DFU_STATE_DOWNLOAD_IDLE), // write back: wait, state check
+            st(DFU_STATE_DOWNLOAD_IDLE),
+            st(DFU_STATE_BUSY), // finish download
+            st(DFU_STATE_DOWNLOAD_IDLE),
+            st(DFU_STATE_DOWNLOAD_IDLE), // wait after the write
+            st(DFU_STATE_BUSY),          // set_addr
+            st(DFU_STATE_DOWNLOAD_IDLE),
+            st(DFU_STATE_DOWNLOAD_IDLE), // read option bytes: state check fails,
+            st(DFU_STATE_IDLE),          // two CLRSTATUS, then it is idle
+            Ok(options),
+        ]
+    }
+
+    fn upload() -> Xfer {
+        Xfer::In {
+            request: DFU_UPLOAD,
+            value: 2,
+            len: 16,
+        }
+    }
+
+    #[test]
+    fn test_leave_dfu_transfer_order_with_rewrite() {
+        let first: Vec<u8> = (0..16).collect();
+        let mut options = vec![0xAA, 0x01, 0x02, 0x04, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let mut ins = option_script(first.clone(), options.clone());
+        ins.extend([
+            st(DFU_STATE_IDLE), // rewrite: wait, state check
+            st(DFU_STATE_IDLE),
+            st(DFU_STATE_BUSY), // finish download
+            st(DFU_STATE_DOWNLOAD_IDLE),
+            st(DFU_STATE_DOWNLOAD_IDLE), // wait after the write
+            st(DFU_STATE_DOWNLOAD_IDLE), // detach: state check, then status
+            st(DFU_STATE_MANIFEST_SYNC),
+        ]);
+        let dfu = Dfu::new(Fake::with_ins(ins));
+        dfu.leave_dfu().unwrap();
+
+        options[3] = 0x08;
+        let gs = get_status_xfer;
+        assert_eq!(
+            dfu.io.log(),
+            vec![
+                // write back the first 16 bytes (block 2, not an address block)
+                gs(),
+                upload(),
+                gs(),
+                gs(),
+                dnload(2, &first),
+                gs(),
+                gs(),
+                gs(),
+                // set the address pointer to the option bytes
+                dnload(0, &[0x21, 0x00, 0x78, 0xFF, 0x1F]),
+                gs(),
+                gs(),
+                // read them
+                gs(),
+                clrstatus(),
+                clrstatus(),
+                gs(),
+                upload(),
+                // write them back with the boot bits fixed
+                gs(),
+                gs(),
+                dnload(2, &options),
+                gs(),
+                gs(),
+                gs(),
+                // detach
+                gs(),
+                dnload(0, &[]),
+                gs(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_leave_dfu_skips_rewrite_when_unchanged_and_ignores_usb_error_on_detach() {
+        let first = vec![0u8; 16];
+        let mut options = vec![0u8; 16];
+        options[3] = 0x08;
+        let mut ins = option_script(first, options);
+        ins.extend([st(DFU_STATE_DOWNLOAD_IDLE), Err(Error::Usb(rusb::Error::Io))]);
+        let dfu = Dfu::new(Fake::with_ins(ins));
+        dfu.leave_dfu().unwrap();
+
+        let log = dfu.io.log();
+        // Block 2 is written once (the first write-back), never for the options.
+        assert_eq!(
+            log.iter().filter(|x| matches!(x, Xfer::Out { value: 2, .. })).count(),
+            1
+        );
+        assert_eq!(log.last(), Some(&get_status_xfer()));
+        assert!(log.contains(&dnload(0, &[])));
+    }
+
+    #[test]
+    fn test_leave_dfu_writes_no_option_bytes_after_a_short_read() {
+        let first = vec![0u8; 16];
+        let short = vec![0u8; 8];
+        let dfu = Dfu::new(Fake::with_ins(option_script(first, short)));
+        assert!(dfu.leave_dfu().is_err());
+
+        let log = dfu.io.log();
+        // Only the first write-back used block 2.
+        assert_eq!(
+            log.iter().filter(|x| matches!(x, Xfer::Out { value: 2, .. })).count(),
+            1
+        );
+        assert!(!log.contains(&dnload(0, &[])));
+    }
+
+    #[test]
+    fn test_leave_dfu_skips_first_write_back_after_a_short_read() {
+        let dfu = Dfu::new(Fake::with_ins(vec![st(DFU_STATE_IDLE), Ok(vec![0u8; 4])]));
+        // The second read has no scripted reply, so the run stops there.
+        assert!(dfu.leave_dfu().is_err());
+        assert!(!dfu.io.log().iter().any(|x| matches!(x, Xfer::Out { value: 2, .. })));
     }
 
     #[test]

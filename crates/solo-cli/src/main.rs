@@ -204,13 +204,19 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
             program::cmd_program_dfu(&firmware)?;
         }
 
+        // A device in ST DFU mode is not a HID device, so do not open one.
+        ProgramCommands::Aux {
+            command: AuxCommands::LeaveDfu,
+        } => aux::cmd_leave_dfu()?,
+
         ProgramCommands::Aux { command } => {
             let hid = solo1::open(serial, timeout)?;
             match command {
                 AuxCommands::EnterBootloader => aux::cmd_enter_bootloader(&hid)?,
                 AuxCommands::LeaveBootloader => aux::cmd_leave_bootloader(&hid)?,
                 AuxCommands::EnterDfu => aux::cmd_enter_dfu(&hid)?,
-                AuxCommands::LeaveDfu => aux::cmd_leave_dfu(&hid)?,
+                // Handled above, without a HID device.
+                AuxCommands::LeaveDfu => {}
                 AuxCommands::Reboot => aux::cmd_reboot(&hid)?,
                 AuxCommands::BootloaderVersion => aux::cmd_bootloader_version(&hid)?,
             }
