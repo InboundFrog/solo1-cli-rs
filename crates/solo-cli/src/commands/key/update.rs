@@ -77,6 +77,7 @@ pub fn cmd_update(
         let asset = release
             .find_asset(is_firmware_asset)
             .ok_or_else(|| SoloError::FirmwareError("No firmware JSON in release".into()))?;
+        asset.check_size()?;
         println!("Downloading: {}", asset.name);
         let bytes = download_url(&asset.browser_download_url)?;
         let json_str = String::from_utf8(bytes)
