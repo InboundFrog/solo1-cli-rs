@@ -6,7 +6,7 @@ use clap::{Args, Parser, Subcommand};
 #[derive(Parser, Debug)]
 #[command(name = "solo", about = "CLI tool for SoloKeys hardware security keys", version)]
 pub struct Cli {
-    /// Enable verbose output (HID frames, DFU status, bootloader packets, etc.)
+    /// Show verbose output, such as HID frames, DFU status and bootloader packets
     #[arg(long, short = 'v', global = true)]
     pub verbose: bool,
 
@@ -42,7 +42,7 @@ pub enum Commands {
         json: bool,
     },
 
-    /// Sign firmware hex file, output JSON {firmware, signature}
+    /// Sign a firmware HEX file and print JSON with firmware, signature and versions
     Sign {
         /// Path to PEM private key
         key: PathBuf,
@@ -137,9 +137,9 @@ pub enum KeyCommands {
     /// Blink LED
     Wink,
 
-    /// Send ping and measure RTT
+    /// Send a ping and measure the round-trip time (RTT)
     Ping {
-        /// Number of pings
+        /// Number of pings to send
         #[arg(long, default_value = "1")]
         count: u32,
 
@@ -166,7 +166,7 @@ pub enum KeyCommands {
     /// Permanently disable firmware updates
     DisableUpdates,
 
-    /// Calculate hash on device
+    /// Calculate a hash on the device
     Probe {
         /// Hash type: SHA256, SHA512, RSA2048, Ed25519 (case-insensitive)
         hash_type: String,
@@ -174,7 +174,7 @@ pub enum KeyCommands {
         filename: PathBuf,
     },
 
-    /// Sign file with resident credential
+    /// Sign a file with a resident credential
     SignFile {
         /// Credential ID (base64-encoded from make-credential)
         credential_id: String,
@@ -240,7 +240,7 @@ pub enum CredentialCommands {
         /// User ID / username
         #[arg(long)]
         user: String,
-        /// Prompt text (use empty string to suppress, outputting only the `credential_id`)
+        /// Prompt text. Use an empty string to hide it and print only the `credential_id`
         #[arg(long, default_value = "Touch your authenticator to generate a credential...")]
         prompt: String,
     },
