@@ -485,8 +485,8 @@ pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
 /// Put a PIN into Unicode normalization form C (NFC), as CTAP 2.1 section 6.5.1 requires.
 ///
 /// The text is written into a `String` that already has room for the result
-/// (NFC makes UTF-8 text at most 3 times longer), so it is never reallocated
-/// and no unwiped copy is left on the heap.
+/// (NFC makes UTF-8 text at most 3 times longer), so the result is never
+/// reallocated. Only the normalizer's own buffers can hold an unwiped copy.
 fn nfc_pin(pin: &str) -> Result<Zeroizing<String>> {
     let mut out = Zeroizing::new(String::with_capacity(pin.len().saturating_mul(3)));
     ComposingNormalizerBorrowed::new_nfc()
