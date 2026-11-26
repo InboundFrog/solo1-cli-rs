@@ -162,9 +162,8 @@ impl HidTransport {
         Ok(hid)
     }
 
-    /// Send a `CTAPHID_INIT` to get a channel ID.
+    /// Send `CTAPHID_INIT` on the broadcast channel to get a channel ID.
     fn init(&mut self) -> Result<()> {
-        // Generate a random nonce
         let nonce: [u8; 8] = rand::random();
         log::debug!("CTAPHID_INIT: sending nonce {}", hex::encode(nonce));
         let frames = build_ctaphid_frames(&CTAPHID_BROADCAST_CID, CTAPHID_INIT, &nonce)?;
@@ -253,7 +252,7 @@ impl HidTransport {
             raw.get(..64)
                 .ok_or_else(|| Error::Protocol("HID read buffer too short".into()))?
         } else {
-            // pad to 64
+            // Short report: use the bytes as they are.
             raw.get(..n)
                 .ok_or_else(|| Error::Protocol("HID read length invalid".into()))?
         };

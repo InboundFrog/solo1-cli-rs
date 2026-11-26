@@ -107,7 +107,7 @@ impl CtapHidFrame {
     }
 }
 
-/// Maximum CTAPHID message payload: 57 bytes in the init frame plus
+/// Maximum CTAPHID message size: 57 bytes in the init frame plus
 /// 128 continuation frames (seq 0..=127) of 59 bytes each.
 pub const CTAPHID_MAX_PAYLOAD: usize = 57 + 128 * 59;
 
@@ -116,8 +116,9 @@ pub const CTAPHID_MAX_PAYLOAD: usize = 57 + 128 * 59;
 ///
 /// # Errors
 /// Returns an error if `data` exceeds the CTAPHID maximum message size
-/// (7609 bytes), which would otherwise silently truncate the 16-bit
-/// `bcnt` field and overflow the 7-bit continuation sequence number.
+/// (7609 bytes). A larger message would overflow the 7-bit continuation
+/// sequence number. A message above 65535 bytes would also not fit in the
+/// 16-bit `bcnt` field.
 pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<CtapHidFrame>> {
     if data.len() > CTAPHID_MAX_PAYLOAD {
         return Err(Error::Protocol(format!(
