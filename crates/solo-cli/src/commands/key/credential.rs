@@ -223,12 +223,11 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
 /// remaining credentials, returning `(username, cred_id)` pairs where
 /// `cred_id` is the raw credential ID bytes.
 ///
-/// `pin_auth_protocol` is always 1 for the current implementation (CTAP 2.0).
+/// The request always uses PIN protocol 1 (see `send_cred_mgmt`).
 fn enumerate_credentials_for_rp(
     hid: &impl HidDevice,
     pin_token: &[u8],
     rp_id_hash: &[u8],
-    _pin_auth_protocol: u8,
 ) -> Result<Vec<(String, Vec<u8>)>> {
     use ciborium::value::Value;
 
@@ -351,7 +350,7 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     // ── Step 2: for each RP, enumerate credentials ───────────────────────
     let mut entries = Vec::new();
     for (rp_id, rp_id_hash) in &rps {
-        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
+        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash)?;
         for (username, cred_id) in credentials {
             entries.push(CredentialEntry {
                 rp_id: rp_id.clone(),
@@ -422,7 +421,7 @@ pub fn cmd_credential_rm(
         let (_, rp_id_hash) =
             matching_rp.ok_or_else(|| SoloError::ProtocolError(format!("No credentials found for host '{host}'")))?;
 
-        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
+        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash)?;
         let mut matches: Vec<Vec<u8>> = credentials
             .into_iter()
             .filter_map(|(username, cred_id)| (username == user).then_some(cred_id))
