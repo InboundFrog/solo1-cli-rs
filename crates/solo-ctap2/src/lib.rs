@@ -544,14 +544,21 @@ impl ClientPinSession {
     ///
     /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
     /// section 6.5.1), then padded with zero bytes to 64 bytes and encrypted.
+    /// If that changes the text, a warning is logged (without any PIN data),
+    /// because other tools that do not normalize may then reject the new PIN.
     ///
     /// # Errors
     /// Returns [`Error::Protocol`] if the PIN is not valid (see [`validate_new_pin`]),
     /// or [`Error::Crypto`] if the AES-256-CBC encryption fails.
     pub fn encrypt_pin(&self, pin: &str) -> Result<Vec<u8>> {
-        let pin = nfc_pin(pin)?;
-        validate_nfc_pin(&pin)?;
-        let pin_bytes = pin.as_bytes();
+        let nfc = nfc_pin(pin)?;
+        if nfc.as_str() != pin {
+            log::warn!(
+                "The new PIN was converted to Unicode NFC form. Some other tools do not do this. Typed the same way there, the key will reject it and count a failed attempt."
+            );
+        }
+        validate_nfc_pin(&nfc)?;
+        let pin_bytes = nfc.as_bytes();
         let mut padded_pin = Zeroizing::new([0u8; 64]);
         padded_pin
             .get_mut(..pin_bytes.len())
@@ -573,21 +580,20 @@ impl ClientPinSession {
     ///
     /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
     /// section 6.5.1), then hashed. If that changes the text, a warning is logged
-    /// (without any PIN data), because a PIN set in another form by a different
-    /// tool will be rejected by the key.
+    /// (without any PIN data), because a PIN that was set in another form will be
+    /// rejected by the key.
     ///
     /// # Errors
     /// Returns [`Error::Crypto`] if the SHA-256 PIN hash is too short to truncate
     /// or the AES-256-CBC encryption fails.
     pub fn encrypt_pin_hash(&self, pin: &str) -> Result<[u8; 16]> {
-        let normalized = nfc_pin(pin)?;
-        if normalized.as_str() != pin {
+        let nfc = nfc_pin(pin)?;
+        if nfc.as_str() != pin {
             log::warn!(
-                "The PIN was changed to Unicode NFC form before use. A PIN that was set in another form by a different tool will be rejected."
+                "The PIN was converted to Unicode NFC form before use. If it was set in another form (for example by another tool or an older version of this one), the key will reject it and count a failed attempt."
             );
         }
-        let pin = normalized;
-        let pin_hash_full = Zeroizing::new(<[u8; 32]>::from(Sha256::digest(pin.as_bytes())));
+        let pin_hash_full = Zeroizing::new(<[u8; 32]>::from(Sha256::digest(nfc.as_bytes())));
         let pin_hash_prefix = pin_hash_full
             .get(..16)
             .ok_or_else(|| Error::Crypto("PIN hash too short".into()))?;
