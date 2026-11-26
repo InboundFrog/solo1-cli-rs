@@ -29,16 +29,7 @@ pub fn cmd_version(json: bool) -> Result<()> {
 /// # Errors
 /// Returns an error if keypair generation fails, writing the private key file
 /// fails, or JSON serialization fails.
-pub fn cmd_genkey(output: Option<&Path>, entropy_file: Option<&Path>, json: bool) -> Result<()> {
-    // Optionally seed additional entropy (informational; ring/p256 use OS RNG)
-    if let Some(entropy_path) = entropy_file {
-        eprintln!(
-            "Note: additional entropy from {} is not directly injectable into the OS RNG; \
-             the OS RNG is used regardless.",
-            entropy_path.display()
-        );
-    }
-
+pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
     let (priv_pem, pub_pem) = generate_keypair()?;
 
     if json {

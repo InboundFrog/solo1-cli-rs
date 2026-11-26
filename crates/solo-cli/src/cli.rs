@@ -33,10 +33,6 @@ pub enum Commands {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
 
-        /// File to read additional entropy from
-        #[arg(long)]
-        entropy: Option<PathBuf>,
-
         /// Output results as JSON (for scripting)
         #[arg(long)]
         json: bool,

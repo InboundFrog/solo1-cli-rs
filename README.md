@@ -149,7 +149,7 @@ solo program aux bootloader-version
 
 ```sh
 # Generate ECDSA P-256 keypair (PEM)
-solo genkey [-o OUTPUT] [--entropy FILE] [--json]
+solo genkey [-o OUTPUT] [--json]
 
 # Sign firmware HEX file, output JSON {firmware, signature}
 solo sign <KEY.pem> <firmware.hex>
