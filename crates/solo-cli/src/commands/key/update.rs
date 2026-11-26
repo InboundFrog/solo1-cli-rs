@@ -15,19 +15,32 @@ const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 /// Sleeps `interval` after each failed attempt. Tries at least once. One
 /// attempt can run past `total` by the CTAPHID init timeout.
 ///
+/// Each failed attempt that will be tried again is passed to `report` as text.
+/// A message that is the same as the one just before it is not reported again.
+/// The error from the last attempt is not reported. It is returned.
+///
 /// # Errors
 /// Returns the error of the last attempt when the time is up.
-fn retry_open<T, E>(
+fn retry_open<T, E: std::fmt::Display>(
     interval: Duration,
     total: Duration,
     mut open: impl FnMut() -> std::result::Result<T, E>,
+    mut report: impl FnMut(&str),
 ) -> std::result::Result<T, E> {
     let start = Instant::now();
+    let mut last_reported = String::new();
     loop {
         match open() {
             Ok(v) => return Ok(v),
             Err(e) if start.elapsed() >= total => return Err(e),
-            Err(_) => std::thread::sleep(interval),
+            Err(e) => {
+                let message = e.to_string();
+                if message != last_reported {
+                    report(&message);
+                    last_reported = message;
+                }
+                std::thread::sleep(interval);
+            }
         }
     }
 }
@@ -86,7 +99,12 @@ pub fn cmd_update(
     // has the same VID/PID, so wait before the first open.
     println!("Reconnecting...");
     std::thread::sleep(RECONNECT_SETTLE);
-    let bl_hid = retry_open(RECONNECT_INTERVAL, timeout, || solo1::open(serial, timeout))?;
+    let bl_hid = retry_open(
+        RECONNECT_INTERVAL,
+        timeout,
+        || solo1::open(serial, timeout),
+        |msg| log::warn!("Could not reconnect yet: {msg}. Trying again..."),
+    )?;
 
     // Query bootloader version to select the correct signature.
     let signature = select_signature(&bl_hid, &fw_json)?;
@@ -119,22 +137,63 @@ mod tests {
     #[test]
     fn retry_open_succeeds_after_two_failures() {
         let mut calls = 0;
-        let r: std::result::Result<&str, i32> = retry_open(TICK, Duration::from_secs(5), || {
-            calls += 1;
-            if calls < 3 { Err(calls) } else { Ok("up") }
-        });
+        let mut reports: Vec<String> = Vec::new();
+        let r: std::result::Result<&str, &str> = retry_open(
+            TICK,
+            Duration::from_secs(5),
+            || {
+                calls += 1;
+                if calls < 3 { Err("down") } else { Ok("up") }
+            },
+            |m| reports.push(m.to_owned()),
+        );
         assert_eq!(r, Ok("up"));
         assert_eq!(calls, 3);
+        assert_eq!(reports, ["down"]);
     }
 
     #[test]
     fn retry_open_returns_last_error_at_deadline() {
         let mut calls = 0;
-        let r: std::result::Result<(), i32> = retry_open(TICK, Duration::from_millis(20), || {
-            calls += 1;
-            Err(calls)
-        });
+        let mut reports: Vec<String> = Vec::new();
+        let r: std::result::Result<(), i32> = retry_open(
+            TICK,
+            Duration::from_millis(20),
+            || {
+                calls += 1;
+                Err(calls)
+            },
+            |m| reports.push(m.to_owned()),
+        );
         assert_eq!(r, Err(calls));
         assert!(calls > 1);
+        assert_eq!(reports, (1..calls).map(|n| n.to_string()).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn retry_open_reports_changes_only() {
+        let mut errors = ["a", "a", "b", "a"].into_iter();
+        let mut reports: Vec<String> = Vec::new();
+        let r: std::result::Result<&str, &str> = retry_open(
+            TICK,
+            Duration::from_secs(5),
+            || errors.next().map_or(Ok("up"), Err),
+            |m| reports.push(m.to_owned()),
+        );
+        assert_eq!(r, Ok("up"));
+        assert_eq!(reports, ["a", "b", "a"]);
+    }
+
+    #[test]
+    fn retry_open_immediate_success_reports_nothing() {
+        let mut reports: Vec<String> = Vec::new();
+        let r: std::result::Result<&str, &str> = retry_open(
+            TICK,
+            Duration::from_secs(5),
+            || Ok("up"),
+            |m| reports.push(m.to_owned()),
+        );
+        assert_eq!(r, Ok("up"));
+        assert_eq!(reports, Vec::<String>::new());
     }
 }
