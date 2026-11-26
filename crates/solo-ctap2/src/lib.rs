@@ -10,6 +10,7 @@ pub use error::{Error, Result};
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use ciborium::value::Value;
 use hmac::{Hmac, KeyInit as _, Mac as _};
+use icu_normalizer::ComposingNormalizerBorrowed;
 use p256::Sec1Point as EncodedPoint;
 use p256::elliptic_curve::Generate;
 use sha2::{Digest as _, Sha256};
@@ -481,13 +482,33 @@ pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
     Ok(truncated.to_vec())
 }
 
+/// Put a PIN into Unicode normalization form C (NFC), as CTAP 2.1 section 6.5.1 requires.
+///
+/// The text is written into a `String` that already has room for the result
+/// (NFC makes UTF-8 text at most 3 times longer), so it is never reallocated
+/// and no unwiped copy is left on the heap.
+fn nfc_pin(pin: &str) -> Result<Zeroizing<String>> {
+    let mut out = Zeroizing::new(String::with_capacity(pin.len().saturating_mul(3)));
+    ComposingNormalizerBorrowed::new_nfc()
+        .normalize_to(pin, &mut *out)
+        .map_err(|_| Error::Protocol("PIN could not be normalized".into()))?;
+    Ok(out)
+}
+
 /// Check that `pin` is allowed as a new PIN (CTAP 2.1, setPIN and changePIN).
 ///
-/// A new PIN has at least 4 Unicode code points and at most 63 bytes of UTF-8.
+/// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
+/// section 6.5.1). The NFC form has at least 4 Unicode code points and at most
+/// 63 bytes of UTF-8.
 ///
 /// # Errors
 /// Returns [`Error::Protocol`] if the PIN is too short or too long.
 pub fn validate_new_pin(pin: &str) -> Result<()> {
+    validate_nfc_pin(&nfc_pin(pin)?)
+}
+
+/// Length rules for a PIN that is already in NFC form.
+fn validate_nfc_pin(pin: &str) -> Result<()> {
     if pin.chars().count() < 4 {
         return Err(Error::Protocol("PIN must be at least 4 characters".into()));
     }
@@ -521,13 +542,15 @@ impl ClientPinSession {
 
     /// Encrypt a PIN for setPin or changePin.
     ///
-    /// The PIN is padded with zero bytes to 64 bytes before encryption.
+    /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
+    /// section 6.5.1), then padded with zero bytes to 64 bytes and encrypted.
     ///
     /// # Errors
     /// Returns [`Error::Protocol`] if the PIN is not valid (see [`validate_new_pin`]),
     /// or [`Error::Crypto`] if the AES-256-CBC encryption fails.
     pub fn encrypt_pin(&self, pin: &str) -> Result<Vec<u8>> {
-        validate_new_pin(pin)?;
+        let pin = nfc_pin(pin)?;
+        validate_nfc_pin(&pin)?;
         let pin_bytes = pin.as_bytes();
         let mut padded_pin = Zeroizing::new([0u8; 64]);
         padded_pin
@@ -548,10 +571,14 @@ impl ClientPinSession {
 
     /// Encrypt the PIN hash for getPinToken.
     ///
+    /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
+    /// section 6.5.1), then hashed.
+    ///
     /// # Errors
     /// Returns [`Error::Crypto`] if the SHA-256 PIN hash is too short to truncate
     /// or the AES-256-CBC encryption fails.
     pub fn encrypt_pin_hash(&self, pin: &str) -> Result<[u8; 16]> {
+        let pin = nfc_pin(pin)?;
         let pin_hash_full = Zeroizing::new(<[u8; 32]>::from(Sha256::digest(pin.as_bytes())));
         let pin_hash_prefix = pin_hash_full
             .get(..16)
@@ -661,6 +688,65 @@ mod tests {
         );
         assert!(validate_new_pin(&"a".repeat(63)).is_ok());
         assert!(validate_new_pin(&"a".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn test_validate_new_pin_uses_nfc_form() {
+        let decomposed = "e\u{301}";
+        // 4 code points after NFC (8 before: 2 each).
+        assert!(validate_new_pin(&decomposed.repeat(4)).is_ok());
+        // 3 code points after NFC, although 6 before.
+        assert!(validate_new_pin(&decomposed.repeat(3)).is_err());
+        // 66 bytes before NFC, 44 after: accepted.
+        assert_eq!(decomposed.repeat(22).len(), 66);
+        assert_eq!(nfc_pin(&decomposed.repeat(22)).unwrap().len(), 44);
+        assert!(validate_new_pin(&decomposed.repeat(22)).is_ok());
+        // 33 bytes before NFC, 66 after: rejected.
+        let devanagari = "\u{958}".repeat(11);
+        assert_eq!(devanagari.len(), 33);
+        assert_eq!(nfc_pin(&devanagari).unwrap().len(), 66);
+        assert!(validate_new_pin(&devanagari).is_err());
+    }
+
+    #[test]
+    fn test_encrypt_pin_normalizes_to_nfc() {
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        let decomposed = "caf\u{65}\u{301}1";
+        let composed = "caf\u{e9}1";
+        let enc = session.encrypt_pin(decomposed).unwrap();
+        assert_eq!(enc, session.encrypt_pin(composed).unwrap());
+        let dec = session.decrypt_pin_token(&enc).unwrap();
+        let mut expected = [0u8; 64];
+        expected[..composed.len()].copy_from_slice(composed.as_bytes());
+        assert_eq!(dec, expected);
+    }
+
+    #[test]
+    fn test_encrypt_pin_hash_normalizes_to_nfc() {
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        let a = session.encrypt_pin_hash("caf\u{65}\u{301}1").unwrap();
+        assert_eq!(a, session.encrypt_pin_hash("caf\u{e9}1").unwrap());
+        assert_ne!(a, session.encrypt_pin_hash("caf\u{e9}2").unwrap());
+    }
+
+    #[test]
+    fn test_ascii_pin_bytes_unchanged() {
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        let pin = "123456";
+        let mut padded = [0u8; 64];
+        padded[..pin.len()].copy_from_slice(pin.as_bytes());
+        assert_eq!(
+            session.encrypt_pin(pin).unwrap(),
+            aes256_cbc_encrypt(&session.shared_secret, &padded).unwrap()
+        );
+        let hash = Sha256::digest(pin.as_bytes());
+        assert_eq!(
+            session.encrypt_pin_hash(pin).unwrap().to_vec(),
+            aes256_cbc_encrypt(&session.shared_secret, &hash[..16]).unwrap()
+        );
     }
 
     #[test]

@@ -2128,6 +2128,7 @@ dependencies = [
  "cbc",
  "ciborium",
  "hmac",
+ "icu_normalizer",
  "p256",
  "rand",
  "sha2",

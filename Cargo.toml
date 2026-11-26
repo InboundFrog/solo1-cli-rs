@@ -23,6 +23,7 @@ ctrlc = "3"
 hex = "0.4"
 hidapi = "2"
 hmac = "0.13"
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"] }
 ihex = "3"
 indicatif = "0.18"
 libc = "0.2"

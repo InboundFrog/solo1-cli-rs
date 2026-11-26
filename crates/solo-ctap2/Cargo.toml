@@ -13,6 +13,7 @@ aes.workspace = true
 cbc.workspace = true
 ciborium.workspace = true
 hmac.workspace = true
+icu_normalizer.workspace = true
 p256.workspace = true
 rand.workspace = true
 sha2.workspace = true
