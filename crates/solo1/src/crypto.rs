@@ -63,18 +63,21 @@ pub fn load_signing_key(path: &Path) -> Result<SigningKey> {
 }
 
 /// Sign the firmware bytes with the given key.
-/// Returns the DER-encoded signature bytes.
+///
+/// The firmware is hashed once with SHA-256 and that digest is signed. This is
+/// what the Solo 1 bootloader checks. Returns the raw 64-byte `r || s`
+/// signature, not DER.
 ///
 /// # Errors
-/// This function is currently infallible; the `Result` return type is retained
-/// for API stability with signing backends that can fail.
+/// Returns an error if the signing operation fails.
 pub fn sign_firmware(key: &SigningKey, firmware_bytes: &[u8]) -> Result<Vec<u8>> {
-    use p256::ecdsa::signature::Signer;
-    use p256::ecdsa::{DerSignature, Signature};
+    use p256::ecdsa::Signature;
+    use p256::ecdsa::signature::hazmat::PrehashSigner;
     let hash = Sha256::digest(firmware_bytes);
-    let sig: Signature = key.sign(&hash);
-    let der_sig: DerSignature = sig.to_der();
-    Ok(der_sig.as_bytes().to_vec())
+    let sig: Signature = key
+        .sign_prehash(&hash)
+        .map_err(|e| Error::Crypto(format!("Failed to sign firmware: {e}")))?;
+    Ok(sig.to_bytes().to_vec())
 }
 
 /// Compute SHA-256 of the given bytes, returning hex string.
@@ -373,17 +376,18 @@ mod tests {
 
     #[test]
     fn test_sign_and_verify_firmware() {
-        use p256::ecdsa::{DerSignature, VerifyingKey, signature::Verifier};
+        use p256::ecdsa::{Signature, VerifyingKey, signature::hazmat::PrehashVerifier};
         let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
         let firmware = b"fake firmware data for testing";
-        let sig_der = sign_firmware(&signing_key, firmware).unwrap();
-        assert_ne!(sig_der, [] as [u8; 0]);
+        let sig_raw = sign_firmware(&signing_key, firmware).unwrap();
+        // Raw r || s, as the bootloader expects (not DER).
+        assert_eq!(sig_raw.len(), 64);
 
-        // Verify using p256
+        // The signature is over one SHA-256 digest of the firmware.
         let vk = VerifyingKey::from(&signing_key);
         let hash = Sha256::digest(firmware);
-        let sig = DerSignature::try_from(sig_der.as_slice()).unwrap();
-        assert!(vk.verify(&hash, &sig).is_ok());
+        let sig = Signature::try_from(sig_raw.as_slice()).unwrap();
+        assert!(vk.verify_prehash(&hash, &sig).is_ok());
     }
 
     #[test]
