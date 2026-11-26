@@ -326,6 +326,22 @@ mod tests {
         assert_eq!(content.unwrap(), "old");
     }
 
+    /// A Unix socket at the path gives an error and is left untouched.
+    #[test]
+    fn test_write_private_key_rejects_socket_path() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(err.to_string().contains("not a regular file"));
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_socket());
+    }
+
     /// A path that is a directory gives an error and is left untouched.
     #[test]
     fn test_write_private_key_rejects_non_regular_path() {
