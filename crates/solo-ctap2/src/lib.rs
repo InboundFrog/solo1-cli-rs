@@ -552,12 +552,12 @@ impl ClientPinSession {
     /// or [`Error::Crypto`] if the AES-256-CBC encryption fails.
     pub fn encrypt_pin(&self, pin: &str) -> Result<Vec<u8>> {
         let nfc = nfc_pin(pin)?;
+        validate_nfc_pin(&nfc)?;
         if nfc.as_str() != pin {
             log::warn!(
-                "The new PIN was converted to Unicode NFC form. Some other tools do not do this. Typed the same way there, the key will reject it and count a failed attempt."
+                "The new PIN was converted to Unicode NFC form. Tools that do not do this may reject it when it is typed the same way, and the key counts each failed attempt."
             );
         }
-        validate_nfc_pin(&nfc)?;
         let pin_bytes = nfc.as_bytes();
         let mut padded_pin = Zeroizing::new([0u8; 64]);
         padded_pin
