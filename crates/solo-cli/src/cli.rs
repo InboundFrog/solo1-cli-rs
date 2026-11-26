@@ -57,7 +57,7 @@ pub enum Commands {
         #[arg(long, short = 'o', required = true)]
         output: PathBuf,
 
-        /// Attestation key file
+        /// Attestation key file: 32 raw bytes, or 64 hex digits as text
         #[arg(long)]
         attestation_key: Option<PathBuf>,
 
