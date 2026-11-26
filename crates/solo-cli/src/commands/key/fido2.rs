@@ -106,15 +106,15 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
     Ok(aes256_cbc_decrypt(shared_secret, encrypted)?)
 }
 
-// TODO Cleanup doc - need to talk to Claude
-#[allow(clippy::doc_lazy_continuation)]
 /// Build the hmac-secret extension input for a getAssertion request.
 ///
-/// Performs steps 1–6 of the hmac-secret protocol:
-///   1. Compute salt = SHA-256(challenge)
-///   2–4. ECDH with device key → `shared_secret` + ephemeral COSE public key
-///   5. saltEnc = AES-256-CBC(key=shared_secret, IV=0x00×16, data=salt)
-///   6. saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
+/// This performs steps 1 to 6 of the hmac-secret protocol:
+///
+/// - Step 1: compute salt = SHA-256(challenge).
+/// - Steps 2 to 4: run ECDH with the device key. This gives the
+///   `shared_secret` and the ephemeral COSE public key.
+/// - Step 5: compute saltEnc = AES-256-CBC(key=`shared_secret`, IV=0x00 repeated 16 times, data=salt).
+/// - Step 6: compute saltAuth = HMAC-SHA-256(`shared_secret`, saltEnc), truncated to the first 16 bytes.
 ///
 /// Returns the hmac-secret extension map `{1: keyAgreement, 2: saltEnc, 3: saltAuth}`
 /// and the `shared_secret` needed to decrypt the authenticator's response.
