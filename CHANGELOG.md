@@ -79,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and clears nSWBOOT0) and no longer sends a bootloader reboot. Not yet tested on hardware. (#117)
 - `set-pin` and `change-pin` now reject new PINs shorter than 4 characters or longer than 63 bytes, instead of cutting
   off PINs longer than 64 bytes, and no longer send an unused version query. (#104)
+- PINs with non-ASCII characters are now put into Unicode NFC form before use, as CTAP 2.1 requires. The tool warns
+  when this changes what was typed, because tools that do not normalize will then see a different PIN. (#131)
 - `key update` now reconnects to the selected serial after entering the bootloader, honours `--timeout`, and retries
   until the device returns. While it retries, it prints each new error to stderr. (#103, #130)
 - The `sign-file` help text now says that the credential id is hex. (#106)
