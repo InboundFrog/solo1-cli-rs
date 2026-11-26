@@ -285,9 +285,9 @@ fn receive_message(
             continue;
         };
 
-        // Skip frames not for our channel (unless this is INIT response on broadcast)
-        let for_us = frame.channel_id == channel_id || frame.channel_id == CTAPHID_BROADCAST_CID;
-        if !for_us {
+        // Broadcast frames are only valid for the INIT response, where the caller
+        // asks for the broadcast channel.
+        if frame.channel_id != channel_id {
             log::debug!("HID recv: ignoring frame for channel {}", hex::encode(frame.channel_id));
             continue;
         }
@@ -475,6 +475,21 @@ mod tests {
         let mut queue = wire(CTAPHID_BROADCAST_CID, CTAPHID_INIT, &other);
         let err = wait_for_init_response(&mut || Ok(queue.pop_front()), nonce, Duration::from_millis(50)).unwrap_err();
         assert!(matches!(err, Error::Timeout));
+    }
+
+    #[test]
+    fn test_receive_ignores_broadcast_frames_on_own_channel() {
+        let cid = [1, 2, 3, 4];
+        let mut queue = wire(CTAPHID_BROADCAST_CID, crate::protocol::CTAPHID_PING, b"stray");
+        queue.extend(wire(cid, crate::protocol::CTAPHID_PING, b"mine"));
+        let got = receive_message(
+            &mut || Ok(queue.pop_front()),
+            cid,
+            crate::protocol::CTAPHID_PING,
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        assert_eq!(got, b"mine");
     }
 
     #[test]
