@@ -90,7 +90,7 @@ solo ls [--json]                        # List connected Solo devices
 ```sh
 solo key version                           # Get firmware version
 solo key wink                              # Blink LED
-solo key ping [--count N] [--data HEX]     # Ping and measure RTT
+solo key ping [--count N] [--data DATA]    # Ping and measure RTT (DATA: hex or plain text, default deadbeef; N default 1)
 solo key rng hexbytes <N>                  # Print N random bytes as hex
 solo key rng raw                           # Stream raw entropy to stdout
 solo key rng feedkernel                    # Feed entropy to /dev/random (Linux)
@@ -101,8 +101,8 @@ solo key change-pin                        # Change existing PIN
 solo key disable-updates                   # Permanently disable firmware updates
 solo key keyboard <DATA>                   # Program keyboard sequence (max 64 bytes)
 solo key probe <HASH_TYPE> <FILE>          # Calculate hash on device (sha256|sha512|rsa2048|ed25519, file <=6144 bytes)
-solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential
-solo key update [--firmware FILE]          # Update firmware (downloads latest if omitted)
+solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential (ID is hex)
+solo key update [--firmware FILE.json]     # Update firmware (downloads latest if omitted)
 ```
 
 #### Credential management
@@ -151,7 +151,7 @@ solo program aux bootloader-version
 # Generate ECDSA P-256 keypair (PEM)
 solo genkey [-o OUTPUT] [--entropy FILE] [--json]
 
-# Sign firmware HEX file, output JSON {firmware, signature}
+# Sign firmware HEX file, output JSON {firmware, signature, versions}
 solo sign <KEY.pem> <firmware.hex>
 
 # Merge Intel HEX files
@@ -188,7 +188,7 @@ attestation certificate against known fingerprints. Two fingerprint types are co
 | Device type          | SPKI fingerprint (SHA-256)                                                      |
 |----------------------|---------------------------------------------------------------------------------|
 | Solo Tap             | `6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049`              |
-| Solo 1               | not yet collected (see [#3](https://github.com/solokeys/solo1-cli-rs/issues/3)) |
+| Solo 1               | not yet collected                                                               |
 | Solo Mu              | not yet collected                                                               |
 | Solo ≤v3.0.0         | not yet collected                                                               |
 | Solo Hacker          | not yet collected                                                               |
@@ -196,7 +196,8 @@ attestation certificate against known fingerprints. Two fingerprint types are co
 
 The missing values must be obtained by running `solo key verify --json` against real
 hardware and reading the `spki_fingerprint` field from the output. If you have one of
-these devices please contribute the value via the issue linked above.
+these devices please contribute the value by opening an issue at
+<https://github.com/InboundFrog/solo1-cli-rs/issues>.
 
 Verification still works without the SPKI fingerprints — full-DER fingerprints are used
 for device identification today. The SPKI constants are reserved for a future pinning
