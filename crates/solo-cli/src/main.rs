@@ -247,6 +247,7 @@ fn run_monitor(port: &str) -> error::Result<()> {
 /// # Errors
 ///
 /// Returns any read or write error other than a timeout or an interruption.
+/// If the writer's pipe is closed (`BrokenPipe`), the copy stops with `Ok(())`.
 fn copy_until_eof(mut reader: impl std::io::Read, mut writer: impl std::io::Write) -> std::io::Result<()> {
     use std::io::ErrorKind;
 
@@ -254,10 +255,14 @@ fn copy_until_eof(mut reader: impl std::io::Read, mut writer: impl std::io::Writ
     loop {
         match reader.read(&mut buf) {
             Ok(0) => return Ok(()),
-            Ok(n) => {
-                writer.write_all(buf.get(..n).unwrap_or_default())?;
-                writer.flush()?;
-            }
+            Ok(n) => match writer
+                .write_all(buf.get(..n).unwrap_or_default())
+                .and_then(|()| writer.flush())
+            {
+                Ok(()) => {}
+                Err(e) if e.kind() == ErrorKind::BrokenPipe => return Ok(()),
+                Err(e) => return Err(e),
+            },
             Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::Interrupted) => {}
             Err(e) => return Err(e),
         }
@@ -328,5 +333,35 @@ mod tests {
         let mut out = Vec::new();
         copy_until_eof(reader, &mut out).unwrap();
         assert_eq!(out, b"hello\xff\xfe\nend");
+    }
+
+    #[test]
+    fn copy_until_eof_stops_quietly_on_broken_pipe_but_reports_other_errors() {
+        use std::io::{Error, ErrorKind, Write};
+
+        struct Fail(ErrorKind);
+        impl Write for Fail {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(Error::from(self.0))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct FlushFail;
+        impl Write for FlushFail {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(Error::from(ErrorKind::BrokenPipe))
+            }
+        }
+
+        copy_until_eof(&b"data"[..], FlushFail).unwrap();
+        copy_until_eof(&b"data"[..], Fail(ErrorKind::BrokenPipe)).unwrap();
+        let err = copy_until_eof(&b"data"[..], Fail(ErrorKind::PermissionDenied)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::PermissionDenied);
     }
 }

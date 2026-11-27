@@ -38,17 +38,32 @@ pub fn cmd_rng_hexbytes(hid: &impl HidDevice, n: usize) -> Result<String> {
 
 /// Stream raw random bytes to stdout.
 ///
+/// Runs until the reader of stdout closes the pipe (for example
+/// `solo key rng raw | head -c 4096`), then returns `Ok(())`.
+///
 /// # Errors
-/// Loops indefinitely, returning an error if a device request fails or if
-/// writing to or flushing stdout fails.
+/// Returns an error if a device request fails or if writing to or flushing
+/// stdout fails for any reason other than a closed pipe.
 pub fn cmd_rng_raw(hid: &impl HidDevice) -> Result<()> {
     let stdout = std::io::stdout();
-    let mut out = stdout.lock();
+    stream_rng(hid, &mut stdout.lock())
+}
+
+/// Copies random bytes from the device to `out` until the pipe closes.
+///
+/// # Errors
+/// Returns an error if a device request fails or if writing to or flushing
+/// `out` fails for any reason other than `BrokenPipe`, which ends the loop
+/// with `Ok(())`.
+fn stream_rng(hid: &impl HidDevice, out: &mut impl Write) -> Result<()> {
     loop {
         let request = [64u8];
         let response = hid.send_recv(CMD_RNG, &request)?;
-        out.write_all(&response)?;
-        out.flush()?;
+        match out.write_all(&response).and_then(|()| out.flush()) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
+            Err(e) => return Err(e.into()),
+        }
     }
 }
 
@@ -134,6 +149,50 @@ mod tests {
     use super::*;
     use crate::error::SoloError;
     use solo_ctaphid::mock::MockDevice;
+
+    struct FailWriter(std::io::ErrorKind);
+    impl Write for FailWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(self.0))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Accepts every write but fails on flush, like a line-buffered stdout.
+    struct FlushFailWriter;
+    impl Write for FlushFailWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+    }
+
+    /// A `BrokenPipe` that only shows up in flush also ends the stream quietly.
+    #[test]
+    fn test_stream_rng_broken_pipe_on_flush_is_ok() {
+        let device = MockDevice::new(vec![Ok(vec![1, 2, 3])]);
+        stream_rng(&device, &mut FlushFailWriter).unwrap();
+    }
+
+    /// A closed stdout pipe ends the stream quietly.
+    #[test]
+    fn test_stream_rng_broken_pipe_is_ok() {
+        let device = MockDevice::new(vec![Ok(vec![1, 2, 3])]);
+        let mut out = FailWriter(std::io::ErrorKind::BrokenPipe);
+        stream_rng(&device, &mut out).unwrap();
+    }
+
+    /// Any other write error is still returned.
+    #[test]
+    fn test_stream_rng_other_io_error_is_err() {
+        let device = MockDevice::new(vec![Ok(vec![1, 2, 3])]);
+        let mut out = FailWriter(std::io::ErrorKind::PermissionDenied);
+        assert!(stream_rng(&device, &mut out).is_err());
+    }
 
     // ── cmd_rng_hexbytes ─────────────────────────────────────────────────────
 
