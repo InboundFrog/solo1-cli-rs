@@ -32,8 +32,8 @@ fn run(cli: Cli) -> error::Result<()> {
             top::cmd_version(json)?;
         }
 
-        Commands::Genkey { output, entropy, json } => {
-            top::cmd_genkey(output.as_deref(), entropy.as_deref(), json)?;
+        Commands::Genkey { output, json } => {
+            top::cmd_genkey(output.as_deref(), json)?;
         }
 
         Commands::Sign { key, firmware_hex } => {
@@ -167,7 +167,7 @@ fn run_key_command(
 
         KeyCommands::Update { firmware } => {
             key.require(Model::Solo1, "key update")?;
-            key::cmd_update(hid, firmware.as_deref())?;
+            key::cmd_update(hid, firmware.as_deref(), serial, timeout)?;
         }
 
         KeyCommands::Credential { command } => match command {
@@ -270,6 +270,19 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
+
+    #[test]
+    fn udp_flag_is_rejected() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "key", "--udp", "wink"]).is_err());
+        assert!(Cli::try_parse_from(["solo", "program", "--udp", "aux", "reboot"]).is_err());
+    }
+
+    #[test]
+    fn genkey_entropy_option_is_rejected() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "genkey", "--entropy", "x"]).is_err());
+    }
 
     #[test]
     fn cli_timeout_default_is_30() {
