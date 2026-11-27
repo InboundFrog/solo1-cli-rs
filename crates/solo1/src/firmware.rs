@@ -27,6 +27,9 @@ pub struct VersionedSignature {
     pub signature: String,
 }
 
+/// Start address of the application in flash on a Solo 1 key.
+const APP_START_ADDRESS: u32 = 0x0800_5000;
+
 impl FirmwareJson {
     /// Load from a JSON file.
     ///
@@ -69,7 +72,7 @@ impl FirmwareJson {
             parse_hex_string(&hex_str)
         } else {
             // Raw binary — use the Solo 1 application start address
-            Ok((0x0800_5000, bytes))
+            Ok((APP_START_ADDRESS, bytes))
         }
     }
 
@@ -165,29 +168,20 @@ impl FirmwareVersion {
     /// Returns [`Error::Firmware`] if the string does not have exactly
     /// three dot-separated components, or any component is not a valid `u32`.
     pub fn parse(s: &str) -> Result<Self> {
-        let parts: Vec<&str> = s.trim_start_matches('v').split('.').collect();
-        if parts.len() != 3 {
+        let mut parts = s.trim_start_matches('v').split('.');
+        let (Some(major), Some(minor), Some(patch), None) = (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
             return Err(Error::Firmware(format!("Invalid version string: {s}")));
-        }
-        let major_str: &str = parts
-            .first()
-            .ok_or_else(|| Error::Firmware(format!("Invalid version string: {s}")))?;
-        let minor_str: &str = parts
-            .get(1)
-            .ok_or_else(|| Error::Firmware(format!("Invalid version string: {s}")))?;
-        let patch_str: &str = parts
-            .get(2)
-            .ok_or_else(|| Error::Firmware(format!("Invalid version string: {s}")))?;
-        let major = major_str
-            .parse()
-            .map_err(|_| Error::Firmware(format!("Invalid major: {major_str}")))?;
-        let minor = minor_str
-            .parse()
-            .map_err(|_| Error::Firmware(format!("Invalid minor: {minor_str}")))?;
-        let patch = patch_str
-            .parse()
-            .map_err(|_| Error::Firmware(format!("Invalid patch: {patch_str}")))?;
-        Ok(Self { major, minor, patch })
+        };
+        let component = |name: &str, text: &str| {
+            text.parse()
+                .map_err(|_| Error::Firmware(format!("Invalid {name}: {text}")))
+        };
+        Ok(Self {
+            major: component("major", major)?,
+            minor: component("minor", minor)?,
+            patch: component("patch", patch)?,
+        })
     }
 }
 
@@ -204,24 +198,23 @@ impl std::fmt::Display for FirmwareVersion {
 /// comparison prefix (`<=`, `>=`, `<`, `>`, `=`), or the version it contains
 /// cannot be parsed.
 pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -> Result<bool> {
-    if let Some(rest) = constraint.strip_prefix("<=") {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version <= bound)
-    } else if let Some(rest) = constraint.strip_prefix(">=") {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version >= bound)
-    } else if let Some(rest) = constraint.strip_prefix('<') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version < bound)
-    } else if let Some(rest) = constraint.strip_prefix('>') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version > bound)
-    } else if let Some(rest) = constraint.strip_prefix('=') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version == bound)
-    } else {
-        Err(Error::Firmware(format!("Unknown version constraint: {constraint}")))
+    use std::cmp::Ordering;
+
+    // Two-character prefixes come first, so "<=" is not read as "<".
+    type Holds = fn(Ordering) -> bool;
+    let table: [(&str, Holds); 5] = [
+        ("<=", Ordering::is_le),
+        (">=", Ordering::is_ge),
+        ("<", Ordering::is_lt),
+        (">", Ordering::is_gt),
+        ("=", Ordering::is_eq),
+    ];
+    for (prefix, holds) in table {
+        if let Some(rest) = constraint.strip_prefix(prefix) {
+            return Ok(holds(version.cmp(&FirmwareVersion::parse(rest)?)));
+        }
     }
+    Err(Error::Firmware(format!("Unknown version constraint: {constraint}")))
 }
 
 /// Parse an Intel HEX file into a flat binary buffer.
@@ -901,6 +894,20 @@ mod tests {
     fn test_firmware_version_parse_v_prefix() {
         let v = FirmwareVersion::parse("v3.1.0").unwrap();
         assert_eq!(v, FirmwareVersion::new(3, 1, 0));
+    }
+
+    #[test]
+    fn test_firmware_version_parse_rejects_bad_input() {
+        for bad in [
+            "", "1.2", "1.2.3.4", "1..3", "a.2.3", "1.b.3", "1.2.c", "1.2.-3", "1.2.3 ",
+        ] {
+            assert!(FirmwareVersion::parse(bad).is_err(), "{bad:?} should be rejected");
+        }
+        // Every leading `v` is stripped.
+        assert_eq!(
+            FirmwareVersion::parse("vv1.2.3").unwrap(),
+            FirmwareVersion::new(1, 2, 3)
+        );
     }
 
     #[test]
