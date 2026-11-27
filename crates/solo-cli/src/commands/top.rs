@@ -373,6 +373,19 @@ mod tests {
         assert_eq!(names, vec![std::ffi::OsString::from("signing-key.pem")]);
     }
 
+    /// If the rename fails, the temporary file is removed.
+    #[test]
+    fn test_write_private_key_removes_temp_file_when_rename_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        // The trailing slash makes the rename fail after the temp file exists.
+        let path = format!("{}/new.pem/", dir.path().display());
+
+        let result = write_private_key(std::path::Path::new(&path), KEY_PEM);
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
     /// A path with no file name gives an error, not a panic.
     #[test]
     fn test_write_private_key_rejects_path_without_file_name() {
