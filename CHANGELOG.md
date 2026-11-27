@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code.
 - `DeviceFilter` gains `Fido` (FIDO usage page), `AllOf` and `AnyOf`; `HidDeviceInfo` and `HidTransport` report the
   device's USB IDs.
+- `solo key sign-file` now also writes the authenticator data that the key signed to `<FILE>.authdata`, next to
+  `<FILE>.sig`. `solo key credential create` has a new option `--public-key-out <FILE>` that writes the public key of
+  the new credential as PEM text, and with `--json` its output has a new field `public_key_pem`. Together with the file,
+  these let you check a `sign-file` signature, which was not possible before. Save the public key when you create the
+  credential, because `solo` does not give the key of a credential that already exists. (#141)
+- New command `solo verify-file --public-key <PEM> [--signature <FILE>] [--authdata <FILE>] <FILE>`. It works without a
+  device. It needs the file, its `.sig` and `.authdata` files, and the public key from
+  `credential create --public-key-out`. It checks the signature, that the authenticator data is for the rpId that
+  `sign-file` uses, and that the user-present flag is set. (#142)
 
 ### Changed
 
