@@ -2,6 +2,7 @@ use crate::error::Result;
 /// `program aux` subcommands: bootloader mode switching, reboot, DFU mode.
 use solo_ctaphid::HidDevice;
 use solo1::bootloader::bootloader_cmd;
+use solo1::dfu::DfuDevice;
 use solo1::protocol::{CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION};
 
 /// Enter bootloader mode (from firmware).
@@ -40,14 +41,17 @@ pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
     Ok(())
 }
 
-/// Leave ST DFU mode (re-enter Solo bootloader) by issuing a reboot from bootloader.
+/// Leave ST DFU mode. Finds the ST DFU device over USB (it is not a HID
+/// device), sets the boot options and detaches, as the reference tool does.
+/// The options only take effect after a power cycle.
 ///
 /// # Errors
-/// This function does not return an error; the reboot command's result is
-/// intentionally ignored because the device reboots without replying.
-pub fn cmd_leave_dfu(hid: &impl HidDevice) -> Result<()> {
-    let _ = bootloader_cmd(hid, CMD_REBOOT, 0, &[]);
+/// Returns an error if no ST DFU device is found, or reading the option bytes
+/// or the DFU transfers fail.
+pub fn cmd_leave_dfu() -> Result<()> {
     println!("Leaving ST DFU mode...");
+    DfuDevice::open()?.leave_dfu()?;
+    println!("Please powercycle the device (pull out, plug in again)");
     Ok(())
 }
 

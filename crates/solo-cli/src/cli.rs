@@ -33,10 +33,6 @@ pub enum Commands {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
 
-        /// File to read additional entropy from
-        #[arg(long)]
-        entropy: Option<PathBuf>,
-
         /// Output results as JSON (for scripting)
         #[arg(long)]
         json: bool,
@@ -61,7 +57,7 @@ pub enum Commands {
         #[arg(long, short = 'o', required = true)]
         output: PathBuf,
 
-        /// Attestation key file
+        /// Attestation key file: 32 raw bytes, or 64 hex digits as text
         #[arg(long)]
         attestation_key: Option<PathBuf>,
 
@@ -96,10 +92,6 @@ pub struct KeyArgs {
     /// Serial number of device to use
     #[arg(long)]
     pub serial: Option<String>,
-
-    /// Use UDP transport (for simulation)
-    #[arg(long)]
-    pub udp: bool,
 
     /// Output results as JSON (for scripting)
     #[arg(long, global = true)]
@@ -176,7 +168,7 @@ pub enum KeyCommands {
 
     /// Sign a file with a resident credential
     SignFile {
-        /// Credential ID (base64-encoded from make-credential)
+        /// Credential ID (hex-encoded)
         credential_id: String,
         /// File to sign
         filename: PathBuf,
@@ -252,10 +244,6 @@ pub struct ProgramArgs {
     /// Serial number of device to use
     #[arg(long)]
     pub serial: Option<String>,
-
-    /// Use UDP transport (for simulation)
-    #[arg(long)]
-    pub udp: bool,
 
     #[command(subcommand)]
     pub command: ProgramCommands,
