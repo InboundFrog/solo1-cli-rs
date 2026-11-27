@@ -341,6 +341,50 @@ mod tests {
         assert_eq!(content.unwrap(), "old");
     }
 
+    /// A file at the temporary name is not ours: the call fails and nothing is changed.
+    #[test]
+    fn test_write_private_key_does_not_touch_foreign_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+        let temp = dir.path().join(format!(".signing-key.pem.{}.tmp", std::process::id()));
+        std::fs::write(&path, "old").unwrap();
+        std::fs::write(&temp, "foreign").unwrap();
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(&temp).unwrap(), "foreign");
+    }
+
+    /// After a good write only the key file is in the directory.
+    #[test]
+    fn test_write_private_key_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+        std::fs::write(&path, "old").unwrap();
+
+        write_private_key(&path, KEY_PEM).unwrap();
+
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("signing-key.pem")]);
+    }
+
+    /// A path with no file name gives an error, not a panic.
+    #[test]
+    fn test_write_private_key_rejects_path_without_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        // The missing parent makes the first check say "not found".
+        let path = dir.path().join("missing").join("..");
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
     /// A Unix socket at the path gives an error and is left untouched.
     #[test]
     fn test_write_private_key_rejects_socket_path() {
