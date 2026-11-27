@@ -52,36 +52,55 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Write the signing private key to a new file at `path` with mode 0o600.
+/// Write the signing private key to a new file at `path`.
 ///
-/// An existing regular file or symbolic link at the path is removed first and
-/// never written into, so a handle that another program opened earlier cannot
-/// read the new key. Any other kind of existing path gives an error.
+/// The key is written to a temporary file in the same directory, with mode
+/// 0o600 (or less if the umask removes bits). The file is synced and then
+/// renamed over `path`. If any step fails, the temporary file is removed and
+/// an old file at `path` is left as it was. The new key is in a new file, so a
+/// handle that another program opened on the old file cannot read it. A
+/// symbolic link or any other kind of existing path gives an error and is left
+/// untouched.
 #[cfg(unix)]
 fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_file() || meta.file_type().is_symlink() => {
-            // ponytail: the old file is removed before the new one is written, so a failed write loses the old key (truncating did too). Write a temporary file and rename it if the old key must survive.
-            std::fs::remove_file(path)?;
-        }
+        Ok(meta) if meta.file_type().is_file() => {}
         Ok(_) => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
-                "output path exists and is not a regular file",
+                "output path exists and is not a regular file (symbolic links are not followed)",
             ));
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
+
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no file name"))?;
+    let mut temp_name = std::ffi::OsString::from(".");
+    temp_name.push(name);
+    temp_name.push(format!(".{}.tmp", std::process::id()));
+    let temp = path.with_file_name(temp_name);
+
+    // If this fails, the name is not ours, so nothing is removed.
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(path)?;
-    file.write_all(contents.as_bytes())
+        .open(&temp)?;
+    let result = file
+        .write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all())
+        .and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        // Best effort: the original error is the one to report.
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Write the signing private key to `path` (non-Unix fallback).
@@ -265,22 +284,134 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
     }
 
-    /// A symbolic link at the path is replaced and its target is left alone.
+    /// A symbolic link at the path gives an error and its target is not changed.
     #[test]
-    fn test_write_private_key_replaces_symlink() {
+    fn test_write_private_key_rejects_symlink() {
         let dir = tempfile::tempdir().unwrap();
         let target = dir.path().join("target");
         let path = dir.path().join("signing-key.pem");
         std::fs::write(&target, "target").unwrap();
         std::os::unix::fs::symlink(&target, &path).unwrap();
 
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(err.to_string().contains("not a regular file"));
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "target");
+    }
+
+    /// A dangling symbolic link gives an error and no file is made through it.
+    #[test]
+    fn test_write_private_key_rejects_dangling_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("missing");
+        let path = dir.path().join("signing-key.pem");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(err.to_string().contains("not a regular file"));
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert!(!target.exists());
+    }
+
+    /// If the temporary file cannot be created, the call fails and the old file is kept.
+    #[test]
+    fn test_write_private_key_keeps_old_file_when_temp_cannot_be_created() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        // Root ignores directory permissions, so this test cannot work as root.
+        if std::fs::metadata(dir.path()).unwrap().uid() == 0 {
+            return;
+        }
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let path = sub.join("signing-key.pem");
+        std::fs::write(&path, "old").unwrap();
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let result = write_private_key(&path, KEY_PEM);
+        let content = std::fs::read_to_string(&path);
+        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(content.unwrap(), "old");
+    }
+
+    /// A file at the temporary name is not ours: the call fails and nothing is changed.
+    #[test]
+    fn test_write_private_key_does_not_touch_foreign_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+        let temp = dir.path().join(format!(".signing-key.pem.{}.tmp", std::process::id()));
+        std::fs::write(&path, "old").unwrap();
+        std::fs::write(&temp, "foreign").unwrap();
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(&temp).unwrap(), "foreign");
+    }
+
+    /// After a good write only the key file is in the directory.
+    #[test]
+    fn test_write_private_key_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("signing-key.pem");
+        std::fs::write(&path, "old").unwrap();
+
         write_private_key(&path, KEY_PEM).unwrap();
 
-        let meta = std::fs::symlink_metadata(&path).unwrap();
-        assert!(meta.file_type().is_file());
-        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "target");
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("signing-key.pem")]);
+    }
+
+    /// If the rename fails, the temporary file is removed.
+    #[test]
+    fn test_write_private_key_removes_temp_file_when_rename_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        // The trailing slash makes the rename fail after the temp file exists.
+        let path = format!("{}/new.pem/", dir.path().display());
+
+        let result = write_private_key(std::path::Path::new(&path), KEY_PEM);
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    /// A path with no file name gives an error, not a panic.
+    #[test]
+    fn test_write_private_key_rejects_path_without_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        // The missing parent makes the first check say "not found".
+        let path = dir.path().join("missing").join("..");
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    /// A Unix socket at the path gives an error and is left untouched.
+    #[test]
+    fn test_write_private_key_rejects_socket_path() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+
+        let err = write_private_key(&path, KEY_PEM).unwrap_err();
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(err.to_string().contains("not a regular file"));
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_socket());
     }
 
     /// A path that is a directory gives an error and is left untouched.
@@ -293,6 +424,7 @@ mod tests {
         let err = write_private_key(&path, KEY_PEM).unwrap_err();
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert!(err.to_string().contains("not a regular file"));
         assert!(path.is_dir());
     }
 }
