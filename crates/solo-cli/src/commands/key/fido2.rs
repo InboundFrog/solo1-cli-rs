@@ -149,7 +149,10 @@ fn finish_make_credential(response: &[u8], json: bool, public_key_out: Option<&P
         std::fs::write(path, &pem).map_err(|e| {
             SoloError::IoError(std::io::Error::new(
                 e.kind(),
-                format!("cannot write public key to {}: {e}", path.display()),
+                format!(
+                    "cannot write public key to {}: {e}\nThe public key is below. Save it in a file, or it is lost:\n{pem}",
+                    path.display()
+                ),
             ))
         })?;
     }
@@ -632,6 +635,7 @@ mod tests {
 
     #[test]
     fn test_finish_make_credential_unwritable_file_is_error() {
+        use p256::pkcs8::DecodePublicKey;
         let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
         let response = make_credential_response(&cose_bytes(&pub_key));
         let dir = tempfile::tempdir().unwrap();
@@ -639,6 +643,10 @@ mod tests {
 
         let err = finish_make_credential(&response, false, Some(&path)).unwrap_err();
         assert!(matches!(err, SoloError::IoError(_)), "unexpected error: {err}");
-        assert!(err.to_string().contains("cannot write public key"));
+        let text = err.to_string();
+        assert!(text.contains("cannot write public key"));
+        let (_, pem) = text.split_once("or it is lost:\n").unwrap();
+        let decoded = p256::PublicKey::from_public_key_pem(pem).unwrap();
+        assert_eq!(decoded, pub_key);
     }
 }
