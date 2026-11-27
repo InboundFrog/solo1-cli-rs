@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::key::SIGN_FILE_RP_ID;
 use crate::error::{Result, SoloError};
-use p256::ecdsa::{DerSignature, VerifyingKey, signature::Verifier};
+use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use p256::pkcs8::DecodePublicKey;
 use sha2::{Digest, Sha256};
 use solo_ctap2::authdata::{AuthenticatorData, FLAG_UP, FLAG_UV};
@@ -190,7 +190,7 @@ pub fn check_file_signature(
         ));
     }
 
-    let signature = DerSignature::try_from(signature_der)
+    let signature = Signature::from_der(signature_der)
         .map_err(|e| SoloError::CryptoError(format!("The signature is not a valid DER ECDSA signature: {e}")))?;
 
     let message = [auth_data, Sha256::digest(file).as_slice()].concat();
@@ -327,7 +327,7 @@ mod verify_file_tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
-    use p256::ecdsa::{SigningKey, signature::Signer};
+    use p256::ecdsa::{DerSignature, SigningKey, signature::Signer};
     use p256::pkcs8::{EncodePublicKey, LineEnding};
 
     const FILE: &[u8] = b"hello file\n";
@@ -450,8 +450,19 @@ mod verify_file_tests {
     #[test]
     fn empty_or_non_der_signature_fails() {
         let (pem, sig, auth) = good();
-        for bad in [&[][..], &[0u8; 64][..], &sig[..sig.len() - 1], b"not a signature"] {
-            assert!(err_text(check_file_signature(&pem, bad, &auth, FILE)).contains("DER"));
+        let with_extra_byte = [sig.as_slice(), &[0]].concat();
+        // The last case is DER-shaped, but r is 0.
+        let zero_r = [0x30, 6, 2, 1, 0, 2, 1, 1];
+        for bad in [
+            &[][..],
+            &[0u8; 64][..],
+            &sig[..sig.len() - 1],
+            b"not a signature",
+            &with_extra_byte,
+            &zero_r,
+        ] {
+            let msg = err_text(check_file_signature(&pem, bad, &auth, FILE));
+            assert!(msg.contains("not a valid DER ECDSA signature"), "{msg}");
         }
     }
 
