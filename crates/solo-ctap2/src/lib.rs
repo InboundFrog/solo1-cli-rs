@@ -294,6 +294,31 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
         .map_err(|e| Error::MalformedResponse(format!("Invalid device public key: {e}")))
 }
 
+/// Read the credential public key from the `trailing` bytes of makeCredential authData
+/// and return it as a PEM text (`SubjectPublicKeyInfo`, LF line endings).
+///
+/// `trailing` starts with the `COSE_Key` map. More CBOR can follow it (the
+/// extensions map), and it is ignored: `ciborium` reads one value from a slice
+/// and does not look at the bytes after it.
+///
+/// # Errors
+/// Returns [`Error::MalformedResponse`] if the first CBOR value is missing, is not a
+/// map, or is not a valid P-256 `COSE_Key`, or [`Error::Crypto`] if the PEM encoding fails.
+pub fn cose_key_pem_from_trailing(trailing: &[u8]) -> Result<String> {
+    use p256::pkcs8::{EncodePublicKey, LineEnding};
+    let value: Value = ciborium::de::from_reader(trailing)
+        .map_err(|e| Error::MalformedResponse(format!("Credential public key is not valid CBOR: {e}")))?;
+    let Value::Map(pairs) = value else {
+        return Err(Error::MalformedResponse(
+            "Credential public key is not a CBOR map".into(),
+        ));
+    };
+    cose_to_public_key(&pairs)
+        .map_err(|e| Error::MalformedResponse(format!("Invalid credential public key: {e}")))?
+        .to_public_key_pem(LineEnding::LF)
+        .map_err(|e| Error::Crypto(format!("Public key PEM encode error: {e}")))
+}
+
 /// Perform ECDH against `dev_pub_key` with the given platform scalar.
 ///
 /// Returns the PIN/UV Auth Protocol One shared secret (SHA-256 of the ECDH
@@ -876,5 +901,60 @@ mod tests {
         let y = extract_cose_coord(&cose_pairs, -3).unwrap();
         assert_eq!(y, vec![0xBB; 32]);
         assert!(extract_cose_coord(&cose_pairs, -1).is_err());
+    }
+
+    /// Build makeCredential authData by hand: header, AAGUID, id, COSE key, then `extra` bytes.
+    fn make_auth_data(pub_key: &p256::PublicKey, extra: &[u8]) -> Vec<u8> {
+        use p256::Sec1Point;
+        let point = Sec1Point::from(pub_key);
+        let cose = Value::Map(vec![
+            (Value::Integer(1u64.into()), Value::Integer(2u64.into())),
+            (Value::Integer(3u64.into()), Value::Integer((-7i64).into())),
+            (Value::Integer((-1i64).into()), Value::Integer(1u64.into())),
+            (
+                Value::Integer((-2i64).into()),
+                Value::Bytes(point.x().unwrap().to_vec()),
+            ),
+            (
+                Value::Integer((-3i64).into()),
+                Value::Bytes(point.y().unwrap().to_vec()),
+            ),
+        ]);
+        let mut data = vec![0x11u8; 32]; // rpIdHash
+        data.push(0xC1); // UP, AT, ED
+        data.extend_from_slice(&[0, 0, 0, 1]); // signCount
+        data.extend_from_slice(&[0u8; 16]); // AAGUID
+        data.extend_from_slice(&[0, 4]); // credential id length
+        data.extend_from_slice(&[1, 2, 3, 4]); // credential id
+        ciborium::ser::into_writer(&cose, &mut data).unwrap();
+        data.extend_from_slice(extra);
+        data
+    }
+
+    /// The `COSE_Key` is followed by an extensions map (`hmac-secret`: true). Only the key is read.
+    #[test]
+    fn test_cose_key_pem_from_trailing_ignores_extensions() {
+        use p256::pkcs8::DecodePublicKey;
+        let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
+        let ext = Value::Map(vec![(Value::Text("hmac-secret".into()), Value::Bool(true))]);
+        let mut ext_bytes = Vec::new();
+        ciborium::ser::into_writer(&ext, &mut ext_bytes).unwrap();
+        let auth_data = make_auth_data(&pub_key, &ext_bytes);
+
+        let parsed = authdata::AuthenticatorData::parse(&auth_data).unwrap();
+        let pem = cose_key_pem_from_trailing(parsed.trailing).unwrap();
+
+        assert!(pem.starts_with("-----BEGIN PUBLIC KEY-----\n"));
+        assert!(pem.ends_with("-----END PUBLIC KEY-----\n"));
+        assert!(!pem.contains('\r'));
+        assert_eq!(p256::PublicKey::from_public_key_pem(&pem).unwrap(), pub_key);
+    }
+
+    #[test]
+    fn test_cose_key_pem_from_trailing_rejects_bad_input() {
+        for bad in [&[][..], &[0x01][..], &[0xA0][..]] {
+            let err = cose_key_pem_from_trailing(bad).unwrap_err();
+            assert!(matches!(err, Error::MalformedResponse(_)), "unexpected error: {err}");
+        }
     }
 }

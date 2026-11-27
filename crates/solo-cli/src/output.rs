@@ -4,6 +4,7 @@ use serde::Serialize;
 #[derive(Serialize)]
 pub struct MakeCredentialOutput {
     pub credential_id: String, // hex
+    pub public_key_pem: String,
 }
 
 #[derive(Serialize)]
@@ -129,10 +130,14 @@ mod tests {
     fn make_credential_output_serializes() {
         let out = MakeCredentialOutput {
             credential_id: "deadbeef".into(),
+            public_key_pem: "-----BEGIN PUBLIC KEY-----\n".into(),
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["credential_id"], "deadbeef");
+        assert_eq!(v["public_key_pem"], "-----BEGIN PUBLIC KEY-----\n");
+        // The new field comes after credential_id.
+        assert!(json.find("credential_id").unwrap() < json.find("public_key_pem").unwrap());
     }
 
     #[test]

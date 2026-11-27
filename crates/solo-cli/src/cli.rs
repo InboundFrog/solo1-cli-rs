@@ -237,6 +237,9 @@ pub enum CredentialCommands {
         /// Prompt text. Use an empty string to hide it and print only the `credential_id`
         #[arg(long, default_value = "Touch your authenticator to generate a credential...")]
         prompt: String,
+        /// Write the public key of the new credential to this file (PEM text). You need this file to check the signatures of `sign-file`
+        #[arg(long, value_name = "FILE")]
+        public_key_out: Option<PathBuf>,
     },
 }
 
