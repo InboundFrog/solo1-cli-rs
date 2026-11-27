@@ -481,6 +481,59 @@ mod verify_file_tests {
         assert!(check_file_signature(&pem.replace("PUBLIC KEY", "CERTIFICATE"), &sig, &auth, FILE).is_err());
     }
 
+    /// A vector made with OpenSSL only (new P-256 key, `openssl dgst -sha256 -sign` over the
+    /// authenticator data followed by the SHA-256 hash of the file), not with this code.
+    /// It fixes the order and the form of the signed bytes.
+    const VECTOR_FILE: &[u8] = b"solo verify-file test vector\n";
+    const VECTOR_AUTH: &str = "1ac491d9d3712c63f7b8d6cfadf86d057d099d382246dbe9c87f133ed167881b0100000007";
+    const VECTOR_SIG: &str = "304402206584ecd4939b08a672c1195e80c15ce6ea71b0d4f09814dc93b246f0ff041ff002203b2cbcca1e83af28132afa8d9dd542ad6c0c1423c4cbfaba9e4f703bd1b4e19d";
+    const VECTOR_KEY: &str = "-----BEGIN PUBLIC KEY-----\n\
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAErjD0bM/TwXPizabv2IyXLRbhiI0j\n\
+K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
+-----END PUBLIC KEY-----\n";
+
+    #[test]
+    fn openssl_vector_passes_and_a_cut_file_fails() {
+        let sig = hex::decode(VECTOR_SIG).unwrap();
+        let auth = hex::decode(VECTOR_AUTH).unwrap();
+        let facts = check_file_signature(VECTOR_KEY, &sig, &auth, VECTOR_FILE).unwrap();
+        assert_eq!(
+            facts,
+            FileSignatureFacts {
+                user_verified: false,
+                sign_count: 7
+            }
+        );
+        let cut = &VECTOR_FILE[..VECTOR_FILE.len() - 1];
+        assert!(err_text(check_file_signature(VECTOR_KEY, &sig, &auth, cut)).contains("does not match"));
+    }
+
+    #[test]
+    fn private_key_pem_is_refused_as_public_key() {
+        use p256::pkcs8::EncodePrivateKey;
+        let (_, sig, auth) = good();
+        let private = p256::SecretKey::from_slice(&[0x42; 32])
+            .unwrap()
+            .to_pkcs8_pem(LineEnding::LF)
+            .unwrap();
+        let msg = err_text(check_file_signature(&private, &sig, &auth, FILE));
+        assert!(msg.contains("P-256 PEM public key"), "{msg}");
+    }
+
+    #[test]
+    fn command_fails_for_missing_or_non_text_public_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE);
+        let err = cmd_verify_file(&dir.path().join("none.pem"), None, None, &file).unwrap_err();
+        assert!(matches!(err, SoloError::IoError(_)));
+        assert!(err.to_string().contains("public key file"));
+
+        std::fs::write(dir.path().join("bin.pem"), [0xFF, 0xFE, 0x00]).unwrap();
+        let err = cmd_verify_file(&dir.path().join("bin.pem"), None, None, &file).unwrap_err();
+        assert!(matches!(err, SoloError::CryptoError(_)));
+        assert!(err.to_string().contains("not text"));
+    }
+
     fn write_case(dir: &Path, signed_file: &[u8]) -> PathBuf {
         let k = key();
         let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 3);
