@@ -438,4 +438,71 @@ mod tests {
         assert!(err.to_string().contains("not a regular file"));
         assert!(path.is_dir());
     }
+
+    /// Small valid inputs for `cmd_mergehex`: a HEX file, a key and a cert.
+    fn mergehex_inputs(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let hex = dir.join("in.hex");
+        std::fs::write(&hex, ":020000040800F2\n:00000001FF\n").unwrap();
+        let key = dir.join("att.key");
+        std::fs::write(&key, "11".repeat(32)).unwrap();
+        let cert = dir.join("att.cert");
+        std::fs::write(&cert, [0x30u8; 120]).unwrap();
+        (hex, key, cert)
+    }
+
+    /// With an attestation key the output has mode 0o600, also over an old
+    /// file with a wider mode.
+    #[test]
+    fn test_mergehex_with_attestation_key_is_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hex, key, cert) = mergehex_inputs(dir.path());
+        let out = dir.path().join("out.hex");
+        std::fs::write(&out, "old").unwrap();
+        std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        super::cmd_mergehex(&[hex], &out, Some(&key), Some(&cert)).unwrap();
+
+        assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(std::fs::read_to_string(&out).unwrap().starts_with(':'));
+    }
+
+    /// With an attestation key, a symbolic link at the output path is refused
+    /// and its target is not changed.
+    #[test]
+    fn test_mergehex_with_attestation_key_refuses_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hex, key, cert) = mergehex_inputs(dir.path());
+        let target = dir.path().join("target");
+        std::fs::write(&target, "untouched").unwrap();
+        let out = dir.path().join("out.hex");
+        std::os::unix::fs::symlink(&target, &out).unwrap();
+
+        let result = super::cmd_mergehex(&[hex], &out, Some(&key), Some(&cert));
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
+    }
+
+    /// Without an attestation key the output is a plain write: the mode of an
+    /// old file is kept and a symbolic link is followed.
+    #[test]
+    fn test_mergehex_without_attestation_key_is_plain_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hex, _, _) = mergehex_inputs(dir.path());
+        let out = dir.path().join("out.hex");
+        std::fs::write(&out, "old").unwrap();
+        std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        super::cmd_mergehex(std::slice::from_ref(&hex), &out, None, None).unwrap();
+
+        assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o644);
+        let expected = solo1::firmware::merge_hex_text(&[hex.as_path()], None, None).unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), expected);
+
+        let target = dir.path().join("target");
+        let link = dir.path().join("link.hex");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        super::cmd_mergehex(&[hex], &link, None, None).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), expected);
+    }
 }
