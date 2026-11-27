@@ -668,79 +668,64 @@ pub fn merge_hex_files(
 }
 
 /// Write segments as an Intel HEX file.
+///
+/// Data records hold at most 16 bytes and never cross a 64 KiB boundary.
+/// An Extended Linear Address record is written whenever the upper 16 address
+/// bits change.
 fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
-    use std::fmt::Write as FmtWrite;
-    let mut output = String::new();
-    let mut current_upper: u32 = 0xFFFF_FFFF;
+    let overflow = || Error::Firmware("HEX address overflow".into());
+    let mut records: Vec<Record> = Vec::new();
+    let mut current_upper: Option<u16> = None;
 
-    for (addr, data) in segments {
-        let upper = addr >> 16;
-        if upper != current_upper {
-            // Emit Extended Linear Address record
-            let upper16 = u16::try_from(upper).map_err(|_| Error::Firmware("upper address overflow".into()))?;
-            // Big-endian 2-byte encoding of the upper 16 address bits.
-            let record_data = upper16.to_be_bytes();
-            let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data)?;
-            writeln!(output, ":02000004{upper16:04X}{checksum:02X}")
-                .map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
-            current_upper = upper;
-        }
-
-        // Write data in chunks of 16 bytes
-        let offset_base =
-            u16::try_from(*addr & 0xFFFF).map_err(|_| Error::Firmware("segment offset overflow".into()))?;
+    for (start, data) in segments {
         let mut pos: usize = 0;
-        while pos < data.len() {
-            let chunk_size = data
-                .len()
-                .checked_sub(pos)
-                .ok_or_else(|| Error::Firmware("chunk size underflow".into()))?
-                .min(16);
-            let chunk_end = pos
-                .checked_add(chunk_size)
-                .ok_or_else(|| Error::Firmware("chunk range overflow".into()))?;
-            let chunk = data
-                .get(pos..chunk_end)
-                .ok_or_else(|| Error::Firmware("chunk out of range".into()))?;
-            // Preserve the original 16-bit offset wrap: (offset_base + pos) mod 2^16.
-            let pos_low = u16::try_from(pos & 0xFFFF).map_err(|_| Error::Firmware("offset overflow".into()))?;
-            let offset = offset_base.wrapping_add(pos_low);
-            let chunk_len = u8::try_from(chunk_size).map_err(|_| Error::Firmware("chunk length overflow".into()))?;
-            let checksum = ihex_checksum(chunk_len, offset, 0x00, chunk)?;
-            write!(output, ":{chunk_size:02X}{offset:04X}00")
-                .map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
-            for b in chunk {
-                write!(output, "{b:02X}").map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
+        for chunk in data.chunks(16) {
+            let addr = u32::try_from(pos)
+                .ok()
+                .and_then(|p| start.checked_add(p))
+                .ok_or_else(overflow)?;
+            // The last byte of the chunk must stay in the same 64 KiB block.
+            let last = u32::try_from(chunk.len().saturating_sub(1))
+                .ok()
+                .and_then(|n| addr.checked_add(n))
+                .ok_or_else(overflow)?;
+            let upper = u16::try_from(addr >> 16).map_err(|_| overflow())?;
+            if current_upper != Some(upper) {
+                records.push(Record::ExtendedLinearAddress(upper));
+                current_upper = Some(upper);
             }
-            writeln!(output, "{checksum:02X}").map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
-            pos = pos
-                .checked_add(chunk_size)
-                .ok_or_else(|| Error::Firmware("position overflow".into()))?;
+            let offset = u16::try_from(addr & 0xFFFF).map_err(|_| overflow())?;
+            if last >> 16 == addr >> 16 {
+                records.push(Record::Data {
+                    offset,
+                    value: chunk.to_vec(),
+                });
+            } else {
+                // Split the chunk at the boundary. The tail goes after a new ELA record.
+                let head_len =
+                    usize::try_from(0x1_0000_u32.saturating_sub(u32::from(offset))).map_err(|_| overflow())?;
+                let (head, tail) = chunk.split_at_checked(head_len).ok_or_else(overflow)?;
+                records.push(Record::Data {
+                    offset,
+                    value: head.to_vec(),
+                });
+                let next_upper = upper.checked_add(1).ok_or_else(overflow)?;
+                records.push(Record::ExtendedLinearAddress(next_upper));
+                current_upper = Some(next_upper);
+                records.push(Record::Data {
+                    offset: 0,
+                    value: tail.to_vec(),
+                });
+            }
+            pos = pos.checked_add(chunk.len()).ok_or_else(overflow)?;
         }
     }
 
-    // EOF record
-    writeln!(output, ":00000001FF").map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
+    records.push(Record::EndOfFile);
+    let output = ihex::create_object_file_representation(&records)
+        .map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
     std::fs::write(path, output)?;
     Ok(())
-}
-
-fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> Result<u8> {
-    let overflow = || Error::Firmware("checksum accumulator overflow".into());
-    let mut sum: u32 = 0;
-    sum = sum.checked_add(u32::from(byte_count)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(offset >> 8)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(offset & 0xFF)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(record_type)).ok_or_else(overflow)?;
-    for b in data {
-        sum = sum.checked_add(u32::from(*b)).ok_or_else(overflow)?;
-    }
-    // Two's-complement checksum: (0x100 - (sum & 0xFF)) mod 0x100.
-    // (256 - low) mod 256 == low.wrapping_neg(), including the low == 0 -> 0 case,
-    // which the old `(0x100 - (sum & 0xFF)) as u8` relied on wrapping to produce.
-    Ok(u8::try_from(sum & 0xFF)
-        .map_err(|_| Error::Firmware("checksum overflow".into()))?
-        .wrapping_neg())
 }
 
 /// Flash base address for STM32L4.
@@ -1176,6 +1161,54 @@ mod tests {
         let (base, bytes) = parse_hex_string(hex).unwrap();
         assert_eq!(base, 0x0800_0000);
         assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04]);
+    }
+
+    /// Write one segment, read it back with the parser.
+    fn hex_round_trip(addr: u32, data: &[u8]) -> (u32, Vec<u8>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.hex");
+        write_hex_file(&path, &[(addr, data.to_vec())]).unwrap();
+        parse_hex_file(&path).unwrap()
+    }
+
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| u8::try_from(i % 251).unwrap()).collect()
+    }
+
+    #[test]
+    fn test_write_hex_crossing_64k_boundary() {
+        // Starts 0x20 bytes before a 64 KiB boundary and runs past it.
+        let data = pattern(0x1_0000 + 0x57);
+        let (base, bytes) = hex_round_trip(0x0800_FFE0, &data);
+        assert_eq!(base, 0x0800_FFE0);
+        assert_eq!(bytes, data);
+    }
+
+    #[test]
+    fn test_write_hex_ending_on_64k_boundary() {
+        let data = pattern(0x40);
+        let (base, bytes) = hex_round_trip(0x0800_FFC0, &data);
+        assert_eq!(base, 0x0800_FFC0);
+        assert_eq!(bytes, data);
+    }
+
+    #[test]
+    fn test_write_hex_small_segment_output_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.hex");
+        write_hex_file(&path, &[(0x0800_0000, vec![1, 2, 3, 4])]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            ":020000040800F2\n:0400000001020304F2\n:00000001FF\n"
+        );
+    }
+
+    #[test]
+    fn test_write_hex_address_overflow_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.hex");
+        let result = write_hex_file(&path, &[(0xFFFF_FFFE, vec![0; 4])]);
+        assert!(result.is_err());
     }
 
     #[test]
