@@ -135,6 +135,13 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
     check_ga_response(&ga_response, filename)
 }
 
+/// Return `path` with `suffix` added at the end of the file name (`file.bin` and `.sig` give `file.bin.sig`).
+fn with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
+    let mut p = path.as_os_str().to_owned();
+    p.push(suffix);
+    std::path::PathBuf::from(p)
+}
+
 fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
     use ciborium::value::Value;
     use solo_ctap2::cbor::find_int_key;
@@ -159,20 +166,12 @@ fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
     };
 
     // Save raw signature to {filename}.sig
-    let sig_path = {
-        let mut p = filename.as_os_str().to_owned();
-        p.push(".sig");
-        std::path::PathBuf::from(p)
-    };
+    let sig_path = with_suffix(filename, ".sig");
     println!("Saving signature to {}", sig_path.display());
     std::fs::write(&sig_path, &signature)?;
 
     // Save raw authData to {filename}.authdata
-    let authdata_path = {
-        let mut p = filename.as_os_str().to_owned();
-        p.push(".authdata");
-        std::path::PathBuf::from(p)
-    };
+    let authdata_path = with_suffix(filename, ".authdata");
     println!("Saving authenticator data to {}", authdata_path.display());
     std::fs::write(&authdata_path, auth_data)?;
 
@@ -256,12 +255,6 @@ mod tests {
         out
     }
 
-    fn out_path(path: &Path, ext: &str) -> std::path::PathBuf {
-        let mut p = path.to_owned().into_os_string();
-        p.push(ext);
-        std::path::PathBuf::from(p)
-    }
-
     #[test]
     fn test_check_ga_response_ok() {
         let dir = tempfile::tempdir().unwrap();
@@ -272,8 +265,11 @@ mod tests {
         let result = check_ga_response(&ga_response(Some(&auth_data), Some(&[0xAA, 0xBB])), &path);
         assert!(result.is_ok());
 
-        assert_eq!(std::fs::read(out_path(&path, ".sig")).unwrap(), vec![0xAA, 0xBB]);
-        assert_eq!(std::fs::read(out_path(&path, ".authdata")).unwrap(), auth_data.to_vec());
+        assert_eq!(std::fs::read(with_suffix(&path, ".sig")).unwrap(), vec![0xAA, 0xBB]);
+        assert_eq!(
+            std::fs::read(with_suffix(&path, ".authdata")).unwrap(),
+            auth_data.to_vec()
+        );
     }
 
     #[test]
@@ -285,8 +281,8 @@ mod tests {
             matches!(err, SoloError::MalformedResponse(_)),
             "unexpected error: {err}"
         );
-        assert!(!out_path(&path, ".sig").exists());
-        assert!(!out_path(&path, ".authdata").exists());
+        assert!(!with_suffix(&path, ".sig").exists());
+        assert!(!with_suffix(&path, ".authdata").exists());
     }
 
     #[test]
@@ -298,8 +294,8 @@ mod tests {
             matches!(err, SoloError::MalformedResponse(_)),
             "unexpected error: {err}"
         );
-        assert!(!out_path(&path, ".sig").exists());
-        assert!(!out_path(&path, ".authdata").exists());
+        assert!(!with_suffix(&path, ".sig").exists());
+        assert!(!with_suffix(&path, ".authdata").exists());
     }
 
     #[test]
