@@ -80,6 +80,9 @@ fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
     }
 }
 
+/// The relying party id that `sign-file` uses. `verify-file` checks the rpIdHash against it.
+pub const SIGN_FILE_RP_ID: &str = "solokeys.dev";
+
 /// Sign a file using CTAP2 getAssertion with the file's SHA-256 as clientDataHash.
 ///
 /// Protocol:
@@ -117,7 +120,7 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
     //   0x01: rpId  (must be the same rp that made the credential)
     //   0x02: clientDataHash  (SHA-256 of file)
     //   0x03: allowList  [{type: "public-key", id: cred_id_bytes}]
-    let rp_id = "solokeys.dev";
+    let rp_id = SIGN_FILE_RP_ID;
     let get_assertion_cbor = Value::Map(vec![
         (Value::Integer(0x01u64.into()), Value::Text(rp_id.into())),
         (Value::Integer(0x02u64.into()), Value::Bytes(file_hash)),
