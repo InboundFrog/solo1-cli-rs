@@ -5,12 +5,14 @@ use crate::protocol::{CMD_BOOT, CMD_DONE, CMD_WRITE, SOLO_TAG};
 use solo_ctaphid::HidDevice;
 
 /// Build a bootloader command packet.
-/// Address is encoded little-endian (lower 24 bits); firmware ORs 0x08000000 back in.
+///
+/// The packet holds the lower 24 bits of the address, little-endian. The
+/// firmware adds 0x08000000 back.
 ///
 /// # Errors
-/// Returns an error if `data` is longer than the 16-bit big-endian length
-/// field can express (65535 bytes), which would otherwise be silently
-/// truncated.
+/// Returns an error if `data` is longer than 65535 bytes. The 16-bit
+/// big-endian length field cannot hold more, and it would silently cut the
+/// length.
 pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
     if data.len() > usize::from(u16::MAX) {
         return Err(Error::Protocol(format!(
@@ -41,13 +43,13 @@ pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8
 ///
 /// Packet format: [cmd(1)] [addr(3) LE] [TAG(4)] [`length_be(2)`] [data]
 ///
-/// The bootloader responds with [status(1)] [payload...]. This function checks
-/// the status byte and strips it, returning only the payload on success.
+/// The bootloader replies with [status(1)] [payload...]. This function checks
+/// the status byte and removes it. On success it returns only the payload.
 ///
 /// # Errors
 /// Returns an error if the packet cannot be built (data too long), the
-/// command cannot be sent or received (device/transport error or timeout),
-/// or the bootloader returns a non-zero status.
+/// command cannot be sent or received (device or transport error, or
+/// timeout), or the bootloader returns a non-zero status.
 pub fn bootloader_cmd(hid: &impl HidDevice, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
     log::debug!(
         "bootloader cmd=0x{:02X} addr=0x{:08X} data_len={}",
@@ -59,7 +61,7 @@ pub fn bootloader_cmd(hid: &impl HidDevice, cmd: u8, addr: u32, data: &[u8]) -> 
 
     let resp = hid.send_recv(CMD_BOOT, &packet)?;
 
-    // First byte of bootloader response is a status code (0x00 = success)
+    // The first byte of the reply is the status code (0x00 means success).
     let Some((&status, payload)) = resp.split_first() else {
         return Ok(resp);
     };

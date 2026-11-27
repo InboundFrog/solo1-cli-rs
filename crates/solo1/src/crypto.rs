@@ -15,8 +15,9 @@ use x509_cert::der::{Decode, Encode};
 
 use crate::error::{Error, Result};
 
-/// Known attestation certificate fingerprints (SHA-256 of DER cert bytes).
-/// These match the fingerprints checked in the Python reference (key.py verify command).
+/// Known attestation certificate fingerprints (SHA-256 of the DER cert bytes).
+/// These are the same fingerprints that the `verify` command in the Python
+/// reference (key.py) checks.
 pub const SOLO_V3_FINGERPRINT: &str = "72d5833126acfce9a8e8266018e6414934c8be4ab8685f91b0992113bbd43295";
 pub const SOLO_HACKER_FINGERPRINT: &str = "d06d6ccbda7de56a1627c2a7899c35a2a316c851b36ad8ed7ed78479bb787ef7";
 pub const SOLO_EMULATION_FINGERPRINT: &str = "0592e1b2ba8e610d629a9bc015197e4adadc3136e0a0a176d9b57d17a6b80b38";
@@ -217,14 +218,14 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
 /// Check whether the current system time falls within the certificate's
 /// `notBefore`..=`notAfter` validity window.
 ///
-/// Returns `Ok(())` if the certificate is currently valid.
+/// Returns `Ok(())` if the certificate is valid now.
 /// Returns `Err(Error::Crypto(...))` if:
 /// - The certificate has expired (now > notAfter).
 /// - The certificate is not yet valid (now < notBefore).
 /// - The certificate cannot be parsed.
 ///
-/// This check uses the local system clock and does not contact any external
-/// time service.  Clock skew on the host may produce false positives.
+/// This check uses the local system clock. It does not ask any time service.
+/// If the host clock is wrong, the result can be wrong.
 ///
 /// # Errors
 /// Returns [`Error::Crypto`] if the certificate cannot be parsed, has
