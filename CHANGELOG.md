@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated Rust dependencies and stopped Dependabot from ignoring `rand` updates. (#115)
 - Rewrote comments, `--help` text and the README in plain English, and corrected comments and README details that did
   not match the code. (#118, #119, #120, #121, #122)
+- `solo key update` now waits until the key has restarted as a normal key and prints the firmware version it reports.
+  If the key does not come back within `--timeout`, the command fails and tells the user to unplug the key, plug it in
+  again and run `solo key version`. (#137)
+- `solo key ping --json` now prints one compact JSON object per line (JSON Lines), one line for each ping, in place of
+  pretty-printed objects that span several lines. (#139)
 
 ### Removed
 
@@ -90,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   last address. (#112)
 - `solo key rng raw` and `solo monitor` now end quietly with exit code 0 when the program reading their output closes
   the pipe, instead of printing a "Broken pipe" error and exiting with code 1. (#125)
+- A missed button press on a Solo 1 is answered with CTAP2 status 0x3A (action timeout). The error text for 0x3A now
+  says that nobody touched the key in time and tells the user to run the command again and touch the key. (#136)
 
 ### Security
 
@@ -97,6 +104,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The key is written to a temporary file and renamed into place, so an old key file is never written into (a program
   that opened it earlier cannot read the new key) and is kept if the new key cannot be written. A symbolic link or other
   non-regular path is refused. (#101, #128, #129, #133)
+- `solo mergehex` on Unix, with `--attestation-key`, now writes the output to a new file that only the owner can read
+  (mode 0600), and refuses a symbolic link or other non-regular path at the output path, in the same way as
+  `solo genkey`. Without `--attestation-key` the output is written as before. (#138)
 - Firmware downloads now have timeouts, fail on an HTTP error status, and are limited to 8 MiB. (#105)
 - PIN strings, the padded PIN block, the PIN hash and the ECDH shared secret are wiped from memory after use. (#104)
 
