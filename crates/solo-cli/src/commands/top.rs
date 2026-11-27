@@ -1,4 +1,4 @@
-/// Top-level commands: version, genkey, sign, mergehex, ls.
+/// Top-level commands: version, genkey, sign, verify-file, mergehex, ls.
 use std::path::{Path, PathBuf};
 
 use crate::commands::key::{SIGN_FILE_RP_ID, with_suffix};
