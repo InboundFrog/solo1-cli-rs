@@ -59,7 +59,7 @@ impl<'a> AuthenticatorData<'a> {
         let too_short = || Error::MalformedResponse("authData too short".into());
         let mut rest = data.get(HEADER_LEN..).ok_or_else(too_short)?;
         let flags = *data.get(32).ok_or_else(too_short)?;
-        let rp_id_hash: [u8; 32] = data.get(..32).and_then(|b| b.try_into().ok()).ok_or_else(too_short)?;
+        let rp_id_hash: [u8; 32] = *data.first_chunk::<32>().ok_or_else(too_short)?;
         let sign_count = u32::from_be_bytes(
             data.get(33..HEADER_LEN)
                 .and_then(|b| b.try_into().ok())

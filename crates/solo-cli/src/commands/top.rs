@@ -1,7 +1,7 @@
 /// Top-level commands: version, genkey, sign, mergehex, ls.
 use std::path::{Path, PathBuf};
 
-use crate::commands::key::SIGN_FILE_RP_ID;
+use crate::commands::key::{SIGN_FILE_RP_ID, with_suffix};
 use crate::error::{Result, SoloError};
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use p256::pkcs8::DecodePublicKey;
@@ -150,7 +150,6 @@ pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
 /// What `check_file_signature` found in a good signature.
 #[derive(Debug, PartialEq, Eq)]
 pub struct FileSignatureFacts {
-    pub rp_id: &'static str,
     pub user_verified: bool,
     pub sign_count: u32,
 }
@@ -199,7 +198,6 @@ pub fn check_file_signature(
     })?;
 
     Ok(FileSignatureFacts {
-        rp_id: SIGN_FILE_RP_ID,
         user_verified: parsed.flags & FLAG_UV != 0,
         sign_count: parsed.sign_count,
     })
@@ -228,13 +226,8 @@ pub fn cmd_verify_file(
     authdata: Option<&Path>,
     file: &Path,
 ) -> Result<()> {
-    let with_ext = |ext: &str| {
-        let mut p = file.as_os_str().to_owned();
-        p.push(ext);
-        PathBuf::from(p)
-    };
-    let signature = signature.map_or_else(|| with_ext(".sig"), Path::to_path_buf);
-    let authdata = authdata.map_or_else(|| with_ext(".authdata"), Path::to_path_buf);
+    let signature = signature.map_or_else(|| with_suffix(file, ".sig"), Path::to_path_buf);
+    let authdata = authdata.map_or_else(|| with_suffix(file, ".authdata"), Path::to_path_buf);
 
     let key_bytes = read_input("public key file", public_key)?;
     let key_pem = String::from_utf8(key_bytes)
@@ -247,7 +240,7 @@ pub fn cmd_verify_file(
     )?;
 
     println!("The signature is good.");
-    println!("rpId: {}", facts.rp_id);
+    println!("rpId: {SIGN_FILE_RP_ID}");
     println!("User verified: {}", if facts.user_verified { "yes" } else { "no" });
     println!("Signature counter: {}", facts.sign_count);
     Ok(())
@@ -371,7 +364,6 @@ mod verify_file_tests {
         assert_eq!(
             facts,
             FileSignatureFacts {
-                rp_id: SIGN_FILE_RP_ID,
                 user_verified: false,
                 sign_count: 9
             }

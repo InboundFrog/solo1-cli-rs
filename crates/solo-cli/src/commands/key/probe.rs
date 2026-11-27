@@ -139,7 +139,8 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
 }
 
 /// Return `path` with `suffix` added at the end of the file name (`file.bin` and `.sig` give `file.bin.sig`).
-fn with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
+#[must_use]
+pub fn with_suffix(path: &Path, suffix: &str) -> std::path::PathBuf {
     let mut p = path.as_os_str().to_owned();
     p.push(suffix);
     std::path::PathBuf::from(p)
