@@ -170,9 +170,9 @@ the rpId or the flags:
 openssl dgst -sha256 -verify pub.pem -signature FILE.sig <(cat FILE.authdata; openssl dgst -sha256 -binary FILE)
 ```
 
-A good result from `verify-file` shows that the holder of the private key of the credential signed the hash of this
-file, and that the key reported a present user (the user-present flag). It does not show which device holds that
-key. It does not show when the file was signed.
+A good result from `verify-file` shows that the holder of the private key of the credential signed
+the hash of this file, and that the user-present flag is set in the signed data. It does not show
+that the private key is in a Solo key, which device holds it, or when the file was signed.
 
 #### Challenge-response
 
