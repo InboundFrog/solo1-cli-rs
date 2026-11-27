@@ -1,7 +1,12 @@
 /// Top-level commands: version, genkey, sign, mergehex, ls.
 use std::path::{Path, PathBuf};
 
-use crate::error::Result;
+use crate::commands::key::SIGN_FILE_RP_ID;
+use crate::error::{Result, SoloError};
+use p256::ecdsa::{DerSignature, VerifyingKey, signature::Verifier};
+use p256::pkcs8::DecodePublicKey;
+use sha2::{Digest, Sha256};
+use solo_ctap2::authdata::{AuthenticatorData, FLAG_UP, FLAG_UV};
 use solo1::crypto::{generate_keypair, load_signing_key, sign_firmware};
 use solo1::firmware::{create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_files};
 
@@ -142,6 +147,114 @@ pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
     Ok(())
 }
 
+/// What `check_file_signature` found in a good signature.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FileSignatureFacts {
+    pub rp_id: &'static str,
+    pub user_verified: bool,
+    pub sign_count: u32,
+}
+
+/// Check a `sign-file` signature. All checks must pass, or this returns an error that names the check.
+///
+/// The key signs `auth_data || SHA-256(file)` with ES256 (ECDSA P-256, SHA-256).
+///
+/// # Errors
+/// Returns `CryptoError` if the public key is not a P-256 PEM key, the authenticator data is too short
+/// or malformed, its rpIdHash is not that of the `sign-file` rpId, the user-present flag is not set,
+/// the signature is not DER, or the signature does not verify.
+pub fn check_file_signature(
+    public_key_pem: &str,
+    signature_der: &[u8],
+    auth_data: &[u8],
+    file: &[u8],
+) -> Result<FileSignatureFacts> {
+    let key = VerifyingKey::from_public_key_pem(public_key_pem)
+        .map_err(|e| SoloError::CryptoError(format!("The public key is not a P-256 PEM public key: {e}")))?;
+
+    let parsed = AuthenticatorData::parse(auth_data).map_err(|e| {
+        SoloError::CryptoError(format!(
+            "The authenticator data is shorter than 37 bytes or is not valid: {e}"
+        ))
+    })?;
+
+    if parsed.rp_id_hash[..] != Sha256::digest(SIGN_FILE_RP_ID.as_bytes())[..] {
+        return Err(SoloError::CryptoError(format!(
+            "The authenticator data is not for the rpId {SIGN_FILE_RP_ID} (rpIdHash does not match)"
+        )));
+    }
+
+    if parsed.flags & FLAG_UP == 0 {
+        return Err(SoloError::CryptoError(
+            "The user-present flag is not set in the authenticator data".into(),
+        ));
+    }
+
+    let signature = DerSignature::try_from(signature_der)
+        .map_err(|e| SoloError::CryptoError(format!("The signature is not a valid DER ECDSA signature: {e}")))?;
+
+    let message = [auth_data, Sha256::digest(file).as_slice()].concat();
+    key.verify(&message, &signature).map_err(|_| {
+        SoloError::CryptoError(
+            "The signature does not match: wrong public key, or the file or the authenticator data was changed".into(),
+        )
+    })?;
+
+    Ok(FileSignatureFacts {
+        rp_id: SIGN_FILE_RP_ID,
+        user_verified: parsed.flags & FLAG_UV != 0,
+        sign_count: parsed.sign_count,
+    })
+}
+
+/// Read an input file. The error says which input it was.
+fn read_input(what: &str, path: &Path) -> Result<Vec<u8>> {
+    std::fs::read(path).map_err(|e| {
+        SoloError::IoError(std::io::Error::new(
+            e.kind(),
+            format!("cannot read the {what} {}: {e}", path.display()),
+        ))
+    })
+}
+
+/// Check the signature of `sign-file` offline and print the result.
+///
+/// `signature` and `authdata` default to `<file>.sig` and `<file>.authdata`.
+///
+/// # Errors
+/// Returns an error if an input file cannot be read, or if any check of
+/// `check_file_signature` fails.
+pub fn cmd_verify_file(
+    public_key: &Path,
+    signature: Option<&Path>,
+    authdata: Option<&Path>,
+    file: &Path,
+) -> Result<()> {
+    let with_ext = |ext: &str| {
+        let mut p = file.as_os_str().to_owned();
+        p.push(ext);
+        PathBuf::from(p)
+    };
+    let signature = signature.map_or_else(|| with_ext(".sig"), Path::to_path_buf);
+    let authdata = authdata.map_or_else(|| with_ext(".authdata"), Path::to_path_buf);
+
+    let key_bytes = read_input("public key file", public_key)?;
+    let key_pem = String::from_utf8(key_bytes)
+        .map_err(|_| SoloError::CryptoError("The public key file is not a P-256 PEM public key (not text)".into()))?;
+    let facts = check_file_signature(
+        &key_pem,
+        &read_input("signature file", &signature)?,
+        &read_input("authenticator data file", &authdata)?,
+        &read_input("input file", file)?,
+    )?;
+
+    println!("The signature is good.");
+    println!("rpId: {}", facts.rp_id);
+    println!("User verified: {}", if facts.user_verified { "yes" } else { "no" });
+    println!("Signature counter: {}", facts.sign_count);
+    Ok(())
+}
+
 /// Merge Intel HEX files into a single output.
 ///
 /// # Errors
@@ -200,6 +313,199 @@ pub fn cmd_ls(json: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod verify_file_tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
+    use super::*;
+    use p256::ecdsa::{SigningKey, signature::Signer};
+    use p256::pkcs8::{EncodePublicKey, LineEnding};
+
+    const FILE: &[u8] = b"hello file\n";
+
+    fn key() -> SigningKey {
+        SigningKey::from_slice(&[0x42; 32]).unwrap()
+    }
+
+    fn pem(k: &SigningKey) -> String {
+        k.verifying_key().to_public_key_pem(LineEnding::LF).unwrap()
+    }
+
+    fn auth_data(rp_id: &str, flags: u8, count: u32) -> Vec<u8> {
+        let mut v = Sha256::digest(rp_id.as_bytes()).to_vec();
+        v.push(flags);
+        v.extend_from_slice(&count.to_be_bytes());
+        v
+    }
+
+    fn sign(k: &SigningKey, auth: &[u8], file: &[u8]) -> Vec<u8> {
+        let msg = [auth, Sha256::digest(file).as_slice()].concat();
+        let sig: DerSignature = k.sign(&msg);
+        sig.as_bytes().to_vec()
+    }
+
+    fn good() -> (String, Vec<u8>, Vec<u8>) {
+        let k = key();
+        let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 9);
+        (pem(&k), sign(&k, &auth, FILE), auth)
+    }
+
+    fn err_text(r: Result<FileSignatureFacts>) -> String {
+        match r.unwrap_err() {
+            SoloError::CryptoError(m) => m,
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn good_signature_passes_and_reports_facts() {
+        let (pem, sig, auth) = good();
+        let facts = check_file_signature(&pem, &sig, &auth, FILE).unwrap();
+        assert_eq!(
+            facts,
+            FileSignatureFacts {
+                rp_id: SIGN_FILE_RP_ID,
+                user_verified: false,
+                sign_count: 9
+            }
+        );
+
+        let k = key();
+        let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP | FLAG_UV, 0x0102_0304);
+        let facts = check_file_signature(&pem, &sign(&k, &auth, FILE), &auth, FILE).unwrap();
+        assert!(facts.user_verified);
+        assert_eq!(facts.sign_count, 0x0102_0304);
+    }
+
+    #[test]
+    fn changed_file_fails() {
+        let (pem, sig, auth) = good();
+        let mut file = FILE.to_vec();
+        file[0] ^= 1;
+        assert!(err_text(check_file_signature(&pem, &sig, &auth, &file)).contains("does not match"));
+    }
+
+    #[test]
+    fn changed_authdata_fails() {
+        let (pem, sig, mut auth) = good();
+        auth[36] ^= 1; // the signature counter
+        assert!(err_text(check_file_signature(&pem, &sig, &auth, FILE)).contains("does not match"));
+    }
+
+    #[test]
+    fn authdata_with_trailing_bytes_is_signed_as_a_whole() {
+        let k = key();
+        let mut auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 1);
+        auth.extend_from_slice(&[0xA0]);
+        let sig = sign(&k, &auth, FILE);
+        check_file_signature(&pem(&k), &sig, &auth, FILE).unwrap();
+        // A signature over the 37-byte header only must not pass for the longer data.
+        let short_sig = sign(&k, &auth[..37], FILE);
+        assert!(check_file_signature(&pem(&k), &short_sig, &auth, FILE).is_err());
+    }
+
+    #[test]
+    fn wrong_public_key_fails() {
+        let (_, sig, auth) = good();
+        let other = pem(&SigningKey::from_slice(&[0x43; 32]).unwrap());
+        assert!(err_text(check_file_signature(&other, &sig, &auth, FILE)).contains("does not match"));
+    }
+
+    #[test]
+    fn other_rp_id_fails_only_the_rp_id_check() {
+        let k = key();
+        let auth = auth_data("example.com", FLAG_UP, 1);
+        let sig = sign(&k, &auth, FILE);
+        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE));
+        assert!(msg.contains("rpIdHash"), "{msg}");
+    }
+
+    #[test]
+    fn user_present_flag_clear_fails_only_that_check() {
+        let k = key();
+        let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UV, 1);
+        let sig = sign(&k, &auth, FILE);
+        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE));
+        assert!(msg.contains("user-present"), "{msg}");
+    }
+
+    #[test]
+    fn short_authdata_fails() {
+        let (pem, sig, auth) = good();
+        for len in [0, 1, 32, 36] {
+            let msg = err_text(check_file_signature(&pem, &sig, &auth[..len], FILE));
+            assert!(msg.contains("shorter than 37"), "len {len}: {msg}");
+        }
+    }
+
+    #[test]
+    fn empty_or_non_der_signature_fails() {
+        let (pem, sig, auth) = good();
+        for bad in [&[][..], &[0u8; 64][..], &sig[..sig.len() - 1], b"not a signature"] {
+            assert!(err_text(check_file_signature(&pem, bad, &auth, FILE)).contains("DER"));
+        }
+    }
+
+    #[test]
+    fn bad_public_key_text_fails() {
+        let (pem, sig, auth) = good();
+        for bad in [
+            "",
+            "not pem",
+            "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n",
+        ] {
+            let msg = err_text(check_file_signature(bad, &sig, &auth, FILE));
+            assert!(msg.contains("P-256 PEM public key"), "{msg}");
+        }
+        // A good key body under the wrong PEM label.
+        assert!(check_file_signature(&pem.replace("PUBLIC KEY", "CERTIFICATE"), &sig, &auth, FILE).is_err());
+    }
+
+    fn write_case(dir: &Path, signed_file: &[u8]) -> PathBuf {
+        let k = key();
+        let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 3);
+        let file = dir.join("doc.txt");
+        std::fs::write(&file, signed_file).unwrap();
+        std::fs::write(dir.join("doc.txt.sig"), sign(&k, &auth, FILE)).unwrap();
+        std::fs::write(dir.join("doc.txt.authdata"), &auth).unwrap();
+        std::fs::write(dir.join("pub.pem"), pem(&k)).unwrap();
+        file
+    }
+
+    #[test]
+    fn command_uses_default_sig_and_authdata_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE);
+        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file).unwrap();
+
+        // A changed file is an error; so is a missing default file.
+        let file = write_case(dir.path(), b"other");
+        assert!(cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file).is_err());
+        std::fs::remove_file(dir.path().join("doc.txt.authdata")).unwrap();
+        let err = cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file).unwrap_err();
+        assert!(matches!(err, SoloError::IoError(_)));
+        assert!(err.to_string().contains("authenticator data file"));
+    }
+
+    #[test]
+    fn command_accepts_explicit_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE);
+        let sig = dir.path().join("a.sig");
+        let auth = dir.path().join("a.ad");
+        std::fs::rename(dir.path().join("doc.txt.sig"), &sig).unwrap();
+        std::fs::rename(dir.path().join("doc.txt.authdata"), &auth).unwrap();
+        cmd_verify_file(&dir.path().join("pub.pem"), Some(&sig), Some(&auth), &file).unwrap();
+    }
 }
 
 #[cfg(all(test, unix))]

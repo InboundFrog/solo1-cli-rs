@@ -36,6 +36,15 @@ fn run(cli: Cli) -> error::Result<()> {
             top::cmd_genkey(output.as_deref(), json)?;
         }
 
+        Commands::VerifyFile {
+            public_key,
+            signature,
+            authdata,
+            file,
+        } => {
+            top::cmd_verify_file(&public_key, signature.as_deref(), authdata.as_deref(), &file)?;
+        }
+
         Commands::Sign { key, firmware_hex } => {
             top::cmd_sign(&key, &firmware_hex)?;
         }
