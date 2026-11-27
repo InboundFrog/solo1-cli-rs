@@ -85,14 +85,21 @@ fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
 /// Protocol:
 ///   1. SHA-256 the file contents → clientDataHash
 ///   2. getAssertion (0x02) with `rp_id`, clientDataHash, allowList[`credential_id`]
-///   3. Extract signature (key 0x03) from the CBOR response
+///   3. Extract authData (key 0x02) and signature (key 0x03) from the CBOR response
 ///   4. Save raw signature bytes to `{filename}.sig`
-///   5. Print signature hex to stdout
+///   5. Save raw authData bytes to `{filename}.authdata`
+///   6. Print signature hex to stdout
+///
+/// The key does not sign the file hash alone. It signs `authData || SHA-256(file)`
+/// with ECDSA over P-256 and SHA-256 (ES256). To check a signature, a verifier
+/// needs the file, both output files and the public key of the credential.
+/// `credential create --public-key-out` saves that public key.
 ///
 /// # Errors
 /// Returns an error if `credential_id` is not valid hex, if the file cannot be
 /// read, if the getAssertion request fails, if the response is missing the
-/// signature, or if writing the `.sig` file fails.
+/// authData or the signature (no file is written then), or if writing the
+/// `.sig` or `.authdata` file fails.
 pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path) -> Result<()> {
     use ciborium::value::Value;
 
@@ -134,6 +141,13 @@ fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
 
     let ga_pairs = solo_ctap2::parse_cbor_map_response(ga_response, "getAssertion")?;
 
+    // 0x02: authData bytes. The signature covers them, so a verifier needs them.
+    let Some(Value::Bytes(auth_data)) = find_int_key(&ga_pairs, 0x02) else {
+        return Err(SoloError::MalformedResponse(
+            "getAssertion response missing authData (key 0x02)".into(),
+        ));
+    };
+
     // 0x03: signature bytes
     let signature = match find_int_key(&ga_pairs, 0x03) {
         Some(Value::Bytes(b)) => b.clone(),
@@ -153,6 +167,15 @@ fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
     println!("Saving signature to {}", sig_path.display());
     std::fs::write(&sig_path, &signature)?;
 
+    // Save raw authData to {filename}.authdata
+    let authdata_path = {
+        let mut p = filename.as_os_str().to_owned();
+        p.push(".authdata");
+        std::path::PathBuf::from(p)
+    };
+    println!("Saving authenticator data to {}", authdata_path.display());
+    std::fs::write(&authdata_path, auth_data)?;
+
     // Print hex signature to stdout
     println!("{}", hex::encode(&signature));
 
@@ -171,7 +194,6 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
-    use std::io::Write;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -219,29 +241,65 @@ mod tests {
         assert!(err.to_string().contains("Unknown hash type"));
     }
 
+    /// Build a getAssertion response (status 0x00) with the given optional fields.
+    fn ga_response(auth_data: Option<&[u8]>, signature: Option<&[u8]>) -> Vec<u8> {
+        use ciborium::value::Value;
+        let mut pairs = Vec::new();
+        if let Some(a) = auth_data {
+            pairs.push((Value::Integer(0x02u64.into()), Value::Bytes(a.to_vec())));
+        }
+        if let Some(s) = signature {
+            pairs.push((Value::Integer(0x03u64.into()), Value::Bytes(s.to_vec())));
+        }
+        let mut out = vec![0x00u8];
+        ciborium::ser::into_writer(&Value::Map(pairs), &mut out).unwrap();
+        out
+    }
+
+    fn out_path(path: &Path, ext: &str) -> std::path::PathBuf {
+        let mut p = path.to_owned().into_os_string();
+        p.push(ext);
+        std::path::PathBuf::from(p)
+    }
+
     #[test]
     fn test_check_ga_response_ok() {
-        use ciborium::value::Value;
-        let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, "test data").unwrap();
-        let path = file.path();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file.bin");
+        std::fs::write(&path, b"test data\n").unwrap();
 
-        // status=0x00, map {0x03: bytes([0xAA, 0xBB])}
-        let ga_val = Value::Map(vec![(Value::Integer(0x03u64.into()), Value::Bytes(vec![0xAA, 0xBB]))]);
-        let mut ga_response = vec![0x00u8];
-        ciborium::ser::into_writer(&ga_val, &mut ga_response).unwrap();
-
-        let result = check_ga_response(&ga_response, path);
+        let auth_data = [0x11u8; 37];
+        let result = check_ga_response(&ga_response(Some(&auth_data), Some(&[0xAA, 0xBB])), &path);
         assert!(result.is_ok());
 
-        // Check if .sig file was created
-        let mut p = path.to_owned().into_os_string();
-        p.push(".sig");
-        let sig_path = std::path::PathBuf::from(p);
-        assert!(sig_path.exists());
-        let sig_data = std::fs::read(&sig_path).unwrap();
-        assert_eq!(sig_data, vec![0xAA, 0xBB]);
-        std::fs::remove_file(sig_path).unwrap();
+        assert_eq!(std::fs::read(out_path(&path, ".sig")).unwrap(), vec![0xAA, 0xBB]);
+        assert_eq!(std::fs::read(out_path(&path, ".authdata")).unwrap(), auth_data.to_vec());
+    }
+
+    #[test]
+    fn test_check_ga_response_missing_authdata_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file.bin");
+        let err = check_ga_response(&ga_response(None, Some(&[0xAA])), &path).unwrap_err();
+        assert!(
+            matches!(err, SoloError::MalformedResponse(_)),
+            "unexpected error: {err}"
+        );
+        assert!(!out_path(&path, ".sig").exists());
+        assert!(!out_path(&path, ".authdata").exists());
+    }
+
+    #[test]
+    fn test_check_ga_response_missing_signature_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file.bin");
+        let err = check_ga_response(&ga_response(Some(&[0x11; 37]), None), &path).unwrap_err();
+        assert!(
+            matches!(err, SoloError::MalformedResponse(_)),
+            "unexpected error: {err}"
+        );
+        assert!(!out_path(&path, ".sig").exists());
+        assert!(!out_path(&path, ".authdata").exists());
     }
 
     #[test]
