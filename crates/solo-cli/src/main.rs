@@ -36,6 +36,15 @@ fn run(cli: Cli) -> error::Result<()> {
             top::cmd_genkey(output.as_deref(), json)?;
         }
 
+        Commands::VerifyFile {
+            public_key,
+            signature,
+            authdata,
+            file,
+        } => {
+            top::cmd_verify_file(&public_key, signature.as_deref(), authdata.as_deref(), &file)?;
+        }
+
         Commands::Sign { key, firmware_hex } => {
             top::cmd_sign(&key, &firmware_hex)?;
         }
@@ -184,8 +193,13 @@ fn run_key_command(
             } => {
                 key::credential::cmd_credential_rm(hid, credential_id.as_deref(), host.as_deref(), user.as_deref())?;
             }
-            CredentialCommands::Create { host, user, prompt } => {
-                key::cmd_make_credential(hid, &host, &user, &prompt, json)?;
+            CredentialCommands::Create {
+                host,
+                user,
+                prompt,
+                public_key_out,
+            } => {
+                key::cmd_make_credential(hid, &host, &user, &prompt, json, public_key_out.as_deref())?;
             }
         },
     }
