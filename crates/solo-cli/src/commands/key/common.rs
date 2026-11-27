@@ -1,5 +1,6 @@
 use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
+use zeroize::Zeroizing;
 
 /// Prompt for the device PIN without echoing it, rejecting an empty entry.
 ///
@@ -8,8 +9,8 @@ use solo_ctaphid::HidDevice;
 /// # Errors
 /// Returns [`SoloError::IoError`] if the PIN prompt fails, or
 /// [`SoloError::ProtocolError`] if the entered PIN is empty.
-pub fn prompt_pin() -> Result<String> {
-    let pin = rpassword::prompt_password("Enter PIN: ").map_err(SoloError::IoError)?;
+pub fn prompt_pin() -> Result<Zeroizing<String>> {
+    let pin = Zeroizing::new(rpassword::prompt_password("Enter PIN: ").map_err(SoloError::IoError)?);
     if pin.is_empty() {
         return Err(SoloError::ProtocolError("PIN is required".into()));
     }

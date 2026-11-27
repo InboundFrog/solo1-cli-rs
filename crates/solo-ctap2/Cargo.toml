@@ -13,10 +13,13 @@ aes.workspace = true
 cbc.workspace = true
 ciborium.workspace = true
 hmac.workspace = true
+icu_normalizer.workspace = true
+log.workspace = true
 p256.workspace = true
 rand.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 solo-ctaphid = { workspace = true, features = ["test-util"] }

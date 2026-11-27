@@ -2,6 +2,7 @@
 //! (PIN/UV Auth Protocol One), key agreement, and request builders.
 //!
 //! Device-neutral; runs over any [`solo_ctaphid::HidDevice`].
+pub mod authdata;
 pub mod cbor;
 pub mod error;
 
@@ -10,9 +11,11 @@ pub use error::{Error, Result};
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit};
 use ciborium::value::Value;
 use hmac::{Hmac, KeyInit as _, Mac as _};
+use icu_normalizer::ComposingNormalizerBorrowed;
 use p256::Sec1Point as EncodedPoint;
 use p256::elliptic_curve::Generate;
 use sha2::{Digest as _, Sha256};
+use zeroize::Zeroizing;
 
 use crate::cbor::{cbor_bytes, cbor_int, cbor_text, find_int_key, find_text_key, int_map};
 use solo_ctaphid::{CTAPHID_CBOR, HidDevice};
@@ -29,12 +32,17 @@ pub const fn ctap2_status_message(code: u8) -> &'static str {
         0x06 => "channel busy",
         0x0A => "lock required",
         0x0B => "invalid channel",
+        0x10 => "CBOR parsing error",
         0x11 => "CBOR unexpected type",
         0x12 => "invalid CBOR",
+        0x13 => "invalid CBOR type",
         0x14 => "missing parameter",
         0x15 => "limit exceeded",
         0x16 => "unsupported extension",
+        0x17 => "too many elements",
+        0x18 => "extension not supported",
         0x19 => "credential excluded",
+        0x20 => "credential not valid",
         0x21 => "processing",
         0x22 => "invalid credential",
         0x23 => "user action pending",
@@ -43,23 +51,31 @@ pub const fn ctap2_status_message(code: u8) -> &'static str {
         0x26 => "unsupported algorithm",
         0x27 => "operation denied",
         0x28 => "key store full",
-        0x2A => "unsupported option",
-        0x2B => "invalid option",
-        0x2C => "keepalive cancel",
-        0x2D => "no credentials",
-        0x2E => "user action timeout — touch the key when the LED blinks",
-        0x2F => "not allowed",
-        0x30 => "PIN invalid",
-        0x31 => "PIN blocked",
-        0x32 => "PIN auth invalid",
-        0x33 => "PIN auth blocked",
-        0x34 => "PIN not set",
-        0x35 => "PIN required",
-        0x36 => "PIN policy violation",
-        0x37 => "PIN token expired",
-        0x38 => "request too large",
-        0x39 => "action timeout",
-        0x3A => "user presence required — touch the key",
+        0x29 => "not busy",
+        0x2A => "no operation pending",
+        0x2B => "unsupported option",
+        0x2C => "invalid option",
+        0x2D => "keepalive cancel",
+        0x2E => "no credentials",
+        0x2F => "user action timeout — touch the key when the LED blinks",
+        0x30 => "not allowed",
+        0x31 => "PIN invalid",
+        0x32 => "PIN blocked",
+        0x33 => "PIN auth invalid",
+        0x34 => "PIN auth blocked",
+        0x35 => "PIN not set",
+        0x36 => "PIN required",
+        0x37 => "PIN policy violation",
+        0x38 => "PIN token expired",
+        0x39 => "request too large",
+        0x3A => "action timeout",
+        0x3B => "user presence required — touch the key",
+        0x3C => "UV blocked",
+        0x3D => "integrity failure",
+        0x3E => "invalid subcommand",
+        0x3F => "UV invalid",
+        0x40 => "unauthorized permission",
+        0x7F => "other error",
         _ => "unknown error",
     }
 }
@@ -391,7 +407,7 @@ pub fn get_pin_token(hid: &impl HidDevice, pin: &str) -> Result<Vec<u8>> {
 pub fn maybe_pin_uv_auth<E: From<Error>>(
     hid: &impl HidDevice,
     msg: &[u8],
-    get_pin: impl FnOnce() -> std::result::Result<String, E>,
+    get_pin: impl FnOnce() -> std::result::Result<Zeroizing<String>, E>,
 ) -> std::result::Result<Option<Vec<u8>>, E> {
     if !get_info_client_pin_set(hid)? {
         return Ok(None);
@@ -467,9 +483,45 @@ pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
     Ok(truncated.to_vec())
 }
 
+/// Put a PIN into Unicode normalization form C (NFC), as CTAP 2.1 section 6.5.1 requires.
+///
+/// The text is written into a `String` that already has room for the result
+/// (NFC makes UTF-8 text at most 3 times longer), so the result is never
+/// reallocated. Only the normalizer's own buffers can hold an unwiped copy.
+fn nfc_pin(pin: &str) -> Result<Zeroizing<String>> {
+    let mut out = Zeroizing::new(String::with_capacity(pin.len().saturating_mul(3)));
+    ComposingNormalizerBorrowed::new_nfc()
+        .normalize_to(pin, &mut *out)
+        .map_err(|_| Error::Protocol("PIN could not be normalized".into()))?;
+    Ok(out)
+}
+
+/// Check that `pin` is allowed as a new PIN (CTAP 2.1, setPIN and changePIN).
+///
+/// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
+/// section 6.5.1). The NFC form has at least 4 Unicode code points and at most
+/// 63 bytes of UTF-8.
+///
+/// # Errors
+/// Returns [`Error::Protocol`] if the PIN is too short or too long.
+pub fn validate_new_pin(pin: &str) -> Result<()> {
+    validate_nfc_pin(&nfc_pin(pin)?)
+}
+
+/// Length rules for a PIN that is already in NFC form.
+fn validate_nfc_pin(pin: &str) -> Result<()> {
+    if pin.chars().count() < 4 {
+        return Err(Error::Protocol("PIN must be at least 4 characters".into()));
+    }
+    if pin.len() > 63 {
+        return Err(Error::Protocol("PIN must be at most 63 bytes in UTF-8".into()));
+    }
+    Ok(())
+}
+
 /// Represents an established shared secret with a CTAP2 device.
 pub struct ClientPinSession {
-    shared_secret: [u8; 32],
+    shared_secret: Zeroizing<[u8; 32]>,
     pub ephemeral_pub_key: Value,
 }
 
@@ -484,29 +536,37 @@ impl ClientPinSession {
         let platform_scalar = p256::NonZeroScalar::generate_from_rng(&mut rand::rng());
         let (shared_secret, ephemeral_pub_key) = ecdh_shared_secret(dev_pub_key, &platform_scalar)?;
         Ok(Self {
-            shared_secret,
+            shared_secret: Zeroizing::new(shared_secret),
             ephemeral_pub_key,
         })
     }
 
     /// Encrypt a PIN for setPin or changePin.
     ///
+    /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
+    /// section 6.5.1), then padded with zero bytes to 64 bytes and encrypted.
+    /// If that changes the text, a warning is logged (without any PIN data),
+    /// because other tools that do not normalize may then reject the new PIN.
+    ///
     /// # Errors
-    /// Returns [`Error::Crypto`] if the PIN cannot be padded or the AES-256-CBC
-    /// encryption fails.
+    /// Returns [`Error::Protocol`] if the PIN is not valid (see [`validate_new_pin`]),
+    /// or [`Error::Crypto`] if the AES-256-CBC encryption fails.
     pub fn encrypt_pin(&self, pin: &str) -> Result<Vec<u8>> {
-        let pin_bytes = pin.as_bytes();
-        let mut padded_pin = [0u8; 64];
-        let copy_len = pin_bytes.len().min(64);
-        let src = pin_bytes
-            .get(..copy_len)
-            .ok_or_else(|| Error::Crypto("PIN slice out of range".into()))?;
+        let nfc = nfc_pin(pin)?;
+        validate_nfc_pin(&nfc)?;
+        if nfc.as_str() != pin {
+            log::warn!(
+                "The new PIN was converted to Unicode NFC form. Tools that do not do this may reject it when it is typed the same way, and the key counts each failed attempt."
+            );
+        }
+        let pin_bytes = nfc.as_bytes();
+        let mut padded_pin = Zeroizing::new([0u8; 64]);
         padded_pin
-            .get_mut(..copy_len)
+            .get_mut(..pin_bytes.len())
             .ok_or_else(|| Error::Crypto("PIN buffer out of range".into()))?
-            .copy_from_slice(src);
+            .copy_from_slice(pin_bytes);
 
-        aes256_cbc_encrypt(&self.shared_secret, &padded_pin)
+        aes256_cbc_encrypt(&self.shared_secret, padded_pin.as_slice())
     }
 
     /// Compute pinUvAuthParam for a message.
@@ -514,16 +574,27 @@ impl ClientPinSession {
     /// # Errors
     /// Returns [`Error::Crypto`] if the underlying HMAC computation fails.
     pub fn authenticate(&self, message: &[u8]) -> Result<Vec<u8>> {
-        pin_uv_auth(&self.shared_secret, message)
+        pin_uv_auth(self.shared_secret.as_slice(), message)
     }
 
     /// Encrypt the PIN hash for getPinToken.
+    ///
+    /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
+    /// section 6.5.1), then hashed. If that changes the text, a warning is logged
+    /// (without any PIN data), because a PIN that was set in another form will be
+    /// rejected by the key.
     ///
     /// # Errors
     /// Returns [`Error::Crypto`] if the SHA-256 PIN hash is too short to truncate
     /// or the AES-256-CBC encryption fails.
     pub fn encrypt_pin_hash(&self, pin: &str) -> Result<[u8; 16]> {
-        let pin_hash_full = Sha256::digest(pin.as_bytes());
+        let nfc = nfc_pin(pin)?;
+        if nfc.as_str() != pin {
+            log::warn!(
+                "The PIN was converted to Unicode NFC form before use. If it was set in another form (for example by another tool or an older version of this one), the key will reject it and count a failed attempt."
+            );
+        }
+        let pin_hash_full = Zeroizing::new(<[u8; 32]>::from(Sha256::digest(nfc.as_bytes())));
         let pin_hash_prefix = pin_hash_full
             .get(..16)
             .ok_or_else(|| Error::Crypto("PIN hash too short".into()))?;
@@ -566,6 +637,37 @@ mod tests {
     use ciborium::value::Value;
 
     #[test]
+    fn test_status_message_table_is_pinned() {
+        let table = [
+            (0x2A, "no operation pending"),
+            (0x2B, "unsupported option"),
+            (0x2C, "invalid option"),
+            (0x2D, "keepalive cancel"),
+            (0x2E, "no credentials"),
+            (0x2F, "user action timeout"),
+            (0x30, "not allowed"),
+            (0x31, "PIN invalid"),
+            (0x32, "PIN blocked"),
+            (0x33, "PIN auth invalid"),
+            (0x34, "PIN auth blocked"),
+            (0x35, "PIN not set"),
+            (0x36, "PIN required"),
+            (0x37, "PIN policy violation"),
+            (0x38, "PIN token expired"),
+            (0x39, "request too large"),
+            (0x3A, "action timeout"),
+            (0x3B, "user presence required"),
+        ];
+        for (code, text) in table {
+            assert!(
+                ctap2_status_message(code).starts_with(text),
+                "code {code:#04x}: got {:?}, want {text:?}",
+                ctap2_status_message(code)
+            );
+        }
+    }
+
+    #[test]
     fn test_check_ctap_status() {
         assert!(check_ctap_status(&[0x00, 0x01, 0x02], "test").is_ok());
         let err = check_ctap_status(&[0x01, 0x01, 0x02], "test").unwrap_err();
@@ -586,6 +688,96 @@ mod tests {
         ];
         let texts = extract_cbor_text_responses(&values);
         assert_eq!(texts, vec!["first", "second"]);
+    }
+
+    #[test]
+    fn test_validate_new_pin_length_rules() {
+        assert!(validate_new_pin("abc").is_err());
+        assert!(
+            validate_new_pin("\u{e9}\u{e9}\u{e9}").is_err(),
+            "3 code points, 6 bytes"
+        );
+        assert!(
+            validate_new_pin("\u{e9}\u{e9}\u{e9}\u{e9}").is_ok(),
+            "4 code points, 8 bytes"
+        );
+        assert!(validate_new_pin(&"a".repeat(63)).is_ok());
+        assert!(validate_new_pin(&"a".repeat(64)).is_err());
+    }
+
+    #[test]
+    fn test_validate_new_pin_uses_nfc_form() {
+        let decomposed = "e\u{301}";
+        // 4 code points after NFC (8 before: 2 each).
+        assert!(validate_new_pin(&decomposed.repeat(4)).is_ok());
+        // 3 code points after NFC, although 6 before.
+        assert!(validate_new_pin(&decomposed.repeat(3)).is_err());
+        // 66 bytes before NFC, 44 after: accepted.
+        assert_eq!(decomposed.repeat(22).len(), 66);
+        assert_eq!(nfc_pin(&decomposed.repeat(22)).unwrap().len(), 44);
+        assert!(validate_new_pin(&decomposed.repeat(22)).is_ok());
+        // 33 bytes before NFC, 66 after: rejected.
+        let devanagari = "\u{958}".repeat(11);
+        assert_eq!(devanagari.len(), 33);
+        assert_eq!(nfc_pin(&devanagari).unwrap().len(), 66);
+        assert!(validate_new_pin(&devanagari).is_err());
+        // NFC leaves compatibility characters alone (NFKC would change them).
+        assert_eq!(nfc_pin("\u{FB01}\u{FF11}").unwrap().as_str(), "\u{FB01}\u{FF11}");
+    }
+
+    #[test]
+    fn test_encrypt_pin_normalizes_to_nfc() {
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        let decomposed = "caf\u{65}\u{301}1";
+        let composed = "caf\u{e9}1";
+        let enc = session.encrypt_pin(decomposed).unwrap();
+        assert_eq!(enc, session.encrypt_pin(composed).unwrap());
+        let dec = session.decrypt_pin_token(&enc).unwrap();
+        let mut expected = [0u8; 64];
+        expected[..composed.len()].copy_from_slice(composed.as_bytes());
+        assert_eq!(dec, expected);
+        // 6 code points raw, 3 after NFC: the NFC length is what counts.
+        assert!(session.encrypt_pin(&"e\u{301}".repeat(3)).is_err());
+    }
+
+    #[test]
+    fn test_encrypt_pin_hash_normalizes_to_nfc() {
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        let a = session.encrypt_pin_hash("caf\u{65}\u{301}1").unwrap();
+        assert_eq!(a, session.encrypt_pin_hash("caf\u{e9}1").unwrap());
+        assert_ne!(a, session.encrypt_pin_hash("caf\u{e9}2").unwrap());
+    }
+
+    #[test]
+    fn test_ascii_pin_bytes_unchanged() {
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        let pin = "123456";
+        let mut padded = [0u8; 64];
+        padded[..pin.len()].copy_from_slice(pin.as_bytes());
+        assert_eq!(
+            session.encrypt_pin(pin).unwrap(),
+            aes256_cbc_encrypt(&session.shared_secret, &padded).unwrap()
+        );
+        let hash = Sha256::digest(pin.as_bytes());
+        assert_eq!(
+            session.encrypt_pin_hash(pin).unwrap().to_vec(),
+            aes256_cbc_encrypt(&session.shared_secret, &hash[..16]).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_encrypt_pin_rejects_invalid_and_keeps_full_pin() {
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        assert!(session.encrypt_pin("abc").is_err());
+        assert!(session.encrypt_pin(&"a".repeat(64)).is_err());
+        let pin = "a".repeat(63);
+        let dec = session.decrypt_pin_token(&session.encrypt_pin(&pin).unwrap()).unwrap();
+        assert_eq!(&dec[..63], pin.as_bytes());
+        assert_eq!(dec[63], 0);
     }
 
     #[test]
