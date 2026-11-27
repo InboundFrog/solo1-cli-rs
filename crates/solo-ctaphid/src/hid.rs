@@ -104,16 +104,22 @@ pub fn list_devices(filter: DeviceFilter) -> Result<Vec<HidDeviceInfo>> {
 
 /// An open CTAPHID channel to a USB HID authenticator.
 pub struct HidTransport {
-    pub device: HidApiDevice,
+    device: HidApiDevice,
     /// The device that was opened, so callers can tell which model it is.
-    pub info: HidDeviceInfo,
-    pub channel_id: [u8; 4],
+    info: HidDeviceInfo,
+    channel_id: [u8; 4],
     /// Timeout applied to each `send_recv` / `recv_response` call.
     /// The low-level `init` handshake always uses a fixed 5-second timeout.
-    pub response_timeout: Duration,
+    response_timeout: Duration,
 }
 
 impl HidTransport {
+    /// The device that was opened, so callers can tell which model it is.
+    #[must_use]
+    pub const fn info(&self) -> &HidDeviceInfo {
+        &self.info
+    }
+
     /// Open a device matching `filter` by serial number (or the only matching
     /// device if `serial` is `None`).
     ///
