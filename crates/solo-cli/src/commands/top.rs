@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::Result;
 use solo1::crypto::{generate_keypair, load_signing_key, sign_firmware};
-use solo1::firmware::{create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_files};
+use solo1::firmware::{create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_text};
 
 /// Print the library version.
 ///
@@ -52,7 +52,10 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Write the signing private key to a new file at `path`.
+/// Write a file that holds a private key to a new file at `path`.
+///
+/// Used for the key from `genkey` and for the merged HEX from `mergehex` when
+/// it holds a user's attestation key.
 ///
 /// The key is written to a temporary file in the same directory, with mode
 /// 0o600 (or less if the umask removes bits). The file is synced and then
@@ -103,7 +106,7 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     result
 }
 
-/// Write the signing private key to `path` (non-Unix fallback).
+/// Write a file that holds a private key to `path` (non-Unix fallback).
 #[cfg(not(unix))]
 fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     std::fs::write(path, contents)
@@ -144,6 +147,9 @@ pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
 
 /// Merge Intel HEX files into a single output.
 ///
+/// If `attestation_key` is given, the output holds that private key, so it is
+/// written with `write_private_key`. Otherwise it is a plain write.
+///
 /// # Errors
 /// Returns an error if reading or parsing the input hex files, merging them,
 /// or writing the output file fails.
@@ -154,7 +160,12 @@ pub fn cmd_mergehex(
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
     let input_refs: Vec<&Path> = inputs.iter().map(std::path::PathBuf::as_path).collect();
-    merge_hex_files(&input_refs, output, attestation_key, attestation_cert)?;
+    let text = merge_hex_text(&input_refs, attestation_key, attestation_cert)?;
+    if attestation_key.is_some() {
+        write_private_key(output, &text)?;
+    } else {
+        std::fs::write(output, text)?;
+    }
     println!("Merged {} files into {}", inputs.len(), output.display());
     Ok(())
 }
