@@ -296,23 +296,19 @@ fn test_reassemble_frames_truncation() {
 /// Test that crypto fingerprints are all 32-byte valid hex.
 #[test]
 fn test_known_fingerprints_validity() {
-    use solo1::crypto::KNOWN_FINGERPRINTS;
+    use solo1::crypto::{AttestationResult, KNOWN_FINGERPRINTS};
 
     assert_eq!(KNOWN_FINGERPRINTS.len(), 6, "should have exactly 6 known fingerprints");
 
-    for (fp, name) in KNOWN_FINGERPRINTS {
-        let bytes = hex::decode(fp).unwrap_or_else(|_| panic!("fingerprint for '{name}' should be valid hex"));
-        assert_eq!(bytes.len(), 32, "fingerprint for '{name}' should be 32 bytes");
+    for (fp, result) in KNOWN_FINGERPRINTS {
+        let bytes = hex::decode(fp).unwrap_or_else(|_| panic!("fingerprint for '{result:?}' should be valid hex"));
+        assert_eq!(bytes.len(), 32, "fingerprint for '{result:?}' should be 32 bytes");
     }
 
-    // Verify specific expected fingerprints
-    let names: Vec<&str> = KNOWN_FINGERPRINTS.iter().map(|(_, n)| *n).collect();
-    assert!(names.contains(&"Valid Solo (<=3.0.0) firmware from SoloKeys."));
-    assert!(names.contains(&"Solo Hacker firmware."));
-    assert!(names.contains(&"Local software emulation."));
-    assert!(names.contains(&"Valid Solo Tap with firmware from SoloKeys."));
-    assert!(names.contains(&"Valid Somu with firmware from SoloKeys."));
-    assert!(names.contains(&"Valid Solo with firmware from SoloKeys."));
+    assert!(KNOWN_FINGERPRINTS.contains(&(
+        "72d5833126acfce9a8e8266018e6414934c8be4ab8685f91b0992113bbd43295",
+        AttestationResult::GenuineConsumer("Solo v3")
+    )));
 }
 
 /// Test `flash_addr` calculation.

@@ -1,6 +1,7 @@
 use crate::error::{Result, SoloError};
 use p256::elliptic_curve::Generate;
 use sha2::{Digest, Sha256};
+use solo_ctap2::authdata::{AuthenticatorData, FLAG_AT, FLAG_ED};
 use solo_ctap2::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
 use solo_ctap2::{aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response};
 use solo_ctaphid::HidDevice;
@@ -15,8 +16,8 @@ use solo_ctaphid::HidDevice;
 ///   - extensions: {"hmac-secret": true}
 ///   - options: {"rk": true}  (resident key)
 ///
-/// Parses the authData from the response to extract the credential ID,
-/// then prints it as hex for use with `challenge-response` and `sign-file`.
+/// Reads the credential ID from the authData in the response. Prints it as
+/// hex. You can use it with `challenge-response` and `sign-file`.
 ///
 /// # Errors
 /// Returns an error if acquiring a PIN token fails, if the makeCredential
@@ -27,17 +28,17 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     use ciborium::value::Value;
     use rand::Rng;
 
-    // Generate random challenge and hash it as clientDataHash
+    // Make a random challenge. Its SHA-256 hash is the clientDataHash.
     let mut challenge = [0u8; 32];
     rand::rng().fill_bytes(&mut challenge);
     let client_data_hash: Vec<u8> = Sha256::digest(challenge).to_vec();
 
-    // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
-    // PIN prompt comes first; the touch prompt is printed after PIN entry.
+    // If a PIN is set, get a PIN token and compute pinUvAuthParam.
+    // The PIN prompt comes first. The touch prompt prints after the PIN entry.
     let pin_uv_auth = solo_ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
 
-    // makeCredential request with extensions {"hmac-secret": true} (0x06)
-    // and options {"rk": true} (0x07) on top of the shared scaffolding.
+    // Build the makeCredential request. Add the extensions {"hmac-secret": true}
+    // (0x06) and the options {"rk": true} (0x07) to the shared request.
     let cbor_request = solo_ctap2::build_make_credential(
         host,
         user,
@@ -66,58 +67,17 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
         ));
     };
 
-    // authData layout (CTAP2 spec):
-    //   [0..32]   rpIdHash (32 bytes)
-    //   [32]      flags byte (bit 6 = AT: attested credential data present)
-    //   [33..37]  signCount (u32 BE)
-    //   [37..53]  AAGUID (16 bytes)          — only if AT bit set
-    //   [53..55]  credentialIdLength (u16 BE) — only if AT bit set
-    //   [55..]    credentialId               — only if AT bit set
-    if auth_data.len() < 37 {
-        return Err(SoloError::MalformedResponse(
-            "authData too short to contain credential info".into(),
-        ));
-    }
+    let parsed = AuthenticatorData::parse(auth_data)?;
 
-    let flags = *auth_data
-        .get(32)
-        .ok_or_else(|| SoloError::MalformedResponse("authData missing flags byte".into()))?;
-    let at_flag = (flags & 0x40) != 0; // bit 6 = attested credential data present
-
-    if !at_flag {
+    if parsed.flags & FLAG_AT == 0 {
         return Err(SoloError::MalformedResponse(
             "authData AT flag not set — no credential data present".into(),
         ));
     }
 
-    if auth_data.len() < 55 {
-        return Err(SoloError::MalformedResponse(
-            "authData too short to read credentialIdLength".into(),
-        ));
-    }
-
-    let cred_id_len_bytes: [u8; 2] = auth_data
-        .get(53..55)
-        .ok_or_else(|| SoloError::MalformedResponse("authData too short to read credentialIdLength".into()))?
-        .try_into()
-        .map_err(|_| SoloError::MalformedResponse("invalid credentialIdLength field".into()))?;
-    let cred_id_len = usize::from(u16::from_be_bytes(cred_id_len_bytes));
-    let cred_id_start: usize = 55;
-    let cred_id_end = cred_id_start
-        .checked_add(cred_id_len)
-        .ok_or_else(|| SoloError::ProtocolError("credentialId length overflow".into()))?;
-
-    if auth_data.len() < cred_id_end {
-        return Err(SoloError::MalformedResponse(format!(
-            "authData too short: need {} bytes for credential ID, have {}",
-            cred_id_end,
-            auth_data.len()
-        )));
-    }
-
-    let credential_id = auth_data
-        .get(cred_id_start..cred_id_end)
-        .ok_or_else(|| SoloError::MalformedResponse("authData too short for credential ID".into()))?;
+    let credential_id = parsed
+        .credential_id
+        .ok_or_else(|| SoloError::MalformedResponse("authData missing credential ID".into()))?;
 
     if json {
         use crate::output::{MakeCredentialOutput, print_json};
@@ -146,15 +106,15 @@ fn decrypt_hmac_secret(shared_secret: &[u8; 32], encrypted: &[u8]) -> Result<Vec
     Ok(aes256_cbc_decrypt(shared_secret, encrypted)?)
 }
 
-// TODO Cleanup doc - need to talk to Claude
-#[allow(clippy::doc_lazy_continuation)]
 /// Build the hmac-secret extension input for a getAssertion request.
 ///
-/// Performs steps 1–6 of the hmac-secret protocol:
-///   1. Compute salt = SHA-256(challenge)
-///   2–4. ECDH with device key → `shared_secret` + ephemeral COSE public key
-///   5. saltEnc = AES-256-CBC(key=shared_secret, IV=0x00×16, data=salt)
-///   6. saltAuth = HMAC-SHA-256(shared_secret, saltEnc)[0..16]
+/// This performs steps 1 to 6 of the hmac-secret protocol:
+///
+/// - Step 1: compute salt = SHA-256(challenge).
+/// - Steps 2 to 4: run ECDH with the device key. This gives the
+///   `shared_secret` and the ephemeral COSE public key.
+/// - Step 5: compute saltEnc = AES-256-CBC(key=`shared_secret`, IV=0x00 repeated 16 times, data=salt).
+/// - Step 6: compute saltAuth = HMAC-SHA-256(`shared_secret`, saltEnc), truncated to the first 16 bytes.
 ///
 /// Returns the hmac-secret extension map `{1: keyAgreement, 2: saltEnc, 3: saltAuth}`
 /// and the `shared_secret` needed to decrypt the authenticator's response.
@@ -220,7 +180,7 @@ pub fn cmd_challenge_response(
     use ciborium::value::Value;
     use sha2::Digest as _;
 
-    // Decode hex credential ID
+    // Decode the hex credential ID.
     let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
@@ -228,7 +188,7 @@ pub fn cmd_challenge_response(
     let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&dev_pub_key, challenge)?;
 
     // ── Step 7: Build and send getAssertion request ───────────────────────────
-    // clientDataHash: fixed bytes (device does not verify for hmac-secret use)
+    // clientDataHash is a fixed value. The device does not check it for hmac-secret.
     let client_data_hash: Vec<u8> = Sha256::digest(b"solo1_challenge_response").to_vec();
 
     // getAssertion CBOR map:
@@ -264,35 +224,21 @@ pub fn cmd_challenge_response(
         ));
     };
 
-    // authData layout:
-    //   [0..32]  rpIdHash
-    //   [32]     flags byte — bit 7 (0x80) = ED: extensions data present
-    //   [33..37] signCount (u32 BE)
-    //   [37..]   extensions CBOR (if ED flag set)
-    if auth_data.len() < 37 {
-        return Err(SoloError::MalformedResponse("authData too short".into()));
-    }
+    let parsed = AuthenticatorData::parse(auth_data)?;
 
-    let flags = *auth_data
-        .get(32)
-        .ok_or_else(|| SoloError::MalformedResponse("authData missing flags byte".into()))?;
-    let ed_flag = (flags & 0x80) != 0; // bit 7 = extensions data present
-
-    if !ed_flag {
+    if parsed.flags & FLAG_ED == 0 {
         return Err(SoloError::MalformedResponse(
             "authData ED flag not set — no extensions data in response".into(),
         ));
     }
 
-    // Parse extensions CBOR starting at byte 37
-    let ext_cbor_bytes = auth_data
-        .get(37..)
-        .ok_or_else(|| SoloError::MalformedResponse("authData missing extensions data".into()))?;
+    // The extensions CBOR follows the fixed header
+    let ext_cbor_bytes = parsed.trailing;
     let ext_val: Value = ciborium::de::from_reader(ext_cbor_bytes)?;
 
     let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
 
-    // Find "hmac-secret" key in extensions
+    // Find the "hmac-secret" key in the extensions.
     let hmac_secret_enc = match find_text_key(&ext_pairs, "hmac-secret") {
         Some(Value::Bytes(b)) => b.clone(),
         _ => {
