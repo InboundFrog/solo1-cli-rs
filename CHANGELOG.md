@@ -45,7 +45,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `solo key verify` now exits with a non-zero code when the attestation signature is invalid or the
   certificate fingerprint is unknown. The report is still printed first. (#107)
 - `HidTransport` fields are now private; use the new `info()` accessor to read device info. (#109)
-- HEX merging uses a sorted flash image type instead of a hash map, with no change to the output. (#110)
+- HEX merging stores the flash image in sorted fixed-size pages instead of a hash map, with no change to the output.
+  (#110, #127)
 - Known attestation fingerprints now live in one table that `check_attestation_fingerprint` uses. (#108)
 - Authenticator data from makeCredential and getAssertion is now parsed by one typed parser. (#116)
 - Added a typed text getter for CBOR maps and used it when parsing credential management responses. (#114)
@@ -93,8 +94,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - `solo genkey` now writes the private key to a new file that only the owner can read (mode 0600).
-  An existing regular file at the path is removed first and never written into, so a program that opened the old file
-  earlier cannot read the new key. A symbolic link or other non-regular path is refused. (#101, #128, #129)
+  The key is written to a temporary file and renamed into place, so an old key file is never written into (a program
+  that opened it earlier cannot read the new key) and it survives a failed write. A symbolic link or other non-regular
+  path is refused. (#101, #128, #129, #133)
 - Firmware downloads now have timeouts, fail on an HTTP error status, and are limited to 8 MiB. (#105)
 - PIN strings, the padded PIN block, the PIN hash and the ECDH shared secret are wiped from memory after use. (#104)
 
