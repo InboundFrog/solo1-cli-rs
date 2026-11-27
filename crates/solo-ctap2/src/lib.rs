@@ -57,7 +57,7 @@ pub const fn ctap2_status_message(code: u8) -> &'static str {
         0x2C => "invalid option",
         0x2D => "keepalive cancel",
         0x2E => "no credentials",
-        0x2F => "user action timeout — touch the key while it waits",
+        0x2F => "user action timeout — run the command again and touch the key",
         0x30 => "not allowed",
         0x31 => "PIN invalid",
         0x32 => "PIN blocked",
@@ -68,9 +68,7 @@ pub const fn ctap2_status_message(code: u8) -> &'static str {
         0x37 => "PIN policy violation",
         0x38 => "PIN token expired",
         0x39 => "request too large",
-        0x3A => {
-            "action timeout — nobody touched the key in time; run the command again and touch the key while it waits (a Solo 1 waits about 29 seconds)"
-        }
+        0x3A => "action timeout — nobody touched the key in time; run the command again and touch the key",
         0x3B => "user presence required — touch the key",
         0x3C => "UV blocked",
         0x3D => "integrity failure",
@@ -647,7 +645,7 @@ mod tests {
             (0x2C, "invalid option"),
             (0x2D, "keepalive cancel"),
             (0x2E, "no credentials"),
-            (0x2F, "user action timeout — touch the key"),
+            (0x2F, "user action timeout — run the command again"),
             (0x30, "not allowed"),
             (0x31, "PIN invalid"),
             (0x32, "PIN blocked"),
