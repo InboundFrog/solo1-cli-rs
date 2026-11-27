@@ -2117,6 +2117,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "time",
+ "zeroize",
 ]
 
 [[package]]
@@ -2127,11 +2128,14 @@ dependencies = [
  "cbc",
  "ciborium",
  "hmac",
+ "icu_normalizer",
+ "log",
  "p256",
  "rand",
  "sha2",
  "solo-ctaphid",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
