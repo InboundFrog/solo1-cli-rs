@@ -1,16 +1,66 @@
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
 
+/// Wait after entering the bootloader, so the old firmware is gone before the first open.
+const RECONNECT_SETTLE: Duration = Duration::from_millis(1500);
+
+/// Pause between attempts to reconnect after entering the bootloader.
+const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// Call `open` until it succeeds or `total` has passed.
+///
+/// Sleeps `interval` after each failed attempt. Tries at least once. One
+/// attempt can run past `total` by the CTAPHID init timeout.
+///
+/// Each failed attempt that will be tried again is passed to `report` as text.
+/// A message that is the same as the one just before it is not reported again.
+/// The error from the last attempt is not reported. It is returned.
+///
+/// # Errors
+/// Returns the error of the last attempt when the time is up.
+fn retry_open<T, E: std::fmt::Display>(
+    interval: Duration,
+    total: Duration,
+    mut open: impl FnMut() -> std::result::Result<T, E>,
+    mut report: impl FnMut(&str),
+) -> std::result::Result<T, E> {
+    let start = Instant::now();
+    let mut last_reported = String::new();
+    loop {
+        match open() {
+            Ok(v) => return Ok(v),
+            Err(e) if start.elapsed() >= total => return Err(e),
+            Err(e) => {
+                let message = e.to_string();
+                if message != last_reported {
+                    report(&message);
+                    last_reported = message;
+                }
+                std::thread::sleep(interval);
+            }
+        }
+    }
+}
+
 /// Update the device firmware.
+///
+/// After the key enters the bootloader, this reconnects to the same serial
+/// number (if given) and keeps trying for up to `timeout`.
 ///
 /// # Errors
 /// Returns an error if the firmware cannot be loaded from the given file or
 /// downloaded from GitHub, if the release contains no firmware asset, if the
 /// firmware JSON is malformed, if reconnecting in bootloader mode fails, if
 /// selecting the signature fails, or if writing the firmware fails.
-pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<()> {
+pub fn cmd_update(
+    hid: &impl HidDevice,
+    firmware_file: Option<&Path>,
+    serial: Option<&str>,
+    timeout: Duration,
+) -> Result<()> {
     use crate::commands::program::{select_signature, write_firmware};
     use crate::github::{download_url, fetch_latest_release};
     use solo1::crypto::sha256_hex;
@@ -27,6 +77,7 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
         let asset = release
             .find_asset(is_firmware_asset)
             .ok_or_else(|| SoloError::FirmwareError("No firmware JSON in release".into()))?;
+        asset.check_size()?;
         println!("Downloading: {}", asset.name);
         let bytes = download_url(&asset.browser_download_url)?;
         let json_str = String::from_utf8(bytes)
@@ -44,12 +95,16 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
     println!("Entering bootloader mode...");
     let _ = hid.send(CMD_ENTER_BOOT, &[]);
 
-    // Delay for device to re-enumerate in bootloader mode
-    std::thread::sleep(std::time::Duration::from_millis(1500));
-
-    // Reconnect in bootloader mode
+    // Reconnect in bootloader mode. The device needs time to re-enumerate; the old firmware
+    // has the same VID/PID, so wait before the first open.
     println!("Reconnecting...");
-    let bl_hid = solo1::open(None, std::time::Duration::from_secs(30))?;
+    std::thread::sleep(RECONNECT_SETTLE);
+    let bl_hid = retry_open(
+        RECONNECT_INTERVAL,
+        timeout,
+        || solo1::open(serial, timeout),
+        |msg| log::warn!("Could not reconnect yet: {msg}. Trying again..."),
+    )?;
 
     // Query bootloader version to select the correct signature.
     let signature = select_signature(&bl_hid, &fw_json)?;
@@ -70,4 +125,75 @@ pub fn cmd_update(hid: &impl HidDevice, firmware_file: Option<&Path>) -> Result<
 
     println!("Firmware update complete!");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    const TICK: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn retry_open_succeeds_after_two_failures() {
+        let mut calls = 0;
+        let mut reports: Vec<String> = Vec::new();
+        let r: std::result::Result<&str, &str> = retry_open(
+            TICK,
+            Duration::from_secs(5),
+            || {
+                calls += 1;
+                if calls < 3 { Err("down") } else { Ok("up") }
+            },
+            |m| reports.push(m.to_owned()),
+        );
+        assert_eq!(r, Ok("up"));
+        assert_eq!(calls, 3);
+        assert_eq!(reports, ["down"]);
+    }
+
+    #[test]
+    fn retry_open_returns_last_error_at_deadline() {
+        let mut calls = 0;
+        let mut reports: Vec<String> = Vec::new();
+        let r: std::result::Result<(), i32> = retry_open(
+            TICK,
+            Duration::from_millis(20),
+            || {
+                calls += 1;
+                Err(calls)
+            },
+            |m| reports.push(m.to_owned()),
+        );
+        assert_eq!(r, Err(calls));
+        assert!(calls > 1);
+        assert_eq!(reports, (1..calls).map(|n| n.to_string()).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn retry_open_reports_changes_only() {
+        let mut errors = ["a", "a", "b", "a"].into_iter();
+        let mut reports: Vec<String> = Vec::new();
+        let r: std::result::Result<&str, &str> = retry_open(
+            TICK,
+            Duration::from_secs(5),
+            || errors.next().map_or(Ok("up"), Err),
+            |m| reports.push(m.to_owned()),
+        );
+        assert_eq!(r, Ok("up"));
+        assert_eq!(reports, ["a", "b", "a"]);
+    }
+
+    #[test]
+    fn retry_open_immediate_success_reports_nothing() {
+        let mut reports: Vec<String> = Vec::new();
+        let r: std::result::Result<&str, &str> = retry_open(
+            TICK,
+            Duration::from_secs(5),
+            || Ok("up"),
+            |m| reports.push(m.to_owned()),
+        );
+        assert_eq!(r, Ok("up"));
+        assert_eq!(reports, Vec::<String>::new());
+    }
 }

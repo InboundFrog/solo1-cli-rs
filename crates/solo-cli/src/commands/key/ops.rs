@@ -7,7 +7,7 @@ use solo_ctaphid::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 use solo1::firmware::FirmwareVersion;
 use solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
 
-/// Get firmware version from the device.
+/// Print the firmware version of the device.
 ///
 /// # Errors
 /// Returns an error if the version query fails (device/transport error or
@@ -25,7 +25,7 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Get the firmware version from a Solo 2.
+/// Print the firmware version of a Solo 2.
 ///
 /// # Errors
 /// Returns an error if the version query fails (device/transport error or
@@ -129,11 +129,18 @@ pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
         return Ok(());
     }
     println!("Press the button to confirm -- again, your credentials will be lost!!!");
-    // CTAP2 authenticatorReset = 0x07
-    // Send via CTAPHID_CBOR
-    let cbor_reset = vec![0x07u8];
-    hid.send_recv(CTAPHID_CBOR, &cbor_reset)?;
+    send_reset(hid)?;
     println!("....aaaand they're gone");
+    Ok(())
+}
+
+/// Send CTAP2 authenticatorReset (0x07) and check the status byte.
+///
+/// The key may refuse, for example with 0x30 (not allowed) when the reset is
+/// too late after power-up, or with 0x2F when nobody touched the key.
+fn send_reset(hid: &impl HidDevice) -> Result<()> {
+    let response = hid.send_recv(CTAPHID_CBOR, &[0x07u8])?;
+    solo_ctap2::check_ctap_status(&response, "authenticatorReset")?;
     Ok(())
 }
 
@@ -230,6 +237,23 @@ mod tests {
         let device = MockDevice::new(vec![]);
         let result = cmd_wink(&device);
         assert!(matches!(result.unwrap_err(), SoloError::Timeout));
+    }
+
+    // ── send_reset ──────────────────────────────────────────────────────────
+
+    /// A refused reset (status 0x30, not allowed) must be an error.
+    #[test]
+    fn test_send_reset_refused() {
+        let device = MockDevice::new(vec![Ok(vec![0x30])]);
+        let err = send_reset(&device).unwrap_err();
+        assert!(matches!(err, SoloError::AuthenticatorError { code: 0x30, .. }), "{err}");
+    }
+
+    /// Status 0x00 means the key accepted the reset.
+    #[test]
+    fn test_send_reset_ok() {
+        let device = MockDevice::new(vec![Ok(vec![0x00])]);
+        assert!(send_reset(&device).is_ok());
     }
 
     // ── cmd_key_version ────────────────────────────────────────────────────
