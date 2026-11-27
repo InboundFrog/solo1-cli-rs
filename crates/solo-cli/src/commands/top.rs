@@ -460,10 +460,11 @@ mod tests {
         std::fs::write(&out, "old").unwrap();
         std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
 
-        super::cmd_mergehex(&[hex], &out, Some(&key), Some(&cert)).unwrap();
+        super::cmd_mergehex(std::slice::from_ref(&hex), &out, Some(&key), Some(&cert)).unwrap();
 
         assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o600);
-        assert!(std::fs::read_to_string(&out).unwrap().starts_with(':'));
+        let expected = solo1::firmware::merge_hex_text(&[hex.as_path()], Some(&key), Some(&cert)).unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), expected);
     }
 
     /// With an attestation key, a symbolic link at the output path is refused
@@ -477,9 +478,10 @@ mod tests {
         let out = dir.path().join("out.hex");
         std::os::unix::fs::symlink(&target, &out).unwrap();
 
-        let result = super::cmd_mergehex(&[hex], &out, Some(&key), Some(&cert));
+        let err = super::cmd_mergehex(&[hex], &out, Some(&key), Some(&cert)).unwrap_err();
 
-        assert!(result.is_err());
+        assert!(err.to_string().contains("not a regular file"), "{err}");
+        assert!(std::fs::symlink_metadata(&out).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
     }
 
