@@ -87,11 +87,15 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
             .ok_or_else(|| SoloError::ProtocolError("Ping index overflow".into()))?;
 
         if json {
-            print_json(&PingOutput {
-                index,
-                data_len: data.len(),
-                duration_ms: elapsed.as_secs_f64() * 1000.0,
-            })?;
+            // One compact object per line (JSON Lines), printed as each ping answers.
+            println!(
+                "{}",
+                serde_json::to_string(&PingOutput {
+                    index,
+                    data_len: data.len(),
+                    duration_ms: elapsed.as_secs_f64() * 1000.0,
+                })?
+            );
         } else {
             println!(
                 "Ping {}: {} bytes, RTT = {:.3}ms",
@@ -188,6 +192,15 @@ mod tests {
         let data = vec![0x01u8, 0x02, 0x03, 0x04];
         let device = MockDevice::new(vec![Ok(data.clone())]);
         let result = cmd_ping(&device, 1, &data, false);
+        assert!(result.is_ok());
+    }
+
+    /// JSON mode with two pings: both echo back, so `cmd_ping` must succeed.
+    #[test]
+    fn test_cmd_ping_json_two_pings() {
+        let data = vec![0x01u8, 0x02, 0x03, 0x04];
+        let device = MockDevice::new(vec![Ok(data.clone()), Ok(data.clone())]);
+        let result = cmd_ping(&device, 2, &data, true);
         assert!(result.is_ok());
     }
 

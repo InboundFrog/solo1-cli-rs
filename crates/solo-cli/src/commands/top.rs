@@ -8,7 +8,7 @@ use p256::pkcs8::DecodePublicKey;
 use sha2::{Digest, Sha256};
 use solo_ctap2::authdata::{AuthenticatorData, FLAG_UP, FLAG_UV};
 use solo1::crypto::{generate_keypair, load_signing_key, sign_firmware};
-use solo1::firmware::{create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_files};
+use solo1::firmware::{create_firmware_json_versioned, firmware_bytes_to_sign_for_version, merge_hex_text};
 
 /// Print the library version.
 ///
@@ -57,7 +57,10 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Write the signing private key to a new file at `path`.
+/// Write a file that holds a private key to a new file at `path`.
+///
+/// Used for the key from `genkey` and for the merged HEX from `mergehex` when
+/// it holds a user's attestation key.
 ///
 /// The key is written to a temporary file in the same directory, with mode
 /// 0o600 (or less if the umask removes bits). The file is synced and then
@@ -108,7 +111,7 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     result
 }
 
-/// Write the signing private key to `path` (non-Unix fallback).
+/// Write a file that holds a private key to `path` (non-Unix fallback).
 #[cfg(not(unix))]
 fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     std::fs::write(path, contents)
@@ -248,6 +251,9 @@ pub fn cmd_verify_file(
 
 /// Merge Intel HEX files into a single output.
 ///
+/// If `attestation_key` is given, the output holds that private key, so it is
+/// written with `write_private_key`. Otherwise it is a plain write.
+///
 /// # Errors
 /// Returns an error if reading or parsing the input hex files, merging them,
 /// or writing the output file fails.
@@ -258,7 +264,12 @@ pub fn cmd_mergehex(
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
     let input_refs: Vec<&Path> = inputs.iter().map(std::path::PathBuf::as_path).collect();
-    merge_hex_files(&input_refs, output, attestation_key, attestation_cert)?;
+    let text = merge_hex_text(&input_refs, attestation_key, attestation_cert)?;
+    if attestation_key.is_some() {
+        write_private_key(output, &text)?;
+    } else {
+        std::fs::write(output, text)?;
+    }
     println!("Merged {} files into {}", inputs.len(), output.display());
     Ok(())
 }
@@ -796,5 +807,74 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
         assert!(path.is_dir());
+    }
+
+    /// Small valid inputs for `cmd_mergehex`: a HEX file, a key and a cert.
+    fn mergehex_inputs(dir: &std::path::Path) -> (std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+        let hex = dir.join("in.hex");
+        std::fs::write(&hex, ":020000040800F2\n:00000001FF\n").unwrap();
+        let key = dir.join("att.key");
+        std::fs::write(&key, "11".repeat(32)).unwrap();
+        let cert = dir.join("att.cert");
+        std::fs::write(&cert, [0x30u8; 120]).unwrap();
+        (hex, key, cert)
+    }
+
+    /// With an attestation key the output has mode 0o600, also over an old
+    /// file with a wider mode.
+    #[test]
+    fn test_mergehex_with_attestation_key_is_private() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hex, key, cert) = mergehex_inputs(dir.path());
+        let out = dir.path().join("out.hex");
+        std::fs::write(&out, "old").unwrap();
+        std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        super::cmd_mergehex(std::slice::from_ref(&hex), &out, Some(&key), Some(&cert)).unwrap();
+
+        assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o600);
+        let expected = solo1::firmware::merge_hex_text(&[hex.as_path()], Some(&key), Some(&cert)).unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), expected);
+    }
+
+    /// With an attestation key, a symbolic link at the output path is refused
+    /// and its target is not changed.
+    #[test]
+    fn test_mergehex_with_attestation_key_refuses_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hex, key, cert) = mergehex_inputs(dir.path());
+        let target = dir.path().join("target");
+        std::fs::write(&target, "untouched").unwrap();
+        let out = dir.path().join("out.hex");
+        std::os::unix::fs::symlink(&target, &out).unwrap();
+
+        let err = super::cmd_mergehex(&[hex], &out, Some(&key), Some(&cert)).unwrap_err();
+
+        assert!(err.to_string().contains("not a regular file"), "{err}");
+        assert!(std::fs::symlink_metadata(&out).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "untouched");
+    }
+
+    /// Without an attestation key the output is a plain write: the mode of an
+    /// old file is kept and a symbolic link is followed.
+    #[test]
+    fn test_mergehex_without_attestation_key_is_plain_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hex, _, _) = mergehex_inputs(dir.path());
+        let out = dir.path().join("out.hex");
+        std::fs::write(&out, "old").unwrap();
+        std::fs::set_permissions(&out, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        super::cmd_mergehex(std::slice::from_ref(&hex), &out, None, None).unwrap();
+
+        assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o644);
+        let expected = solo1::firmware::merge_hex_text(&[hex.as_path()], None, None).unwrap();
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), expected);
+
+        let target = dir.path().join("target");
+        let link = dir.path().join("link.hex");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        super::cmd_mergehex(&[hex], &link, None, None).unwrap();
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), expected);
     }
 }

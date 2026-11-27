@@ -74,6 +74,7 @@ The `--json` flag works on commands that print structured output: `version`, `ge
 `ls` and all `key` subcommands. `sign` always prints JSON. `mergehex`, `monitor` and
 `program` print no structured output. `sign`, `mergehex`, `monitor` and `program` have
 no `--json` flag. `verify-file` has no `--json` flag either.
+`key ping` prints one JSON object per line (one line for each ping).
 
 ---
 
