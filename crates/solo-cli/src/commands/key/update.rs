@@ -1,14 +1,20 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use super::ops::get_device_version;
 use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
+use solo1::firmware::FirmwareVersion;
 
 /// Wait after entering the bootloader, so the old firmware is gone before the first open.
 const RECONNECT_SETTLE: Duration = Duration::from_millis(1500);
 
 /// Pause between attempts to reconnect after entering the bootloader.
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
+
+/// I/O timeout for each attempt to talk to the key after the update. Short, so that one
+/// attempt against a key that is still in the bootloader does not use up the whole wait.
+const RESTART_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Call `open` until it succeeds or `total` has passed.
 ///
@@ -45,6 +51,45 @@ fn retry_open<T, E: std::fmt::Display>(
     }
 }
 
+/// Check that the key is a normal key and return the firmware version it reports.
+///
+/// A key whose USB product name contains `Bootloader` is still in the bootloader.
+/// The bootloader does not answer the version query, so `query` is not run then.
+fn normal_key_version(
+    product: Option<&str>,
+    query: impl FnOnce() -> Result<FirmwareVersion>,
+) -> Result<FirmwareVersion> {
+    if product.is_some_and(|p| p.contains("Bootloader")) {
+        return Err(SoloError::DeviceError("The key is still in the bootloader".into()));
+    }
+    query()
+}
+
+/// Wait until `try_once` shows a normal key again, for at most `total`.
+///
+/// A failed attempt is expected while the key restarts, so it is only logged at debug level.
+///
+/// # Errors
+/// Returns an error that tells the user to unplug the key and plug it in again, if no
+/// attempt succeeded in time.
+fn wait_for_restart(
+    interval: Duration,
+    total: Duration,
+    try_once: impl FnMut() -> Result<FirmwareVersion>,
+) -> Result<FirmwareVersion> {
+    retry_open(interval, total, try_once, |msg| {
+        log::debug!("The key has not restarted yet: {msg}");
+    })
+    .map_err(|e| {
+        SoloError::FirmwareError(format!(
+            "The firmware was written and the bootloader accepted it, but the key did not answer \
+             as a normal key within {} seconds. Unplug the key, plug it in again, and run \
+             `solo key version`. (Last error: {e})",
+            total.as_secs()
+        ))
+    })
+}
+
 /// Update the device firmware.
 ///
 /// After the key enters the bootloader, this reconnects to the same serial
@@ -54,7 +99,8 @@ fn retry_open<T, E: std::fmt::Display>(
 /// Returns an error if the firmware cannot be loaded from the given file or
 /// downloaded from GitHub, if the release contains no firmware asset, if the
 /// firmware JSON is malformed, if reconnecting in bootloader mode fails, if
-/// selecting the signature fails, or if writing the firmware fails.
+/// selecting the signature fails, if writing the firmware fails, or if the key
+/// does not answer as a normal key again within `timeout` after the write.
 pub fn cmd_update(
     hid: &impl HidDevice,
     firmware_file: Option<&Path>,
@@ -123,6 +169,13 @@ pub fn cmd_update(
         "Verifying and finalizing...",
     )?;
 
+    // CMD_DONE only means the bootloader accepted the image. The key still has to restart.
+    println!("Waiting for the key to restart...");
+    let version = wait_for_restart(RECONNECT_INTERVAL, timeout, || {
+        let key = solo1::open(serial, RESTART_ATTEMPT_TIMEOUT)?;
+        normal_key_version(key.info().product.as_deref(), || get_device_version(&key))
+    })?;
+    println!("The key restarted with firmware {version}.");
     println!("Firmware update complete!");
     Ok(())
 }
@@ -133,6 +186,67 @@ mod tests {
     use super::*;
 
     const TICK: Duration = Duration::from_millis(1);
+
+    fn v415() -> FirmwareVersion {
+        FirmwareVersion::new(4, 1, 5)
+    }
+
+    #[test]
+    fn wait_for_restart_succeeds_after_failures() {
+        let mut calls = 0;
+        let r = wait_for_restart(TICK, Duration::from_secs(5), || {
+            calls += 1;
+            if calls < 3 { Err(SoloError::Timeout) } else { Ok(v415()) }
+        });
+        assert_eq!(r.unwrap(), v415());
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn wait_for_restart_gives_advice_when_key_never_returns() {
+        let r = wait_for_restart(TICK, Duration::from_millis(20), || Err(SoloError::Timeout));
+        let text = r.unwrap_err().to_string();
+        assert!(text.contains("the bootloader accepted it"), "{text}");
+        assert!(
+            text.contains("did not answer as a normal key within 0 seconds"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Unplug the key, plug it in again, and run `solo key version`"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn bootloader_is_not_a_normal_key() {
+        let r = normal_key_version(Some("Solo Bootloader 3.0.0"), || {
+            panic!("must not query the bootloader")
+        });
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn normal_key_reports_version() {
+        assert_eq!(normal_key_version(Some("Solo 4.1.5"), || Ok(v415())).unwrap(), v415());
+        assert_eq!(normal_key_version(None, || Ok(v415())).unwrap(), v415());
+        assert!(normal_key_version(Some("Solo 4.1.5"), || Err(SoloError::Timeout)).is_err());
+    }
+
+    #[test]
+    fn wait_for_restart_keeps_waiting_while_bootloader() {
+        let mut calls = 0;
+        let r = wait_for_restart(TICK, Duration::from_secs(5), || {
+            calls += 1;
+            let product = if calls < 3 {
+                "Solo Bootloader 3.0.0"
+            } else {
+                "Solo 4.1.5"
+            };
+            normal_key_version(Some(product), || Ok(v415()))
+        });
+        assert_eq!(r.unwrap(), v415());
+        assert_eq!(calls, 3);
+    }
 
     #[test]
     fn retry_open_succeeds_after_two_failures() {
