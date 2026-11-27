@@ -7,7 +7,7 @@ use solo_ctaphid::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 use solo1::firmware::FirmwareVersion;
 use solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
 
-/// Get firmware version from the device.
+/// Print the firmware version of the device.
 ///
 /// # Errors
 /// Returns an error if the version query fails (device/transport error or
@@ -25,7 +25,7 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Get the firmware version from a Solo 2.
+/// Print the firmware version of a Solo 2.
 ///
 /// # Errors
 /// Returns an error if the version query fails (device/transport error or

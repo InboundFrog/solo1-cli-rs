@@ -16,8 +16,8 @@ use solo_ctaphid::HidDevice;
 ///   - extensions: {"hmac-secret": true}
 ///   - options: {"rk": true}  (resident key)
 ///
-/// Parses the authData from the response to extract the credential ID,
-/// then prints it as hex for use with `challenge-response` and `sign-file`.
+/// Reads the credential ID from the authData in the response. Prints it as
+/// hex. You can use it with `challenge-response` and `sign-file`.
 ///
 /// # Errors
 /// Returns an error if acquiring a PIN token fails, if the makeCredential
@@ -28,17 +28,17 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
     use ciborium::value::Value;
     use rand::Rng;
 
-    // Generate random challenge and hash it as clientDataHash
+    // Make a random challenge. Its SHA-256 hash is the clientDataHash.
     let mut challenge = [0u8; 32];
     rand::rng().fill_bytes(&mut challenge);
     let client_data_hash: Vec<u8> = Sha256::digest(challenge).to_vec();
 
-    // If a PIN is set, acquire a PIN token and compute pinUvAuthParam.
-    // PIN prompt comes first; the touch prompt is printed after PIN entry.
+    // If a PIN is set, get a PIN token and compute pinUvAuthParam.
+    // The PIN prompt comes first. The touch prompt prints after the PIN entry.
     let pin_uv_auth = solo_ctap2::maybe_pin_uv_auth(hid, &client_data_hash, crate::commands::key::common::prompt_pin)?;
 
-    // makeCredential request with extensions {"hmac-secret": true} (0x06)
-    // and options {"rk": true} (0x07) on top of the shared scaffolding.
+    // Build the makeCredential request. Add the extensions {"hmac-secret": true}
+    // (0x06) and the options {"rk": true} (0x07) to the shared request.
     let cbor_request = solo_ctap2::build_make_credential(
         host,
         user,
@@ -180,7 +180,7 @@ pub fn cmd_challenge_response(
     use ciborium::value::Value;
     use sha2::Digest as _;
 
-    // Decode hex credential ID
+    // Decode the hex credential ID.
     let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
@@ -188,7 +188,7 @@ pub fn cmd_challenge_response(
     let (hmac_secret_ext, shared_secret) = prepare_hmac_secret_input(&dev_pub_key, challenge)?;
 
     // ── Step 7: Build and send getAssertion request ───────────────────────────
-    // clientDataHash: fixed bytes (device does not verify for hmac-secret use)
+    // clientDataHash is a fixed value. The device does not check it for hmac-secret.
     let client_data_hash: Vec<u8> = Sha256::digest(b"solo1_challenge_response").to_vec();
 
     // getAssertion CBOR map:
@@ -238,7 +238,7 @@ pub fn cmd_challenge_response(
 
     let ext_pairs = expect_map(ext_val, "getAssertion extensions")?;
 
-    // Find "hmac-secret" key in extensions
+    // Find the "hmac-secret" key in the extensions.
     let hmac_secret_enc = match find_text_key(&ext_pairs, "hmac-secret") {
         Some(Value::Bytes(b)) => b.clone(),
         _ => {

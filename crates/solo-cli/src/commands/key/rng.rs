@@ -4,7 +4,7 @@ use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
 use solo1::protocol::CMD_RNG;
 
-/// Get N random bytes from the device, return as hex string.
+/// Get `n` random bytes from the device and return them as a hex string.
 ///
 /// The RNG vendor command is 0x60 on both Solo 1 and Solo 2. Solo 1 honours
 /// the requested count; Solo 2 ignores it and always returns 57 bytes, so
@@ -55,9 +55,10 @@ pub fn cmd_rng_raw(hid: &impl HidDevice) -> Result<()> {
 /// Feed entropy to /dev/random (Linux only) using RNDADDENTROPY ioctl.
 ///
 /// Uses the RNDADDENTROPY ioctl (0x40085203) to properly inform the kernel
-/// of the entropy being added, rather than just writing bytes. The struct
+/// of the entropy being added, instead of only writing bytes. The struct
 /// sent to the ioctl is: `entropy_count` (i32) | `buf_size` (i32) | `data` (bytes).
-/// `entropy_count` = count * 2 (2 bits per byte, pessimistic estimate).
+/// `entropy_count` is the byte count times 2. This assumes 2 bits of entropy
+/// per byte, which is a low estimate.
 ///
 /// # Errors
 /// Returns an error if the device request fails, if the entropy byte counts
