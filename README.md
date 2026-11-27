@@ -73,7 +73,7 @@ Global options:
 The `--json` flag works on commands that print structured output: `version`, `genkey`,
 `ls` and all `key` subcommands. `sign` always prints JSON. `mergehex`, `monitor` and
 `program` print no structured output. `sign`, `mergehex`, `monitor` and `program` have
-no `--json` flag.
+no `--json` flag. `verify-file` has no `--json` flag either.
 `key ping` prints one JSON object per line (one line for each ping).
 
 ---
@@ -108,7 +108,7 @@ solo key change-pin                        # Change existing PIN
 solo key disable-updates                   # Permanently disable firmware updates
 solo key keyboard <DATA>                   # Program keyboard sequence (max 64 bytes)
 solo key probe <HASH_TYPE> <FILE>          # Calculate hash on device (sha256|sha512|rsa2048|ed25519, file <=6144 bytes)
-solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential (ID is hex)
+solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential (ID is hex); writes FILE.sig and FILE.authdata
 solo key update [--firmware FILE.json]     # Update firmware (downloads latest if omitted)
 ```
 
@@ -120,9 +120,60 @@ solo key credential ls                  # List resident credentials
 solo key credential rm <ID>             # Remove credential by base64 ID
 solo key credential rm --host <HOST> --user <USER>
                                          # Remove credential by relying party and username
-solo key credential create --host <HOST> --user <USER> [--prompt <TEXT>]
+solo key credential create --host <HOST> --user <USER> [--prompt <TEXT>] [--public-key-out <FILE>]
                                          # Create FIDO2 credential with hmac-secret
 ```
+
+`credential create` prints the credential ID. With `--public-key-out <FILE>`, it also writes the
+public key of the new credential to FILE as PEM text. With `--json`, the JSON object has the extra
+field `public_key_pem`. `solo` does not give the key of a credential that already exists, so save it
+when you create the credential. You need it to check the signatures of `sign-file`. If the key
+cannot be read, the error text holds the credential ID. If the file cannot be written, the error
+text holds the PEM text.
+
+#### Sign a file and check the signature
+
+`sign-file` works only with a credential made with `--host solokeys.dev`. It sends the SHA-256 hash
+of the file to the key. The key does not sign this hash alone. It signs the authenticator data
+followed by the hash (ES256, as in the CTAP2 specification). `sign-file` writes two files next to
+the input file, and overwrites them if they exist:
+
+- `FILE.sig`: the signature.
+- `FILE.authdata`: the authenticator data that was signed.
+
+To check the signature, you need the file, `FILE.sig`, `FILE.authdata` and the public key of the
+credential. Get the public key with `credential create --public-key-out pub.pem`.
+
+The simple way is `solo verify-file`. It needs no device:
+
+```sh
+solo verify-file --public-key pub.pem FILE
+```
+
+It reads `FILE.sig` and `FILE.authdata` by default. Use `--signature` and `--authdata` for other
+names. The check passes only if all of these are true:
+
+- The public key file is a P-256 public key in PEM text.
+- The authenticator data has at least 37 bytes.
+- The authenticator data is for the rpId `solokeys.dev`, the rpId that `sign-file` uses.
+- The user-present flag is set.
+- The signature is a valid DER ECDSA signature by that public key over the authenticator data
+  followed by the SHA-256 hash of the file.
+
+If a check fails, the command says which one and exits with a non-zero code. If all pass, it prints
+that the signature is good, the rpId, whether the user-verified flag is set, and the signature
+counter.
+
+As a second way, you can run this OpenSSL command in bash or zsh. It checks only the signature, not
+the rpId or the flags:
+
+```bash
+openssl dgst -sha256 -verify pub.pem -signature FILE.sig <(cat FILE.authdata; openssl dgst -sha256 -binary FILE)
+```
+
+A good result from `verify-file` shows that the holder of the private key of the credential signed
+the hash of this file, and that the user-present flag is set in the signed data. It does not show
+that the private key is in a Solo key, which device holds it, or when the file was signed.
 
 #### Challenge-response
 

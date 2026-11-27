@@ -38,6 +38,24 @@ pub enum Commands {
         json: bool,
     },
 
+    /// Check the signature that `key sign-file` made for a file. No device is needed
+    VerifyFile {
+        /// The public key of the credential (PEM text, P-256). `key credential create --public-key-out` writes it
+        #[arg(long, value_name = "PEM")]
+        public_key: PathBuf,
+
+        /// The signature file. Default: the input file name with `.sig` added
+        #[arg(long, value_name = "FILE")]
+        signature: Option<PathBuf>,
+
+        /// The authenticator data file. Default: the input file name with `.authdata` added
+        #[arg(long, value_name = "FILE")]
+        authdata: Option<PathBuf>,
+
+        /// The file that was signed
+        file: PathBuf,
+    },
+
     /// Sign a firmware HEX file and print JSON with firmware, signature and versions
     Sign {
         /// Path to PEM private key
@@ -237,6 +255,9 @@ pub enum CredentialCommands {
         /// Prompt text. Use an empty string to hide it and print only the `credential_id`
         #[arg(long, default_value = "Touch your authenticator to generate a credential...")]
         prompt: String,
+        /// Write the public key of the new credential to this file (PEM text). You need this file to check the signatures of `sign-file`
+        #[arg(long, value_name = "FILE")]
+        public_key_out: Option<PathBuf>,
     },
 }
 
