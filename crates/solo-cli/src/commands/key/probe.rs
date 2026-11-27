@@ -11,10 +11,10 @@ use solo1::protocol::CMD_PROBE;
 /// Sends a CBOR-encoded command to `CMD_PROBE` (0x70):
 ///   {"subcommand": `hash_type_str`, "data": `file_bytes`}
 ///
-/// Valid hash types (case-insensitive input, sent as canonical form):
+/// Valid hash types (input is not case-sensitive; the canonical form is sent):
 ///   SHA256, SHA512, RSA2048, Ed25519
 ///
-/// File must be <= 6144 bytes.
+/// The file must be at most 6144 bytes.
 ///
 /// # Errors
 /// Returns an error if `hash_type` is not a recognised hash type, if the file
@@ -22,7 +22,7 @@ use solo1::protocol::CMD_PROBE;
 /// fails.
 pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Result<()> {
     use ciborium::value::Value;
-    // Normalize hash type to the canonical form expected by the device
+    // Convert the hash type to the canonical form that the device expects.
     let hash_type_str = normalize_hash_type(hash_type).ok_or_else(|| {
         SoloError::DeviceError(format!(
             "Unknown hash type: {}. Valid: SHA256, SHA512, RSA2048, Ed25519",
@@ -51,7 +51,7 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
     println!("{result_hex}");
 
     if hash_type_str == "Ed25519" {
-        // First 64 bytes = signature (128 hex chars), rest = content
+        // The first 64 bytes are the signature (128 hex characters). The rest is the content.
         if response.len() > 64 {
             let content = response
                 .get(64..)
@@ -67,9 +67,9 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
     Ok(())
 }
 
-/// Normalize a probe hash type to the canonical form expected by the device.
+/// Convert a probe hash type to the canonical form that the device expects.
 ///
-/// Matching is case-insensitive. Returns `None` for unknown hash types.
+/// Matching is not case-sensitive. Returns `None` for unknown hash types.
 fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
     match hash_type.to_lowercase().as_str() {
         "sha256" => Some("SHA256"),
@@ -96,18 +96,18 @@ fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
 pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path) -> Result<()> {
     use ciborium::value::Value;
 
-    // Decode hex credential ID (same convention as cmd_challenge_response)
+    // Decode the hex credential ID. `cmd_challenge_response` does the same.
     let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
-    // Read file and compute SHA-256 → use directly as clientDataHash
+    // Read the file. Use its SHA-256 hash as the clientDataHash.
     let data = std::fs::read(filename)?;
     let file_hash: Vec<u8> = Sha256::digest(&data).to_vec();
 
     println!("{}  {}", hex::encode(&file_hash), filename.display());
     println!("Please press the button on your Solo key");
 
-    // Build CTAP2 getAssertion CBOR request map:
-    //   0x01: rpId  (must match the rp used at credential creation)
+    // Build the CTAP2 getAssertion CBOR request map:
+    //   0x01: rpId  (must be the same rp that made the credential)
     //   0x02: clientDataHash  (SHA-256 of file)
     //   0x03: allowList  [{type: "public-key", id: cred_id_bytes}]
     let rp_id = "solokeys.dev";

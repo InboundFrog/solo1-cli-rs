@@ -15,8 +15,9 @@ use x509_cert::der::{Decode, Encode};
 
 use crate::error::{Error, Result};
 
-/// Known attestation certificate fingerprints (SHA-256 of DER cert bytes).
-/// These match the fingerprints checked in the Python reference (key.py verify command).
+/// Known attestation certificate fingerprints (SHA-256 of the DER cert bytes).
+/// These are the same fingerprints that the `verify` command in the Python
+/// reference (key.py) checks.
 pub const SOLO_V3_FINGERPRINT: &str = "72d5833126acfce9a8e8266018e6414934c8be4ab8685f91b0992113bbd43295";
 pub const SOLO_HACKER_FINGERPRINT: &str = "d06d6ccbda7de56a1627c2a7899c35a2a316c851b36ad8ed7ed78479bb787ef7";
 pub const SOLO_EMULATION_FINGERPRINT: &str = "0592e1b2ba8e610d629a9bc015197e4adadc3136e0a0a176d9b57d17a6b80b38";
@@ -24,13 +25,21 @@ pub const SOLO_TAP_FINGERPRINT: &str = "b36b03211164db1d60413ec0f8d827e0eec204be
 pub const SOMU_FINGERPRINT: &str = "8dde12db98e87c90c9d6231a9cd8fe3f54df82b73d732e8e72ec9f98f8b5c6c1";
 pub const SOLO_FINGERPRINT: &str = "327585e49e496cffdebc4b280608183134e7cbf4c01670679476291cd9b98104";
 
-pub const KNOWN_FINGERPRINTS: &[(&str, &str)] = &[
-    (SOLO_V3_FINGERPRINT, "Valid Solo (<=3.0.0) firmware from SoloKeys."),
-    (SOLO_HACKER_FINGERPRINT, "Solo Hacker firmware."),
-    (SOLO_EMULATION_FINGERPRINT, "Local software emulation."),
-    (SOLO_TAP_FINGERPRINT, "Valid Solo Tap with firmware from SoloKeys."),
-    (SOMU_FINGERPRINT, "Valid Somu with firmware from SoloKeys."),
-    (SOLO_FINGERPRINT, "Valid Solo with firmware from SoloKeys."),
+/// Known attestation fingerprints and what [`check_attestation_fingerprint`]
+/// returns for each one. This is the only list; add new fingerprints here.
+pub const KNOWN_FINGERPRINTS: &[(&str, AttestationResult)] = &[
+    (SOLO_V3_FINGERPRINT, AttestationResult::GenuineConsumer("Solo v3")),
+    (SOLO_TAP_FINGERPRINT, AttestationResult::GenuineConsumer("Solo Tap")),
+    (SOMU_FINGERPRINT, AttestationResult::GenuineConsumer("Solo Mu")),
+    (SOLO_FINGERPRINT, AttestationResult::GenuineConsumer("Solo 1")),
+    (
+        SOLO_HACKER_FINGERPRINT,
+        AttestationResult::DeveloperDevice("Solo Hacker"),
+    ),
+    (
+        SOLO_EMULATION_FINGERPRINT,
+        AttestationResult::DeveloperDevice("Solo Emulation"),
+    ),
 ];
 
 /// Generate a new ECDSA P-256 key pair.
@@ -99,7 +108,7 @@ pub fn sha256_file(path: &Path) -> Result<Vec<u8>> {
 /// The result of checking an attestation certificate fingerprint.
 ///
 /// Variants carry the device name as a `&'static str`.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttestationResult {
     /// The certificate fingerprint matched a known genuine consumer device.
     GenuineConsumer(&'static str),
@@ -144,15 +153,10 @@ pub enum AttestationResult {
 #[must_use]
 pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
     let fp = sha256_hex(cert_der);
-    match fp.as_str() {
-        f if f == SOLO_V3_FINGERPRINT => AttestationResult::GenuineConsumer("Solo v3"),
-        f if f == SOLO_TAP_FINGERPRINT => AttestationResult::GenuineConsumer("Solo Tap"),
-        f if f == SOMU_FINGERPRINT => AttestationResult::GenuineConsumer("Solo Mu"),
-        f if f == SOLO_FINGERPRINT => AttestationResult::GenuineConsumer("Solo 1"),
-        f if f == SOLO_HACKER_FINGERPRINT => AttestationResult::DeveloperDevice("Solo Hacker"),
-        f if f == SOLO_EMULATION_FINGERPRINT => AttestationResult::DeveloperDevice("Solo Emulation"),
-        _ => AttestationResult::Unknown,
-    }
+    KNOWN_FINGERPRINTS
+        .iter()
+        .find(|(known, _)| *known == fp)
+        .map_or(AttestationResult::Unknown, |(_, result)| *result)
 }
 
 // ---------------------------------------------------------------------------
@@ -214,14 +218,14 @@ pub fn extract_spki_fingerprint(cert_der: &[u8]) -> Result<String> {
 /// Check whether the current system time falls within the certificate's
 /// `notBefore`..=`notAfter` validity window.
 ///
-/// Returns `Ok(())` if the certificate is currently valid.
+/// Returns `Ok(())` if the certificate is valid now.
 /// Returns `Err(Error::Crypto(...))` if:
 /// - The certificate has expired (now > notAfter).
 /// - The certificate is not yet valid (now < notBefore).
 /// - The certificate cannot be parsed.
 ///
-/// This check uses the local system clock and does not contact any external
-/// time service.  Clock skew on the host may produce false positives.
+/// This check uses the local system clock. It does not ask any time service.
+/// If the host clock is wrong, the result can be wrong.
 ///
 /// # Errors
 /// Returns [`Error::Crypto`] if the certificate cannot be parsed, has
@@ -409,25 +413,47 @@ mod tests {
 
     #[test]
     fn test_attestation_fingerprint_constants_valid_hex() {
-        // Verify all fingerprint constants are valid 32-byte hex strings
-        for (fp, _name) in KNOWN_FINGERPRINTS {
-            let bytes = hex::decode(fp).expect("fingerprint should be valid hex");
-            assert_eq!(bytes.len(), 32, "fingerprint should be 32 bytes: {fp}");
+        assert_eq!(KNOWN_FINGERPRINTS.len(), 6);
+        for (fp, _) in KNOWN_FINGERPRINTS {
+            assert_eq!(fp.len(), 64, "fingerprint should be 64 digits: {fp}");
+            assert!(
+                fp.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+                "fingerprint should be lower-case hex: {fp}"
+            );
         }
     }
 
     #[test]
     fn test_attestation_fingerprint_match() {
-        // Verify that fingerprint constants are valid hex
-        let fp_bytes = hex::decode(SOLO_V3_FINGERPRINT).unwrap();
-        assert_eq!(fp_bytes.len(), 32);
-        // Just verify all fingerprint constants are valid hex
-        assert!(hex::decode(SOLO_HACKER_FINGERPRINT).is_ok());
-        assert!(hex::decode(SOMU_FINGERPRINT).is_ok());
-        assert!(hex::decode(SOLO_TAP_FINGERPRINT).is_ok());
-        assert!(hex::decode(SOLO_EMULATION_FINGERPRINT).is_ok());
-        assert!(hex::decode(SOLO_FINGERPRINT).is_ok());
-        assert_eq!(KNOWN_FINGERPRINTS.len(), 6);
+        let lookup = |fp: &str| KNOWN_FINGERPRINTS.iter().find(|(k, _)| *k == fp).map(|(_, r)| *r);
+        assert_eq!(
+            lookup(SOLO_V3_FINGERPRINT),
+            Some(AttestationResult::GenuineConsumer("Solo v3"))
+        );
+        assert_eq!(
+            lookup(SOLO_TAP_FINGERPRINT),
+            Some(AttestationResult::GenuineConsumer("Solo Tap"))
+        );
+        assert_eq!(
+            lookup(SOMU_FINGERPRINT),
+            Some(AttestationResult::GenuineConsumer("Solo Mu"))
+        );
+        assert_eq!(
+            lookup(SOLO_FINGERPRINT),
+            Some(AttestationResult::GenuineConsumer("Solo 1"))
+        );
+        assert_eq!(
+            lookup(SOLO_HACKER_FINGERPRINT),
+            Some(AttestationResult::DeveloperDevice("Solo Hacker"))
+        );
+        assert_eq!(
+            lookup(SOLO_EMULATION_FINGERPRINT),
+            Some(AttestationResult::DeveloperDevice("Solo Emulation"))
+        );
+        // No fingerprint appears twice.
+        for (i, (fp, _)) in KNOWN_FINGERPRINTS.iter().enumerate() {
+            assert_eq!(KNOWN_FINGERPRINTS.iter().position(|(k, _)| k == fp), Some(i));
+        }
     }
 
     // -----------------------------------------------------------------------

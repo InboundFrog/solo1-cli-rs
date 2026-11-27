@@ -15,8 +15,8 @@ pub fn expect_map(v: Value, ctx: &str) -> Result<Vec<(Value, Value)>> {
 
 /// Find a value in a CTAP2 integer-keyed map by key number.
 ///
-/// Matches keys stored as either signed or unsigned `Value::Integer` whose
-/// numeric value equals `key` when interpreted as `i64`.
+/// Matches keys stored as signed or unsigned `Value::Integer` when the key,
+/// read as `i64`, equals `key`.
 #[must_use]
 pub fn find_int_key(pairs: &[(Value, Value)], key: i64) -> Option<&Value> {
     pairs.iter().find_map(|(k, v)| {
@@ -53,6 +53,17 @@ pub fn find_text_key<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a V
         }
         None
     })
+}
+
+/// Find a text value in a text-keyed CBOR map by key name.
+///
+/// Returns `None` if the key is absent or the value is not text.
+#[must_use]
+pub fn find_text_str<'a>(pairs: &'a [(Value, Value)], key: &str) -> Option<&'a str> {
+    match find_text_key(pairs, key)? {
+        Value::Text(s) => Some(s.as_str()),
+        _ => None,
+    }
 }
 
 /// Require a value by integer key; error with context if missing.
@@ -119,6 +130,18 @@ mod tests {
             (Value::Integer(2i64.into()), Value::Bytes(vec![0xAB])),
             (Value::Integer((-1i64).into()), Value::Integer(42i64.into())),
         ]
+    }
+
+    #[test]
+    fn test_find_text_str() {
+        let pairs = vec![
+            (Value::Text("name".into()), Value::Text("alice".into())),
+            (Value::Text("id".into()), Value::Bytes(vec![1])),
+        ];
+        assert_eq!(find_text_str(&pairs, "name"), Some("alice"));
+        assert_eq!(find_text_str(&pairs, "id"), None); // not text
+        assert_eq!(find_text_str(&pairs, "missing"), None);
+        assert_eq!(find_text_str(&sample_pairs(), "name"), None); // integer keys only
     }
 
     #[test]

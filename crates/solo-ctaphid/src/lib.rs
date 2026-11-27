@@ -12,9 +12,9 @@ pub mod protocol;
 
 /// Trait abstracting the send/receive interface of a CTAP HID device.
 ///
-/// All command functions accept `&impl HidDevice` (or `&mut impl HidDevice`)
-/// instead of a concrete `&HidTransport`, making them testable with
-/// `MockDevice` without a physical device attached.
+/// Command functions take `&impl HidDevice` (or `&mut impl HidDevice`)
+/// instead of a concrete `&HidTransport`. This lets tests use `MockDevice`
+/// without a physical device.
 pub trait HidDevice {
     /// Send a command with payload, receive and return the response payload.
     ///
@@ -53,9 +53,9 @@ pub mod mock {
 
     /// A mock HID device for unit testing.
     ///
-    /// Responses are queued at construction time and returned in order from
-    /// `send_recv`. When the queue is exhausted,
-    /// `Err(Error::Timeout)` is returned. `send` always succeeds.
+    /// Responses are queued when the mock is created. `send_recv` returns them
+    /// in order. When the queue is empty, `send_recv` returns
+    /// `Err(Error::Timeout)`. `send` always succeeds.
     pub struct MockDevice {
         pub responses: RefCell<VecDeque<crate::Result<Vec<u8>>>>,
     }
