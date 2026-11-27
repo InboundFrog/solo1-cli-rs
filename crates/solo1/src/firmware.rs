@@ -631,6 +631,25 @@ pub fn merge_hex_files(
     attestation_key: Option<&Path>,
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
+    let text = merge_hex_text(inputs, attestation_key, attestation_cert)?;
+    std::fs::write(output, text)?;
+    Ok(())
+}
+
+/// Merge Intel HEX files and return the merged HEX text without writing it.
+///
+/// This does the same work as [`merge_hex_files`], so the caller can choose
+/// how to write the text. That matters when an attestation key was given,
+/// because the text then holds the private key.
+///
+/// # Errors
+/// Returns the same errors as [`merge_hex_files`], except those for writing
+/// the output file.
+pub fn merge_hex_text(
+    inputs: &[&Path],
+    attestation_key: Option<&Path>,
+    attestation_cert: Option<&Path>,
+) -> Result<String> {
     // APPLICATION_END_PAGE_COUNT = 20 (default, for new bootloader)
     const APPLICATION_END_PAGE_COUNT: u32 = 20;
 
@@ -689,15 +708,15 @@ pub fn merge_hex_files(
 
     // Join consecutive addresses into segments for HEX output
     let segments = image.segments();
-    write_hex_file(output, &segments)
+    hex_text(&segments)
 }
 
-/// Write segments as an Intel HEX file.
+/// Return segments as Intel HEX text.
 ///
 /// Data records hold at most 16 bytes and never cross a 64 KiB boundary.
 /// An Extended Linear Address record is written whenever the upper 16 address
 /// bits change.
-fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
+fn hex_text(segments: &[(u32, Vec<u8>)]) -> Result<String> {
     let overflow = || Error::Firmware("HEX address overflow".into());
     let mut records: Vec<Record> = Vec::new();
     let mut current_upper: Option<u16> = None;
@@ -747,10 +766,7 @@ fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
     }
 
     records.push(Record::EndOfFile);
-    let output = ihex::create_object_file_representation(&records)
-        .map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
-    std::fs::write(path, output)?;
-    Ok(())
+    ihex::create_object_file_representation(&records).map_err(|e| Error::Firmware(format!("HEX write error: {e}")))
 }
 
 /// Flash base address for STM32L4.
@@ -1422,7 +1438,7 @@ mod tests {
     fn hex_round_trip(addr: u32, data: &[u8]) -> (u32, Vec<u8>) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("out.hex");
-        write_hex_file(&path, &[(addr, data.to_vec())]).unwrap();
+        std::fs::write(&path, hex_text(&[(addr, data.to_vec())]).unwrap()).unwrap();
         parse_hex_file(&path).unwrap()
     }
 
@@ -1451,7 +1467,7 @@ mod tests {
     fn test_write_hex_small_segment_output_unchanged() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("out.hex");
-        write_hex_file(&path, &[(0x0800_0000, vec![1, 2, 3, 4])]).unwrap();
+        std::fs::write(&path, hex_text(&[(0x0800_0000, vec![1, 2, 3, 4])]).unwrap()).unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             ":020000040800F2\n:0400000001020304F2\n:00000001FF\n"
@@ -1460,9 +1476,7 @@ mod tests {
 
     #[test]
     fn test_write_hex_address_overflow_is_error() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("out.hex");
-        let result = write_hex_file(&path, &[(0xFFFF_FFFE, vec![0; 4])]);
+        let result = hex_text(&[(0xFFFF_FFFE, vec![0; 4])]);
         assert!(result.is_err());
     }
 
