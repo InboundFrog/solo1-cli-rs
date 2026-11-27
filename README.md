@@ -125,8 +125,10 @@ solo key credential create --host <HOST> --user <USER> [--prompt <TEXT>] [--publ
 
 `credential create` prints the credential ID. With `--public-key-out <FILE>`, it also writes the
 public key of the new credential to FILE as PEM text. With `--json`, the JSON object has the extra
-field `public_key_pem`. `solo` does not give the key of a credential that already exists, so save it when you create the credential. You need it to
-check the signatures of `sign-file`.
+field `public_key_pem`. `solo` does not give the key of a credential that already exists, so save it
+when you create the credential. You need it to check the signatures of `sign-file`. If the key
+cannot be read, the error text holds the credential ID. If the file cannot be written, the error
+text holds the PEM text.
 
 #### Sign a file and check the signature
 
@@ -142,7 +144,7 @@ To check the signature, you need the file, `FILE.sig`, `FILE.authdata` and the p
 credential. Get the public key with `credential create --public-key-out pub.pem`. Then run this in
 bash or zsh:
 
-```sh
+```bash
 openssl dgst -sha256 -verify pub.pem -signature FILE.sig <(cat FILE.authdata; openssl dgst -sha256 -binary FILE)
 ```
 
