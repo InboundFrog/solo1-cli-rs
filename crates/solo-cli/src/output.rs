@@ -1,10 +1,11 @@
 use crate::error::Result;
 use serde::Serialize;
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct MakeCredentialOutput {
     pub credential_id: String, // hex
-    pub public_key_pem: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key_pem: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -130,7 +131,7 @@ mod tests {
     fn make_credential_output_serializes() {
         let out = MakeCredentialOutput {
             credential_id: "deadbeef".into(),
-            public_key_pem: "-----BEGIN PUBLIC KEY-----\n".into(),
+            public_key_pem: Some("-----BEGIN PUBLIC KEY-----\n".into()),
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();

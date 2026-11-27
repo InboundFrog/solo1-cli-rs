@@ -303,7 +303,8 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
 ///
 /// # Errors
 /// Returns [`Error::MalformedResponse`] if the first CBOR value is missing, is not a
-/// map, or is not a valid P-256 `COSE_Key`, or [`Error::Crypto`] if the PEM encoding fails.
+/// map, or the key length is wrong. A missing coordinate gives [`Error::Protocol`].
+/// [`Error::Crypto`] is returned if the PEM encoding fails.
 pub fn cose_key_pem_from_trailing(trailing: &[u8]) -> Result<String> {
     use p256::pkcs8::{EncodePublicKey, LineEnding};
     let value: Value = ciborium::de::from_reader(trailing)
@@ -313,8 +314,7 @@ pub fn cose_key_pem_from_trailing(trailing: &[u8]) -> Result<String> {
             "Credential public key is not a CBOR map".into(),
         ));
     };
-    cose_to_public_key(&pairs)
-        .map_err(|e| Error::MalformedResponse(format!("Invalid credential public key: {e}")))?
+    cose_to_public_key(&pairs)?
         .to_public_key_pem(LineEnding::LF)
         .map_err(|e| Error::Crypto(format!("Public key PEM encode error: {e}")))
 }
@@ -954,7 +954,10 @@ mod tests {
     fn test_cose_key_pem_from_trailing_rejects_bad_input() {
         for bad in [&[][..], &[0x01][..], &[0xA0][..]] {
             let err = cose_key_pem_from_trailing(bad).unwrap_err();
-            assert!(matches!(err, Error::MalformedResponse(_)), "unexpected error: {err}");
+            assert!(
+                matches!(err, Error::MalformedResponse(_) | Error::Protocol(_)),
+                "unexpected error: {err}"
+            );
         }
     }
 }
