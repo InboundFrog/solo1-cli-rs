@@ -30,7 +30,10 @@ impl CtapHidFrame {
                 let [bcnt_hi, bcnt_lo] = bcnt.to_be_bytes();
                 buf[6] = bcnt_hi;
                 buf[7] = bcnt_lo;
-                let n = data.len().min(57);
+                let n = data.len();
+                if n > 57 {
+                    return Err(Error::Protocol(format!("init frame data too long: {n} bytes (max 57)")));
+                }
                 let end = 8usize
                     .checked_add(n)
                     .ok_or_else(|| Error::Protocol("frame length overflow".into()))?;
@@ -43,7 +46,12 @@ impl CtapHidFrame {
             }
             FramePayload::Cont { seq, data } => {
                 buf[5] = *seq & 0x7F; // clear high bit for cont frame
-                let n = data.len().min(59);
+                let n = data.len();
+                if n > 59 {
+                    return Err(Error::Protocol(format!(
+                        "continuation frame data too long: {n} bytes (max 59)"
+                    )));
+                }
                 let end = 6usize
                     .checked_add(n)
                     .ok_or_else(|| Error::Protocol("frame length overflow".into()))?;
@@ -179,7 +187,8 @@ pub fn build_ctaphid_frames(cid: &[u8; 4], cmd: u8, data: &[u8]) -> Result<Vec<C
 ///
 /// # Errors
 /// Returns an error if `frames` is empty, if the first frame is not an init
-/// frame, or if a continuation position contains an init frame.
+/// frame, if a continuation position contains an init frame, or if the frames
+/// carry fewer bytes than the init frame announced.
 pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
     if frames.is_empty() {
         return Err(Error::Protocol("No frames to reassemble".into()));
@@ -201,6 +210,12 @@ pub fn reassemble_frames(frames: &[CtapHidFrame]) -> Result<(u8, Vec<u8>)> {
             FramePayload::Cont { data, .. } => payload.extend_from_slice(data),
             FramePayload::Init { .. } => return Err(Error::Protocol("Unexpected init frame in continuation".into())),
         }
+    }
+    if payload.len() < bcnt {
+        return Err(Error::Protocol(format!(
+            "CTAPHID message too short: got {} bytes, expected {bcnt}",
+            payload.len()
+        )));
     }
     payload.truncate(bcnt);
     Ok((cmd, payload))
@@ -335,6 +350,46 @@ mod tests {
             }
             FramePayload::Init { .. } => panic!("Expected cont frame"),
         }
+    }
+
+    #[test]
+    fn test_reassemble_short_message_err() {
+        let cid = [0x01, 0x02, 0x03, 0x04];
+        let mut frames = build_ctaphid_frames(&cid, 0x81, &[0x11; 120]).unwrap();
+        frames.pop(); // the last continuation frame never arrived
+        let err = reassemble_frames(&frames).unwrap_err();
+        assert!(matches!(err, Error::Protocol(_)));
+    }
+
+    #[test]
+    fn test_encode_oversized_frame_data_err() {
+        let cid = [0x01, 0x02, 0x03, 0x04];
+        let init = CtapHidFrame {
+            channel_id: cid,
+            payload: FramePayload::Init {
+                cmd: 0x01,
+                bcnt: 58,
+                data: vec![0; 58],
+            },
+        };
+        assert!(matches!(init.encode().unwrap_err(), Error::Protocol(_)));
+        let cont = CtapHidFrame {
+            channel_id: cid,
+            payload: FramePayload::Cont {
+                seq: 0,
+                data: vec![0; 60],
+            },
+        };
+        assert!(matches!(cont.encode().unwrap_err(), Error::Protocol(_)));
+        // Full frames still encode.
+        let full = CtapHidFrame {
+            channel_id: cid,
+            payload: FramePayload::Cont {
+                seq: 0,
+                data: vec![0; 59],
+            },
+        };
+        assert!(full.encode().is_ok());
     }
 
     #[test]

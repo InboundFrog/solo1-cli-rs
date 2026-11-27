@@ -74,7 +74,7 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     const ENTROPY_BITS_PER_BYTE: i32 = 2;
 
     let before = std::fs::read_to_string(ENTROPY_INFO).unwrap_or_else(|_| "unknown".into());
-    println!("Entropy before: 0x{}", before.trim());
+    println!("Entropy before: {}", before.trim());
 
     let count_u8 = u8::try_from(COUNT).map_err(|_| SoloError::ProtocolError("Count exceeds 255".into()))?;
     let request = [count_u8];
@@ -105,7 +105,7 @@ pub fn cmd_rng_feedkernel(hid: &impl HidDevice) -> Result<()> {
     }
 
     let after = std::fs::read_to_string(ENTROPY_INFO).unwrap_or_else(|_| "unknown".into());
-    println!("Entropy after:  0x{}", after.trim());
+    println!("Entropy after:  {}", after.trim());
     Ok(())
 }
 
