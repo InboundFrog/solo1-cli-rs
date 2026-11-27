@@ -54,9 +54,11 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
 
 /// Write the signing private key to a new file at `path`.
 ///
-/// The new file has mode 0o600, or less if the umask removes bits. An existing
-/// regular file at the path is removed first and never written into, so a
-/// handle that another program opened earlier cannot read the new key. A
+/// The key is written to a temporary file in the same directory, with mode
+/// 0o600 (or less if the umask removes bits). The file is synced and then
+/// renamed over `path`. If any step fails, the temporary file is removed and
+/// an old file at `path` is left as it was. The new key is in a new file, so a
+/// handle that another program opened on the old file cannot read it. A
 /// symbolic link or any other kind of existing path gives an error and is left
 /// untouched.
 #[cfg(unix)]
@@ -65,12 +67,7 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
 
     match std::fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_file() => {
-            // ponytail: the old file is removed before the new one is written,
-            // so a failed write loses the old key (truncating did too). Write
-            // a temporary file and rename it if the old key must survive.
-            std::fs::remove_file(path)?;
-        }
+        Ok(meta) if meta.file_type().is_file() => {}
         Ok(_) => {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
@@ -80,12 +77,30 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return Err(e),
     }
+
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no file name"))?;
+    let mut temp_name = std::ffi::OsString::from(".");
+    temp_name.push(name);
+    temp_name.push(format!(".{}.tmp", std::process::id()));
+    let temp = path.with_file_name(temp_name);
+
+    // If this fails, the name is not ours, so nothing is removed.
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(0o600)
-        .open(path)?;
-    file.write_all(contents.as_bytes())
+        .open(&temp)?;
+    let result = file
+        .write_all(contents.as_bytes())
+        .and_then(|()| file.sync_all())
+        .and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        // Best effort: the original error is the one to report.
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Write the signing private key to `path` (non-Unix fallback).
@@ -302,9 +317,9 @@ mod tests {
         assert!(!target.exists());
     }
 
-    /// If the old file cannot be removed, the call fails and the old file is not written into.
+    /// If the temporary file cannot be created, the call fails and the old file is kept.
     #[test]
-    fn test_write_private_key_fails_when_old_file_cannot_be_removed() {
+    fn test_write_private_key_keeps_old_file_when_temp_cannot_be_created() {
         use std::os::unix::fs::MetadataExt;
 
         let dir = tempfile::tempdir().unwrap();
