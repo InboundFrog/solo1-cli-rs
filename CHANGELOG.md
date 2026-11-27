@@ -93,10 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- `solo genkey` now writes the private key to a new file that only the owner can read (mode 0600).
+- `solo genkey` on Unix now writes the private key to a new file that only the owner can read (mode 0600).
   The key is written to a temporary file and renamed into place, so an old key file is never written into (a program
-  that opened it earlier cannot read the new key) and it survives a failed write. A symbolic link or other non-regular
-  path is refused. (#101, #128, #129, #133)
+  that opened it earlier cannot read the new key) and is kept if the new key cannot be written. A symbolic link or other
+  non-regular path is refused. (#101, #128, #129, #133)
 - Firmware downloads now have timeouts, fail on an HTTP error status, and are limited to 8 MiB. (#105)
 - PIN strings, the padded PIN block, the PIN hash and the ECDH shared secret are wiped from memory after use. (#104)
 
