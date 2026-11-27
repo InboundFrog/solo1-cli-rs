@@ -136,9 +136,10 @@ pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
 
 /// Send CTAP2 authenticatorReset (0x07) and check the status byte.
 ///
-/// The key may refuse, for example with 0x30 (not allowed) when the reset is
-/// too late after power-up. When nobody touched the key, a Solo 1 (firmware
-/// 4.1.5) answers 0x3A (action timeout); other keys may answer 0x2F.
+/// Some keys refuse with 0x30 (not allowed) when the reset comes too late
+/// after power-up; a Solo 1 (firmware 4.1.5) has no such limit. When nobody
+/// touched the key, a Solo 1 answers 0x3A (action timeout); other keys may
+/// answer 0x2F.
 fn send_reset(hid: &impl HidDevice) -> Result<()> {
     let response = hid.send_recv(CTAPHID_CBOR, &[0x07u8])?;
     solo_ctap2::check_ctap_status(&response, "authenticatorReset")?;
