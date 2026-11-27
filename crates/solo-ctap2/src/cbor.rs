@@ -15,8 +15,8 @@ pub fn expect_map(v: Value, ctx: &str) -> Result<Vec<(Value, Value)>> {
 
 /// Find a value in a CTAP2 integer-keyed map by key number.
 ///
-/// Matches keys stored as either signed or unsigned `Value::Integer` whose
-/// numeric value equals `key` when interpreted as `i64`.
+/// Matches keys stored as signed or unsigned `Value::Integer` when the key,
+/// read as `i64`, equals `key`.
 #[must_use]
 pub fn find_int_key(pairs: &[(Value, Value)], key: i64) -> Option<&Value> {
     pairs.iter().find_map(|(k, v)| {
