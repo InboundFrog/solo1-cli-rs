@@ -1,6 +1,7 @@
 use crate::error::{Result, SoloError};
 use solo_ctap2::cbor::{cbor_bytes, cbor_int, int_map};
 use solo_ctaphid::HidDevice;
+use zeroize::Zeroizing;
 
 /// Change the existing PIN (prompts for old and new PIN).
 ///
@@ -14,22 +15,18 @@ use solo_ctaphid::HidDevice;
 ///   7. changePin (subcommand 0x04) with keyAgreement, pinUvAuthParam, newPinEnc, pinHashEnc
 ///
 /// # Errors
-/// Returns an error if reading the device version fails, if a PIN prompt cannot
-/// be read, if the new PINs do not match, if either PIN is shorter than 4
-/// characters, if key agreement or encryption fails, or if the changePin
-/// command is rejected by the device.
+/// Returns an error if a PIN prompt cannot be read, if the new PINs do not
+/// match, if the new PIN is too short or too long, if key agreement or
+/// encryption fails, or if the changePin command is rejected by the device.
 pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
-    let _version = super::ops::get_device_version(hid)?;
-    let old_pin = rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?;
-    let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
-    let confirm_pin = rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?;
+    let old_pin = Zeroizing::new(rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?);
+    let new_pin = Zeroizing::new(rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?);
+    let confirm_pin = Zeroizing::new(rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?);
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
     }
-    if new_pin.len() < 4 || old_pin.len() < 4 {
-        return Err(SoloError::ProtocolError("PIN must be at least 4 characters".into()));
-    }
+    solo_ctap2::validate_new_pin(&new_pin)?;
 
     let dev_pub_key = solo_ctap2::get_key_agreement(hid)?;
     let session = solo_ctap2::ClientPinSession::new(&dev_pub_key)?;
@@ -69,21 +66,17 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 ///   6. setPin (subcommand 0x03) with keyAgreement, pinUvAuthParam, newPinEnc
 ///
 /// # Errors
-/// Returns an error if reading the device version fails, if a PIN prompt cannot
-/// be read, if the new PINs do not match, if the PIN is shorter than 4
-/// characters, if key agreement or encryption fails, or if the setPin command
-/// is rejected by the device.
+/// Returns an error if a PIN prompt cannot be read, if the new PINs do not
+/// match, if the PIN is too short or too long, if key agreement or encryption
+/// fails, or if the setPin command is rejected by the device.
 pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
-    let _version = super::ops::get_device_version(hid)?;
-    let new_pin = rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?;
-    let confirm_pin = rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?;
+    let new_pin = Zeroizing::new(rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?);
+    let confirm_pin = Zeroizing::new(rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?);
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
     }
-    if new_pin.len() < 4 {
-        return Err(SoloError::ProtocolError("PIN must be at least 4 characters".into()));
-    }
+    solo_ctap2::validate_new_pin(&new_pin)?;
 
     let dev_pub_key = solo_ctap2::get_key_agreement(hid)?;
     let session = solo_ctap2::ClientPinSession::new(&dev_pub_key)?;
