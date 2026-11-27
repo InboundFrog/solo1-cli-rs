@@ -35,8 +35,12 @@ const ID_LEN_FIELD: usize = 2;
 /// A parsed view of authenticator data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AuthenticatorData<'a> {
+    /// SHA-256 hash of the relying party id.
+    pub rp_id_hash: [u8; 32],
     /// The flags byte.
     pub flags: u8,
+    /// The signature counter.
+    pub sign_count: u32,
     /// The credential id, if the AT flag is set.
     pub credential_id: Option<&'a [u8]>,
     /// Everything after the fixed header, or after the credential id when the
@@ -55,6 +59,12 @@ impl<'a> AuthenticatorData<'a> {
         let too_short = || Error::MalformedResponse("authData too short".into());
         let mut rest = data.get(HEADER_LEN..).ok_or_else(too_short)?;
         let flags = *data.get(32).ok_or_else(too_short)?;
+        let rp_id_hash: [u8; 32] = data.get(..32).and_then(|b| b.try_into().ok()).ok_or_else(too_short)?;
+        let sign_count = u32::from_be_bytes(
+            data.get(33..HEADER_LEN)
+                .and_then(|b| b.try_into().ok())
+                .ok_or_else(too_short)?,
+        );
 
         let mut credential_id = None;
         if flags & FLAG_AT != 0 {
@@ -76,7 +86,9 @@ impl<'a> AuthenticatorData<'a> {
         }
 
         Ok(Self {
+            rp_id_hash,
             flags,
+            sign_count,
             credential_id,
             trailing: rest,
         })
@@ -108,8 +120,20 @@ mod tests {
         let data = header(FLAG_UP | FLAG_ED);
         let ad = AuthenticatorData::parse(&data).unwrap();
         assert_eq!(ad.flags, FLAG_UP | FLAG_ED);
+        assert_eq!(ad.rp_id_hash, [0xAA; 32]);
+        assert_eq!(ad.sign_count, 7);
         assert_eq!(ad.credential_id, None);
         assert_eq!(ad.trailing, []);
+    }
+
+    #[test]
+    fn sign_count_is_big_endian_and_rp_id_hash_is_the_first_32_bytes() {
+        let mut data: Vec<u8> = (0..32).collect();
+        data.push(FLAG_UP);
+        data.extend_from_slice(&[0x01, 0x02, 0x03, 0x04]);
+        let ad = AuthenticatorData::parse(&data).unwrap();
+        assert_eq!(ad.sign_count, 0x0102_0304);
+        assert_eq!(ad.rp_id_hash.to_vec(), (0..32).collect::<Vec<u8>>());
     }
 
     #[test]
