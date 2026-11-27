@@ -12,14 +12,14 @@ const RECONNECT_SETTLE: Duration = Duration::from_millis(1500);
 /// Pause between attempts to reconnect after entering the bootloader.
 const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 
-/// I/O timeout for each attempt to talk to the key after the update. Short, so that one
-/// attempt against a key that is still in the bootloader does not use up the whole wait.
+/// I/O timeout for the version query in each attempt after the update.
+/// The init handshake in `open` has its own fixed 5 second limit.
 const RESTART_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Call `open` until it succeeds or `total` has passed.
 ///
 /// Sleeps `interval` after each failed attempt. Tries at least once. One
-/// attempt can run past `total` by the CTAPHID init timeout.
+/// attempt can run past `total` by however long that attempt takes.
 ///
 /// Each failed attempt that will be tried again is passed to `report` as text.
 /// A message that is the same as the one just before it is not reported again.
@@ -54,7 +54,9 @@ fn retry_open<T, E: std::fmt::Display>(
 /// Check that the key is a normal key and return the firmware version it reports.
 ///
 /// A key whose USB product name contains `Bootloader` is still in the bootloader.
-/// The bootloader does not answer the version query, so `query` is not run then.
+/// The bootloader also answers the version query, with its own version, so the
+/// product name is the only way to tell, and `query` is not run then.
+/// A missing product name counts as a normal key, so a good update never looks failed.
 fn normal_key_version(
     product: Option<&str>,
     query: impl FnOnce() -> Result<FirmwareVersion>,
@@ -170,6 +172,9 @@ pub fn cmd_update(
     )?;
 
     // CMD_DONE only means the bootloader accepted the image. The key still has to restart.
+    // The key is about to restart. An open handle to the old device is of no use and may
+    // get in the way of the next open on some systems.
+    drop(bl_hid);
     println!("Waiting for the key to restart...");
     let version = wait_for_restart(RECONNECT_INTERVAL, timeout, || {
         let key = solo1::open(serial, RESTART_ATTEMPT_TIMEOUT)?;
@@ -207,6 +212,10 @@ mod tests {
         let r = wait_for_restart(TICK, Duration::from_millis(20), || Err(SoloError::Timeout));
         let text = r.unwrap_err().to_string();
         assert!(text.contains("the bootloader accepted it"), "{text}");
+        assert!(
+            text.contains(&format!("(Last error: {})", SoloError::Timeout)),
+            "{text}"
+        );
         assert!(
             text.contains("did not answer as a normal key within 0 seconds"),
             "{text}"
