@@ -53,9 +53,9 @@ pub enum Commands {
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
 
-        /// Output HEX file. With --attestation-key it holds the private key,
-        /// so it is written as a new file with mode 0600 (Unix) and a symbolic
-        /// link at this path is refused
+        /// Output HEX file. On Unix, with --attestation-key it holds the
+        /// private key, so it is written as a new file with mode 0600 and a
+        /// symbolic link at this path is refused
         #[arg(long, short = 'o', required = true)]
         output: PathBuf,
 
