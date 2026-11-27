@@ -172,10 +172,8 @@ pub fn check_file_signature(
     let key = VerifyingKey::from_public_key_pem(public_key_pem)
         .map_err(|e| SoloError::CryptoError(format!("The public key is not a P-256 PEM public key: {e}")))?;
 
-    let parsed = AuthenticatorData::parse(auth_data).map_err(|e| {
-        SoloError::CryptoError(format!(
-            "The authenticator data is shorter than 37 bytes or is not valid: {e}"
-        ))
+    let parsed = AuthenticatorData::parse(auth_data).map_err(|_| {
+        SoloError::CryptoError("The authenticator data is shorter than 37 bytes or is not valid".into())
     })?;
 
     if parsed.rp_id_hash[..] != Sha256::digest(SIGN_FILE_RP_ID.as_bytes())[..] {
@@ -444,7 +442,17 @@ mod verify_file_tests {
         for len in [0, 1, 32, 36] {
             let msg = err_text(check_file_signature(&pem, &sig, &auth[..len], FILE));
             assert!(msg.contains("shorter than 37"), "len {len}: {msg}");
+            assert!(!msg.contains("device"), "len {len}: {msg}");
         }
+    }
+
+    #[test]
+    fn cut_short_attested_data_fails_without_mentioning_a_device() {
+        let (pem, sig, _) = good();
+        let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP | 0x40, 1); // AT flag, but no attested data
+        let msg = err_text(check_file_signature(&pem, &sig, &auth, FILE));
+        assert!(msg.contains("shorter than 37 bytes or is not valid"), "{msg}");
+        assert!(!msg.contains("device"), "{msg}");
     }
 
     #[test]
