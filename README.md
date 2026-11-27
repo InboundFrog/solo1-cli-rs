@@ -73,7 +73,7 @@ Global options:
 The `--json` flag works on commands that print structured output: `version`, `genkey`,
 `ls` and all `key` subcommands. `sign` always prints JSON. `mergehex`, `monitor` and
 `program` print no structured output. `sign`, `mergehex`, `monitor` and `program` have
-no `--json` flag.
+no `--json` flag. `verify-file` has no `--json` flag either.
 
 ---
 
@@ -139,15 +139,38 @@ the input file, and overwrites them if they exist:
 - `FILE.authdata`: the authenticator data that was signed.
 
 To check the signature, you need the file, `FILE.sig`, `FILE.authdata` and the public key of the
-credential. Get the public key with `credential create --public-key-out pub.pem`. Then run this in
-bash or zsh:
+credential. Get the public key with `credential create --public-key-out pub.pem`.
+
+The simple way is `solo verify-file`. It needs no device:
+
+```sh
+solo verify-file --public-key pub.pem FILE
+```
+
+It reads `FILE.sig` and `FILE.authdata` by default. Use `--signature` and `--authdata` for other
+names. The check passes only if all of these are true:
+
+- The public key file is a P-256 public key in PEM text.
+- The authenticator data has at least 37 bytes.
+- The authenticator data is for the rpId `solokeys.dev`, the rpId that `sign-file` uses.
+- The user-present flag is set.
+- The signature is a valid DER ECDSA signature by that public key over the authenticator data
+  followed by the SHA-256 hash of the file.
+
+If a check fails, the command says which one and exits with a non-zero code. If all pass, it prints
+that the signature is good, the rpId, whether the user-verified flag is set, and the signature
+counter.
+
+As a second way, you can run this OpenSSL command in bash or zsh. It checks only the signature, not
+the rpId or the flags:
 
 ```sh
 openssl dgst -sha256 -verify pub.pem -signature FILE.sig <(cat FILE.authdata; openssl dgst -sha256 -binary FILE)
 ```
 
-A good check shows that the holder of the private key of the credential signed the hash of this
-file. It does not show which device holds that key.
+A good result from `verify-file` shows that the holder of the private key of the credential signed the hash of this
+file, and that the key reported a present user (the user-present flag). It does not show which device holds that
+key. It does not show when the file was signed.
 
 #### Challenge-response
 
