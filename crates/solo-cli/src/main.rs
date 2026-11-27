@@ -184,8 +184,13 @@ fn run_key_command(
             } => {
                 key::credential::cmd_credential_rm(hid, credential_id.as_deref(), host.as_deref(), user.as_deref())?;
             }
-            CredentialCommands::Create { host, user, prompt } => {
-                key::cmd_make_credential(hid, &host, &user, &prompt, json)?;
+            CredentialCommands::Create {
+                host,
+                user,
+                prompt,
+                public_key_out,
+            } => {
+                key::cmd_make_credential(hid, &host, &user, &prompt, json, public_key_out.as_deref())?;
             }
         },
     }

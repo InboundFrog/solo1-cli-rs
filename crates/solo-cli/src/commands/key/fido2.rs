@@ -5,6 +5,7 @@ use solo_ctap2::authdata::{AuthenticatorData, FLAG_AT, FLAG_ED};
 use solo_ctap2::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
 use solo_ctap2::{aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response};
 use solo_ctaphid::HidDevice;
+use std::path::Path;
 
 /// Create a FIDO2 credential with hmac-secret extension.
 ///
@@ -19,12 +20,29 @@ use solo_ctaphid::HidDevice;
 /// Reads the credential ID from the authData in the response. Prints it as
 /// hex. You can use it with `challenge-response` and `sign-file`.
 ///
+/// With `json`, the JSON object also holds the credential public key as PEM.
+/// With `public_key_out`, the PEM is written to that file. This is the key
+/// that checks the `sign-file` signatures. In plain mode without
+/// `public_key_out`, the public key is not read at all.
+///
+/// The credential id (or the JSON) is printed first. The public key file is
+/// written after it, so a write error does not hide the credential id.
+///
 /// # Errors
 /// Returns an error if acquiring a PIN token fails, if the makeCredential
 /// request fails, or if the response is malformed (missing authData, the
 /// attested-credential-data flag is unset, or the authData is too short to
-/// contain the credential ID).
-pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt: &str, json: bool) -> Result<()> {
+/// contain the credential ID). With `json` or `public_key_out`, it also fails
+/// if the credential public key is missing or invalid. It fails if the public
+/// key file cannot be written.
+pub fn cmd_make_credential(
+    hid: &impl HidDevice,
+    host: &str,
+    user: &str,
+    prompt: &str,
+    json: bool,
+    public_key_out: Option<&Path>,
+) -> Result<()> {
     use ciborium::value::Value;
     use rand::Rng;
 
@@ -56,9 +74,15 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
 
     // CTAP2 makeCredential (0x01)
     let response = solo_ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
+    finish_make_credential(&response, json, public_key_out)
+}
+
+/// Read the makeCredential response, print the result and write the public key file.
+fn finish_make_credential(response: &[u8], json: bool, public_key_out: Option<&Path>) -> Result<()> {
+    use ciborium::value::Value;
 
     // First byte is CTAP2 status code; 0x00 = success
-    let pairs = parse_cbor_map_response(&response, "makeCredential")?;
+    let pairs = parse_cbor_map_response(response, "makeCredential")?;
 
     // 0x02: authData bytes — contains rpIdHash, flags, signCount, AAGUID, credentialId
     let Some(Value::Bytes(auth_data)) = find_int_key(&pairs, 0x02) else {
@@ -79,13 +103,27 @@ pub fn cmd_make_credential(hid: &impl HidDevice, host: &str, user: &str, prompt:
         .credential_id
         .ok_or_else(|| SoloError::MalformedResponse("authData missing credential ID".into()))?;
 
+    // The key is only read when it is needed, so plain mode works as before.
+    let public_key_pem = || Ok::<_, SoloError>(solo_ctap2::cose_key_pem_from_trailing(parsed.trailing)?);
+
     if json {
         use crate::output::{MakeCredentialOutput, print_json};
-        return print_json(&MakeCredentialOutput {
+        print_json(&MakeCredentialOutput {
             credential_id: hex::encode(credential_id),
-        });
+            public_key_pem: public_key_pem()?,
+        })?;
+    } else {
+        println!("{}", hex::encode(credential_id));
     }
-    println!("{}", hex::encode(credential_id));
+
+    if let Some(path) = public_key_out {
+        std::fs::write(path, public_key_pem()?).map_err(|e| {
+            SoloError::IoError(std::io::Error::new(
+                e.kind(),
+                format!("cannot write public key to {}: {e}", path.display()),
+            ))
+        })?;
+    }
 
     Ok(())
 }
@@ -480,5 +518,88 @@ mod tests {
             platform_shared, device_shared,
             "Shared secret from prepare_hmac_secret_input must match device-side computation"
         );
+    }
+
+    /// Build a makeCredential response: status 0x00, then `{0x02: authData}`.
+    /// The authData holds the given COSE key bytes, then an extensions map.
+    fn make_credential_response(cose_bytes: &[u8]) -> Vec<u8> {
+        let mut auth_data = vec![0x11u8; 32];
+        auth_data.push(0xC1); // UP, AT, ED
+        auth_data.extend_from_slice(&[0, 0, 0, 1]);
+        auth_data.extend_from_slice(&[0u8; 16]);
+        auth_data.extend_from_slice(&[0, 2, 0xAB, 0xCD]); // credential id
+        auth_data.extend_from_slice(cose_bytes);
+        let ext = Value::Map(vec![(Value::Text("hmac-secret".into()), Value::Bool(true))]);
+        ciborium::ser::into_writer(&ext, &mut auth_data).unwrap();
+        let mut response = vec![0x00u8];
+        let map = Value::Map(vec![(Value::Integer(2u64.into()), Value::Bytes(auth_data))]);
+        ciborium::ser::into_writer(&map, &mut response).unwrap();
+        response
+    }
+
+    fn cose_bytes(pub_key: &p256::PublicKey) -> Vec<u8> {
+        let mut out = Vec::new();
+        ciborium::ser::into_writer(&Value::Map(cose_pairs_from_pub(pub_key)), &mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn test_finish_make_credential_writes_public_key_file() {
+        use p256::pkcs8::DecodePublicKey;
+        let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
+        let response = make_credential_response(&cose_bytes(&pub_key));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pub.pem");
+
+        finish_make_credential(&response, false, Some(&path)).unwrap();
+
+        let pem = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(p256::PublicKey::from_public_key_pem(&pem).unwrap(), pub_key);
+    }
+
+    #[test]
+    fn test_finish_make_credential_json_with_valid_key_is_ok() {
+        let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
+        let response = make_credential_response(&cose_bytes(&pub_key));
+        finish_make_credential(&response, true, None).unwrap();
+    }
+
+    /// Plain mode without the option does not look at the public key.
+    #[test]
+    fn test_finish_make_credential_plain_ignores_bad_cose_key() {
+        let response = make_credential_response(&[0xF6]); // CBOR null
+        finish_make_credential(&response, false, None).unwrap();
+    }
+
+    #[test]
+    fn test_finish_make_credential_bad_cose_key_is_error_with_json_or_file() {
+        let response = make_credential_response(&[0xF6]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pub.pem");
+
+        let err = finish_make_credential(&response, true, None).unwrap_err();
+        assert!(
+            matches!(err, SoloError::MalformedResponse(_)),
+            "unexpected error: {err}"
+        );
+
+        let err = finish_make_credential(&response, false, Some(&path)).unwrap_err();
+        assert!(
+            matches!(err, SoloError::MalformedResponse(_)),
+            "unexpected error: {err}"
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_finish_make_credential_unwritable_file_is_error() {
+        let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
+        let response = make_credential_response(&cose_bytes(&pub_key));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing-dir").join("pub.pem");
+
+        let err = finish_make_credential(&response, false, Some(&path)).unwrap_err();
+        assert!(matches!(err, SoloError::IoError(_)), "unexpected error: {err}");
+        assert!(err.to_string().contains("cannot write public key"));
     }
 }
