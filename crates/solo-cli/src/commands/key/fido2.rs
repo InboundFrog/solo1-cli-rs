@@ -1,4 +1,5 @@
 use crate::error::{Result, SoloError};
+use crate::output::{MakeCredentialOutput, print_json};
 use p256::elliptic_curve::Generate;
 use sha2::{Digest, Sha256};
 use solo_ctap2::authdata::{AuthenticatorData, FLAG_AT, FLAG_ED};
@@ -79,10 +80,11 @@ pub fn cmd_make_credential(
 
 /// Read the makeCredential response. Returns the credential id as hex and, when
 /// `want_key` is set, the credential public key as PEM. It prints nothing.
+/// With `want_key`, the result is the JSON object that `--json` prints.
 ///
 /// The credential already exists on the key at this point. So if the public key
 /// is wanted and cannot be read, the error text holds the credential id.
-fn read_make_credential(response: &[u8], want_key: bool) -> Result<(String, Option<String>)> {
+fn read_make_credential(response: &[u8], want_key: bool) -> Result<MakeCredentialOutput> {
     use ciborium::value::Value;
 
     // First byte is CTAP2 status code; 0x00 = success
@@ -111,10 +113,16 @@ fn read_make_credential(response: &[u8], want_key: bool) -> Result<(String, Opti
 
     // The key is only read when it is needed, so plain mode works as before.
     if !want_key {
-        return Ok((credential_id, None));
+        return Ok(MakeCredentialOutput {
+            credential_id,
+            public_key_pem: None,
+        });
     }
     match solo_ctap2::cose_key_pem_from_trailing(parsed.trailing) {
-        Ok(pem) => Ok((credential_id, Some(pem))),
+        Ok(pem) => Ok(MakeCredentialOutput {
+            credential_id,
+            public_key_pem: Some(pem),
+        }),
         Err(e) => {
             // Use the inner text, so the message has only one "Malformed response" prefix.
             let detail = match e {
@@ -132,20 +140,15 @@ fn read_make_credential(response: &[u8], want_key: bool) -> Result<(String, Opti
 
 /// Print the credential id (or the JSON), then write the public key file.
 fn finish_make_credential(response: &[u8], json: bool, public_key_out: Option<&Path>) -> Result<()> {
-    let (credential_id, public_key_pem) = read_make_credential(response, json || public_key_out.is_some())?;
+    let output = read_make_credential(response, json || public_key_out.is_some())?;
 
     if json {
-        use crate::output::{MakeCredentialOutput, print_json};
-        print_json(&MakeCredentialOutput {
-            credential_id,
-            // The PEM is always there with `json`.
-            public_key_pem: public_key_pem.clone().unwrap_or_default(),
-        })?;
+        print_json(&output)?;
     } else {
-        println!("{credential_id}");
+        println!("{}", output.credential_id);
     }
 
-    if let (Some(path), Some(pem)) = (public_key_out, public_key_pem) {
+    if let (Some(path), Some(pem)) = (public_key_out, output.public_key_pem) {
         std::fs::write(path, &pem).map_err(|e| {
             SoloError::IoError(std::io::Error::new(
                 e.kind(),
@@ -328,7 +331,7 @@ pub fn cmd_challenge_response(
             .ok_or_else(|| SoloError::MalformedResponse("hmac-secret output too short".into()))?,
     );
     if json {
-        use crate::output::{ChallengeResponseOutput, print_json};
+        use crate::output::ChallengeResponseOutput;
         return print_json(&ChallengeResponseOutput {
             hmac_output: hmac_output_hex,
         });
@@ -595,14 +598,17 @@ mod tests {
         let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
         let response = make_credential_response(&cose_bytes(&pub_key));
 
-        let (id, pem) = read_make_credential(&response, true).unwrap();
-        assert_eq!(id, "abcd");
-        assert_eq!(p256::PublicKey::from_public_key_pem(&pem.unwrap()).unwrap(), pub_key);
+        let out = read_make_credential(&response, true).unwrap();
+        assert_eq!(out.credential_id, "abcd");
+        assert_eq!(
+            p256::PublicKey::from_public_key_pem(&out.public_key_pem.unwrap()).unwrap(),
+            pub_key
+        );
 
         // Without `want_key` the key is not read.
-        let (id, pem) = read_make_credential(&response, false).unwrap();
-        assert_eq!(id, "abcd");
-        assert_eq!(pem, None);
+        let out = read_make_credential(&response, false).unwrap();
+        assert_eq!(out.credential_id, "abcd");
+        assert_eq!(out.public_key_pem, None);
     }
 
     /// Plain mode without the option does not look at the public key.
@@ -610,7 +616,7 @@ mod tests {
     fn test_finish_make_credential_plain_ignores_bad_cose_key() {
         let response = make_credential_response(&[0xF6]); // CBOR null
         finish_make_credential(&response, false, None).unwrap();
-        assert_eq!(read_make_credential(&response, false).unwrap().0, "abcd");
+        assert_eq!(read_make_credential(&response, false).unwrap().credential_id, "abcd");
     }
 
     #[test]
@@ -619,17 +625,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pub.pem");
 
-        let err = finish_make_credential(&response, true, None).unwrap_err();
-        assert!(
-            matches!(err, SoloError::MalformedResponse(_)),
-            "unexpected error: {err}"
-        );
-
-        let err = finish_make_credential(&response, false, Some(&path)).unwrap_err();
-        assert!(
-            matches!(err, SoloError::MalformedResponse(_)),
-            "unexpected error: {err}"
-        );
+        for (json, out) in [(true, None), (false, Some(path.as_path()))] {
+            let err = finish_make_credential(&response, json, out).unwrap_err();
+            assert!(
+                matches!(err, SoloError::MalformedResponse(_)),
+                "unexpected error: {err}"
+            );
+            let text = err.to_string();
+            assert!(
+                text.contains("abcd") && text.contains("was created"),
+                "unexpected error: {text}"
+            );
+            assert_eq!(text.matches("Malformed response").count(), 1, "two prefixes: {text}");
+        }
         assert!(!path.exists());
     }
 
