@@ -112,14 +112,6 @@ pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
-/// Serialize `value` to compact JSON on one line (no newline inside).
-///
-/// # Errors
-/// Returns an error if `value` cannot be serialized to JSON.
-pub fn to_json_line<T: Serialize>(value: &T) -> Result<String> {
-    serde_json::to_string(value).map_err(crate::error::SoloError::JsonError)
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(
@@ -280,20 +272,5 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["private_key"], "-----BEGIN PRIVATE KEY-----...");
         assert_eq!(v["public_key"], "-----BEGIN PUBLIC KEY-----...");
-    }
-
-    #[test]
-    fn ping_output_is_one_json_line() {
-        let line = to_json_line(&PingOutput {
-            index: 2,
-            data_len: 4,
-            duration_ms: 1.5,
-        })
-        .unwrap();
-        assert!(!line.contains('\n'));
-        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(v["index"], 2);
-        assert_eq!(v["data_len"], 4);
-        assert_eq!(v["duration_ms"], 1.5);
     }
 }

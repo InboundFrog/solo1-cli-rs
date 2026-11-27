@@ -129,7 +129,7 @@ pub enum KeyCommands {
     /// Blink LED
     Wink,
 
-    /// Send a ping and measure the round-trip time (RTT); --json prints one JSON object per line
+    /// Send a ping and measure the round-trip time (RTT)
     Ping {
         /// Number of pings to send
         #[arg(long, default_value = "1")]

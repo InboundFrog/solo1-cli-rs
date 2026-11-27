@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crate::commands::key::common;
 use crate::error::{Result, SoloError};
-use crate::output::{PingOutput, print_json, to_json_line};
+use crate::output::{PingOutput, print_json};
 use solo_ctaphid::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 use solo1::firmware::FirmwareVersion;
 use solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
@@ -90,7 +90,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
             // One compact object per line (JSON Lines), printed as each ping answers.
             println!(
                 "{}",
-                to_json_line(&PingOutput {
+                serde_json::to_string(&PingOutput {
                     index,
                     data_len: data.len(),
                     duration_ms: elapsed.as_secs_f64() * 1000.0,
@@ -190,6 +190,15 @@ mod tests {
         let data = vec![0x01u8, 0x02, 0x03, 0x04];
         let device = MockDevice::new(vec![Ok(data.clone())]);
         let result = cmd_ping(&device, 1, &data, false);
+        assert!(result.is_ok());
+    }
+
+    /// JSON mode with two pings: both echo back, so `cmd_ping` must succeed.
+    #[test]
+    fn test_cmd_ping_json_two_pings() {
+        let data = vec![0x01u8, 0x02, 0x03, 0x04];
+        let device = MockDevice::new(vec![Ok(data.clone()), Ok(data.clone())]);
+        let result = cmd_ping(&device, 2, &data, true);
         assert!(result.is_ok());
     }
 
