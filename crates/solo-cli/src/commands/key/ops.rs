@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use crate::commands::key::common;
 use crate::error::{Result, SoloError};
-use crate::output::{PingOutput, print_json};
+use crate::output::{PingOutput, print_json, to_json_line};
 use solo_ctaphid::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 use solo1::firmware::FirmwareVersion;
 use solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
@@ -87,11 +87,15 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
             .ok_or_else(|| SoloError::ProtocolError("Ping index overflow".into()))?;
 
         if json {
-            print_json(&PingOutput {
-                index,
-                data_len: data.len(),
-                duration_ms: elapsed.as_secs_f64() * 1000.0,
-            })?;
+            // One compact object per line (JSON Lines), printed as each ping answers.
+            println!(
+                "{}",
+                to_json_line(&PingOutput {
+                    index,
+                    data_len: data.len(),
+                    duration_ms: elapsed.as_secs_f64() * 1000.0,
+                })?
+            );
         } else {
             println!(
                 "Ping {}: {} bytes, RTT = {:.3}ms",
