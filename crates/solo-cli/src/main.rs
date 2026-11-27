@@ -32,8 +32,8 @@ fn run(cli: Cli) -> error::Result<()> {
             top::cmd_version(json)?;
         }
 
-        Commands::Genkey { output, entropy, json } => {
-            top::cmd_genkey(output.as_deref(), entropy.as_deref(), json)?;
+        Commands::Genkey { output, json } => {
+            top::cmd_genkey(output.as_deref(), json)?;
         }
 
         Commands::Sign { key, firmware_hex } => {
@@ -79,9 +79,9 @@ fn run_key_command(
     json: bool,
     timeout: std::time::Duration,
 ) -> error::Result<()> {
-    // Every key subcommand talks to a device, so open it once up front.
-    // Vendor commands are model-specific (Solo 1 and Solo 2 reuse codes), so
-    // those arms check the model first; CTAPHID and CTAP2 commands work on any.
+    // Every key subcommand talks to a device, so open it once here.
+    // Vendor commands depend on the model (Solo 1 and Solo 2 reuse codes), so
+    // those arms check the model first. CTAPHID and CTAP2 commands work on any model.
     let key = Key::open(serial, timeout)?;
     let hid = &key.hid;
     match cmd {
@@ -111,7 +111,7 @@ fn run_key_command(
         }
 
         KeyCommands::Verify => {
-            // Attestation fingerprints are only known for Solo 1 so far.
+            // Only Solo 1 attestation fingerprints are known.
             key.require(Model::Solo1, "key verify")?;
             key::cmd_verify(hid, json)?;
         }
@@ -126,7 +126,7 @@ fn run_key_command(
         }
 
         KeyCommands::Ping { count, data } => {
-            // Parse data as hex if it decodes cleanly, otherwise use as UTF-8 bytes
+            // Use the data as hex bytes if it is valid hex. Otherwise use its UTF-8 bytes.
             let ping_data = hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec());
             key::cmd_ping(hid, count, &ping_data, json)?;
         }
@@ -167,7 +167,7 @@ fn run_key_command(
 
         KeyCommands::Update { firmware } => {
             key.require(Model::Solo1, "key update")?;
-            key::cmd_update(hid, firmware.as_deref())?;
+            key::cmd_update(hid, firmware.as_deref(), serial, timeout)?;
         }
 
         KeyCommands::Credential { command } => match command {
@@ -204,13 +204,19 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
             program::cmd_program_dfu(&firmware)?;
         }
 
+        // A device in ST DFU mode is not a HID device, so do not open one.
+        ProgramCommands::Aux {
+            command: AuxCommands::LeaveDfu,
+        } => aux::cmd_leave_dfu()?,
+
         ProgramCommands::Aux { command } => {
             let hid = solo1::open(serial, timeout)?;
             match command {
                 AuxCommands::EnterBootloader => aux::cmd_enter_bootloader(&hid)?,
                 AuxCommands::LeaveBootloader => aux::cmd_leave_bootloader(&hid)?,
                 AuxCommands::EnterDfu => aux::cmd_enter_dfu(&hid)?,
-                AuxCommands::LeaveDfu => aux::cmd_leave_dfu(&hid)?,
+                // Handled above, without a HID device.
+                AuxCommands::LeaveDfu => {}
                 AuxCommands::Reboot => aux::cmd_reboot(&hid)?,
                 AuxCommands::BootloaderVersion => aux::cmd_bootloader_version(&hid)?,
             }
@@ -220,8 +226,6 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
 }
 
 fn run_monitor(port: &str) -> error::Result<()> {
-    use std::io::{BufRead, BufReader};
-
     println!("Monitoring serial port {port} at 115200 baud...");
     println!("Press Ctrl+C to stop.");
 
@@ -230,20 +234,34 @@ fn run_monitor(port: &str) -> error::Result<()> {
         .open()
         .map_err(|e| error::SoloError::DeviceError(format!("Serial port error: {e}")))?;
 
-    let reader = BufReader::new(port);
-    for line in reader.lines() {
-        match line {
-            Ok(l) => println!("{l}"),
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                // Timeout is normal for serial; keep reading
+    copy_until_eof(port, std::io::stdout().lock())?;
+    Ok(())
+}
+
+/// Copies bytes from `reader` to `writer` until the reader reports end of file.
+///
+/// Raw bytes are copied, so a read timeout in the middle of a line loses
+/// nothing, and bytes that are not UTF-8 pass through unchanged. A timeout or
+/// an interrupted read means "no data yet" and the loop goes on.
+///
+/// # Errors
+///
+/// Returns any read or write error other than a timeout or an interruption.
+fn copy_until_eof(mut reader: impl std::io::Read, mut writer: impl std::io::Write) -> std::io::Result<()> {
+    use std::io::ErrorKind;
+
+    let mut buf = [0_u8; 256];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => return Ok(()),
+            Ok(n) => {
+                writer.write_all(buf.get(..n).unwrap_or_default())?;
+                writer.flush()?;
             }
-            Err(e) => {
-                eprintln!("Read error: {e}");
-                break;
-            }
+            Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::Interrupted) => {}
+            Err(e) => return Err(e),
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -260,9 +278,55 @@ mod tests {
     use super::*;
 
     #[test]
+    fn udp_flag_is_rejected() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "key", "--udp", "wink"]).is_err());
+        assert!(Cli::try_parse_from(["solo", "program", "--udp", "aux", "reboot"]).is_err());
+    }
+
+    #[test]
+    fn genkey_entropy_option_is_rejected() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "genkey", "--entropy", "x"]).is_err());
+    }
+
+    #[test]
     fn cli_timeout_default_is_30() {
         use clap::Parser;
         let cli = Cli::try_parse_from(["solo", "ls"]).unwrap();
         assert_eq!(cli.timeout, 30);
+    }
+
+    #[test]
+    fn copy_until_eof_keeps_all_bytes_across_timeouts() {
+        use std::io::{Error, ErrorKind, Read};
+
+        struct Fake(std::collections::VecDeque<std::io::Result<Vec<u8>>>);
+        impl Read for Fake {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                match self.0.pop_front() {
+                    None => Ok(0),
+                    Some(Err(e)) => Err(e),
+                    Some(Ok(v)) => {
+                        buf[..v.len()].copy_from_slice(&v);
+                        Ok(v.len())
+                    }
+                }
+            }
+        }
+
+        let reader = Fake(
+            vec![
+                Ok(b"hel".to_vec()),
+                Err(Error::from(ErrorKind::TimedOut)),
+                Ok(vec![b'l', b'o', 0xff, 0xfe, b'\n']),
+                Err(Error::from(ErrorKind::Interrupted)),
+                Ok(b"end".to_vec()),
+            ]
+            .into(),
+        );
+        let mut out = Vec::new();
+        copy_until_eof(reader, &mut out).unwrap();
+        assert_eq!(out, b"hello\xff\xfe\nend");
     }
 }

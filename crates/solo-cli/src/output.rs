@@ -40,7 +40,7 @@ pub struct ListOutput {
 #[derive(Serialize)]
 pub struct VerifyOutput {
     /// "genuine", "developer", "unknown", or "invalid" (attestation signature
-    /// verification failed — the device may be counterfeit).
+    /// verification failed, so the device may be counterfeit).
     pub device_type: String,
     pub device_name: Option<String>,
     /// SHA-256 of the full certificate DER bytes.
