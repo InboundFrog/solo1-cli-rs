@@ -91,7 +91,7 @@ solo version [--json]                   # Print library version
 solo ls [--json]                        # List connected Solo devices
 ```
 
-### Key commands (`solo key [--serial <SN>] [--udp]`)
+### Key commands (`solo key [--serial <SN>]`)
 
 ```sh
 solo key version                           # Get firmware version
@@ -133,7 +133,7 @@ solo key challenge-response <CREDENTIAL_ID> <CHALLENGE> [--host <HOST>]
 # --host defaults to "solokeys.dev"
 ```
 
-### Programming commands (`solo program [--serial <SN>] [--udp]`)
+### Programming commands (`solo program [--serial <SN>]`)
 
 ```sh
 # Flash firmware via Solo bootloader (device must be in bootloader mode)
@@ -155,7 +155,7 @@ solo program aux bootloader-version
 
 ```sh
 # Generate ECDSA P-256 keypair (PEM)
-solo genkey [-o OUTPUT] [--entropy FILE] [--json]
+solo genkey [-o OUTPUT] [--json]
 
 # Sign firmware HEX file, output JSON {firmware, signature, versions}
 solo sign <KEY.pem> <firmware.hex>

@@ -62,10 +62,11 @@ impl Key {
     /// match, several keys are present without `serial`, or opening fails.
     pub fn open(serial: Option<&str>, timeout: Duration) -> Result<Self> {
         let hid = HidTransport::open(SUPPORTED, serial, timeout)?;
-        let model = Model::of(hid.info.vendor_id, hid.info.product_id).ok_or_else(|| {
+        let model = Model::of(hid.info().vendor_id, hid.info().product_id).ok_or_else(|| {
             SoloError::DeviceError(format!(
                 "Unrecognised device {:04x}:{:04x}",
-                hid.info.vendor_id, hid.info.product_id
+                hid.info().vendor_id,
+                hid.info().product_id
             ))
         })?;
         Ok(Self { model, hid })

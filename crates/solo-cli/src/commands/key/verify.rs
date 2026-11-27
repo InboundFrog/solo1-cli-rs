@@ -102,6 +102,24 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
     }
 }
 
+/// Turn the verification result into the command's exit status.
+///
+/// An invalid signature or an unknown certificate fingerprint is an error, so
+/// that scripts such as `solo key verify && next` do not trust a fake key.
+/// Developer devices only warn, as before.
+fn verification_outcome(signature_valid: bool, result: &solo1::crypto::AttestationResult) -> Result<()> {
+    use solo1::crypto::AttestationResult;
+    if !signature_valid {
+        return Err(SoloError::CryptoError("attestation signature is invalid".into()));
+    }
+    match result {
+        AttestationResult::Unknown => Err(SoloError::CryptoError(
+            "attestation certificate fingerprint is not recognised".into(),
+        )),
+        AttestationResult::GenuineConsumer(_) | AttestationResult::DeveloperDevice(_) => Ok(()),
+    }
+}
+
 /// Verify key authenticity via attestation certificate and signature.
 ///
 /// Sends a CTAP2 makeCredential (0x01) request via `CTAPHID_CBOR`, extracts the
@@ -116,11 +134,14 @@ fn attestation_signature_valid(att: &AttestationData, client_data_hash: &[u8]) -
 /// is missing or invalid, the device is reported as failed regardless of the
 /// fingerprint.
 ///
+/// The full report is printed first. Then an invalid signature or an unknown
+/// fingerprint is returned as an error, so the process exits non-zero.
+///
 /// # Errors
 /// Returns an error if acquiring a PIN token fails, if the makeCredential
-/// request fails, or if the attestation cannot be extracted from the response
+/// request fails, if the attestation cannot be extracted from the response
 /// (missing attStmt or x5c certificate, or an unsupported attestation
-/// algorithm).
+/// algorithm), or if the signature is invalid or the fingerprint is unknown.
 pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     use solo1::crypto::AttestationResult;
     use solo1::crypto::{check_attestation_fingerprint, check_cert_validity, sha256_hex};
@@ -158,6 +179,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     // genuine device is still informative — we warn rather than fail, because
     // the fingerprint match is the primary authentication signal.
     let cert_expired = check_cert_validity(cert_der).is_err();
+    let outcome = verification_outcome(signature_valid, &result);
 
     if json {
         use crate::output::{VerifyOutput, print_json};
@@ -172,14 +194,15 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
             // the certificate may simply have been copied from a genuine key.
             ("invalid", None)
         };
-        return print_json(&VerifyOutput {
+        print_json(&VerifyOutput {
             device_type: device_type.to_string(),
             device_name,
             fingerprint,
             spki_fingerprint,
             cert_expired,
             signature_valid,
-        });
+        })?;
+        return outcome;
     }
 
     println!("Attestation certificate SHA-256: {fingerprint}");
@@ -196,7 +219,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
              possession of the attestation key matching its certificate; \
              it may be counterfeit."
         );
-        return Ok(());
+        return outcome;
     }
     match result {
         AttestationResult::GenuineConsumer(name) => {
@@ -210,7 +233,7 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
         }
     }
 
-    Ok(())
+    outcome
 }
 
 #[cfg(test)]
@@ -417,24 +440,40 @@ mod tests {
     }
 
     #[test]
-    fn cmd_verify_succeeds_with_valid_attestation() {
+    fn cmd_verify_errors_on_unknown_fingerprint() {
+        // Valid signature, but the self-signed test certificate is not a known
+        // SoloKeys certificate.
         let hash = verify_client_data_hash();
         let (cert_der, auth_data, sig) = make_signed_attestation(&hash);
         let mc_resp = build_make_credential_response(Some(&auth_data), Some(-7), Some(&sig), Some(&cert_der));
-        let device = MockDevice::new(vec![Ok(get_info_response()), Ok(mc_resp)]);
-        assert!(cmd_verify(&device, true).is_ok());
+        for json in [true, false] {
+            let device = MockDevice::new(vec![Ok(get_info_response()), Ok(mc_resp.clone())]);
+            assert!(cmd_verify(&device, json).is_err());
+        }
     }
 
     #[test]
-    fn cmd_verify_succeeds_with_invalid_signature() {
-        // Tampered signature: the command reports FAILED but does not error —
-        // consistent with the existing unknown-fingerprint behaviour.
+    fn verification_outcome_ok_for_known_devices() {
+        use solo1::crypto::AttestationResult;
+        // A known certificate cannot be forged in a test, so check the
+        // decision directly.
+        assert!(verification_outcome(true, &AttestationResult::GenuineConsumer("Solo 1")).is_ok());
+        assert!(verification_outcome(true, &AttestationResult::DeveloperDevice("Solo Hacker")).is_ok());
+        assert!(verification_outcome(true, &AttestationResult::Unknown).is_err());
+        assert!(verification_outcome(false, &AttestationResult::GenuineConsumer("Solo 1")).is_err());
+    }
+
+    #[test]
+    fn cmd_verify_errors_on_invalid_signature() {
+        // Tampered signature: the command prints the FAILED report, then errors.
         let hash = verify_client_data_hash();
         let (cert_der, auth_data, mut sig) = make_signed_attestation(&hash);
         *sig.last_mut().unwrap() ^= 0x01;
         let mc_resp = build_make_credential_response(Some(&auth_data), Some(-7), Some(&sig), Some(&cert_der));
-        let device = MockDevice::new(vec![Ok(get_info_response()), Ok(mc_resp)]);
-        assert!(cmd_verify(&device, true).is_ok());
+        for json in [true, false] {
+            let device = MockDevice::new(vec![Ok(get_info_response()), Ok(mc_resp.clone())]);
+            assert!(cmd_verify(&device, json).is_err());
+        }
     }
 
     #[test]

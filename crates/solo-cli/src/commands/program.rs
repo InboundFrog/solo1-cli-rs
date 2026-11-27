@@ -101,7 +101,7 @@ pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
     );
 
     println!("Opening ST DFU device (VID=0x0483, PID=0xDF11)...");
-    let mut dfu = DfuDevice::open()?;
+    let dfu = DfuDevice::open()?;
 
     println!("Programming {} bytes via DFU...", firmware_bytes.len());
     let pb = ProgressBar::new(0);
@@ -111,7 +111,7 @@ pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
             .map_err(|e| SoloError::FirmwareError(format!("Progress bar style error: {e}")))?
             .progress_chars("##-"),
     );
-    dfu.program(&firmware_bytes, |done, total| {
+    dfu.program(base_addr, &firmware_bytes, |done, total| {
         pb.set_length(u64::try_from(total).unwrap_or(u64::MAX));
         pb.set_position(u64::try_from(done).unwrap_or(u64::MAX));
     })?;
