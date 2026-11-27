@@ -1,13 +1,13 @@
 use crate::commands::key::common;
 use crate::error::{Result, SoloError};
-use solo_ctap2::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_uint, int_map};
+use solo_ctap2::cbor::{cbor_bytes, cbor_int, find_int_key, find_text_key, find_text_str, find_uint, int_map};
 use solo_ctap2::{
     check_ctap_status, ctap2_call, extract_cbor_text_responses, get_info_client_pin_set, parse_cbor_map_response,
     parse_cbor_map_response_allow_empty, pin_uv_auth,
 };
 use solo_ctaphid::{CTAPHID_CBOR, HidDevice};
 
-/// Get credential slot info via CTAP2 authenticatorGetInfo (0x04).
+/// Show device and credential-slot info using CTAP2 authenticatorGetInfo (0x04).
 ///
 /// # Errors
 /// Returns an error if the getInfo request fails or its response is not a valid
@@ -126,11 +126,11 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Send a credMgmt (0x0A) subcommand with optional params and pinUvAuthParam.
+/// Send a credMgmt (0x0A) subcommand with a pinUvAuthParam.
 ///
-/// Encodes the request as a CBOR map with keys: subCommand (0x01),
-/// optional subCommandParams (0x02), pinUvAuthProtocol (0x03), and
-/// pinUvAuthParam (0x04), then forwards it over HID.
+/// The request is a CBOR map with these keys: subCommand (0x01),
+/// subCommandParams (0x02, optional), pinUvAuthProtocol (0x03) and
+/// pinUvAuthParam (0x04). The function sends it over HID.
 fn send_cred_mgmt(
     hid: &impl HidDevice,
     subcommand: u8,
@@ -152,20 +152,22 @@ fn send_cred_mgmt(
 
 /// Send a credMgmt (0x0A) subcommand with no authentication parameters.
 ///
-/// Used for the *`GetNext`* subcommands (0x03 enumerateRPsGetNextRP,
-/// 0x05 enumerateCredentialsGetNextCredential) which carry no pinUvAuthParam.
+/// Use it for the *`GetNext`* subcommands: 0x03 (enumerateRPsGetNextRP) and
+/// 0x05 (enumerateCredentialsGetNextCredential). They have no pinUvAuthParam.
 fn send_cred_mgmt_next(hid: &impl HidDevice, subcommand: u8) -> Result<Vec<u8>> {
     let cm_cbor = int_map([(0x01i64, cbor_int(i64::from(subcommand)))]);
     Ok(ctap2_call(hid, 0x0A, &cm_cbor)?) // authenticatorCredentialManagement
 }
 
-/// Send enumerateRPsBegin (subcommand 0x02) then enumerateRPsGetNextRP
-/// (subcommand 0x03) for all remaining RPs, returning `(rp_id, rp_id_hash)`
-/// pairs for every relying party that has at least one resident credential.
+/// Send enumerateRPsBegin (subcommand 0x02), then enumerateRPsGetNextRP
+/// (subcommand 0x03) for each remaining RP.
+///
+/// Returns `(rp_id, rp_id_hash)` pairs for every relying party that has at
+/// least one resident credential.
 fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
     use ciborium::value::Value;
 
-    // enumerateRPsBegin — pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
+    // enumerateRPsBegin: pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
     let rp_begin_auth = pin_uv_auth(pin_token, &[0x02u8])?;
     let rp_begin_resp = send_cred_mgmt(hid, 0x02, None, rp_begin_auth)?;
     let rp_begin_pairs = parse_cbor_map_response_allow_empty(&rp_begin_resp, "enumerateRPsBegin")?;
@@ -174,7 +176,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
         return Ok(vec![]);
     }
 
-    // totalRPs (key 0x05); may be absent when there is only one RP
+    // totalRPs (key 0x05). It can be missing when the device has only one RP.
     let total_rps: usize = find_uint(&rp_begin_pairs, 0x05)
         .and_then(|n| usize::try_from(n).ok())
         .unwrap_or(1);
@@ -192,10 +194,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
         let rp_id: String = find_int_key(&rp_pairs, 0x03)
             .and_then(|v| {
                 if let Value::Map(m) = v {
-                    match find_text_key(m, "id") {
-                        Some(Value::Text(id)) => Some(id.clone()),
-                        _ => None,
-                    }
+                    find_text_str(m, "id").map(str::to_string)
                 } else {
                     None
                 }
@@ -222,16 +221,17 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
 }
 
 /// Send enumerateCredentialsBegin (subcommand 0x04) for the given RP hash,
-/// then enumerateCredentialsGetNextCredential (subcommand 0x05) for all
-/// remaining credentials, returning `(username, cred_id)` pairs where
-/// `cred_id` is the raw credential ID bytes.
+/// then enumerateCredentialsGetNextCredential (subcommand 0x05) for each
+/// remaining credential.
 ///
-/// `pin_auth_protocol` is always 1 for the current implementation (CTAP 2.0).
+/// Returns `(username, cred_id)` pairs. `cred_id` is the raw credential ID
+/// bytes.
+///
+/// The request always uses PIN protocol 1 (see `send_cred_mgmt`).
 fn enumerate_credentials_for_rp(
     hid: &impl HidDevice,
     pin_token: &[u8],
     rp_id_hash: &[u8],
-    _pin_auth_protocol: u8,
 ) -> Result<Vec<(String, Vec<u8>)>> {
     use ciborium::value::Value;
 
@@ -265,15 +265,12 @@ fn enumerate_credentials_for_rp(
 
     let mut result = Vec::new();
     for cred_pairs in cred_responses {
-        // user: key 0x06 → map with "name" or "displayName"
+        // The user map is at key 0x06. It has "name" or "displayName".
         let username: String = find_int_key(&cred_pairs, 0x06)
             .and_then(|v| {
                 if let Value::Map(m) = v {
                     // prefer "name", fall back to "displayName", then "id" as hex
-                    let text_field = |key: &str| match find_text_key(m, key) {
-                        Some(Value::Text(n)) => Some(n.clone()),
-                        _ => None,
-                    };
+                    let text_field = |key: &str| find_text_str(m, key).map(str::to_string);
                     text_field("name")
                         .or_else(|| text_field("displayName"))
                         .or_else(|| match find_text_key(m, "id") {
@@ -287,7 +284,7 @@ fn enumerate_credentials_for_rp(
             })
             .unwrap_or_else(|| "<unknown>".into());
 
-        // credentialId: key 0x07 → map with "id" (bytes); store as base64
+        // credentialId: key 0x07 → map with "id" (bytes); keep the raw bytes
         let cred_id: Vec<u8> = find_int_key(&cred_pairs, 0x07)
             .and_then(|v| {
                 if let Value::Map(m) = v {
@@ -318,11 +315,11 @@ fn enumerate_credentials_for_rp(
 ///   2. enumerateRPsBegin (credMgmt 0x0A subcommand 0x02):
 ///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x02])[0..16]
 ///      Response: {0x03: rp, 0x04: rpIdHash, 0x05: totalRPs}
-///   3. enumerateRPsGetNextRP (subcommand 0x03) for remaining RPs
+///   3. enumerateRPsGetNextRP (subcommand 0x03) for the remaining RPs
 ///   4. For each RP, enumerateCredentialsBegin (subcommand 0x04):
 ///      pinUvAuthParam = HMAC-SHA-256(pinToken, [0x04] || CBOR({0x01: rpIdHash}))[0..16]
 ///      Response: {0x06: user, 0x07: credentialId, 0x08: publicKey, 0x09: totalCredentials}
-///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for remaining
+///   5. enumerateCredentialsGetNextCredential (subcommand 0x05) for the remaining credentials
 ///
 /// # Errors
 /// Returns an error if no PIN is set on the device, if acquiring a PIN token
@@ -357,7 +354,7 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     // ── Step 2: for each RP, enumerate credentials ───────────────────────
     let mut entries = Vec::new();
     for (rp_id, rp_id_hash) in &rps {
-        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
+        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash)?;
         for (username, cred_id) in credentials {
             entries.push(CredentialEntry {
                 rp_id: rp_id.clone(),
@@ -382,9 +379,9 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 
 /// Remove a credential.
 ///
-/// Accepts either a base64 `credential_id` or a `host`+`user` pair.  When
-/// `host` and `user` are supplied the credential list is enumerated to locate
-/// the matching credential ID; exactly one match is required.
+/// Takes either a base64 `credential_id` or a `host`+`user` pair. With
+/// `host` and `user`, the function lists the credentials to find the
+/// matching credential ID. Exactly one match is required.
 ///
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
 ///
@@ -428,7 +425,7 @@ pub fn cmd_credential_rm(
         let (_, rp_id_hash) =
             matching_rp.ok_or_else(|| SoloError::ProtocolError(format!("No credentials found for host '{host}'")))?;
 
-        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash, 1)?;
+        let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash)?;
         let mut matches: Vec<Vec<u8>> = credentials
             .into_iter()
             .filter_map(|(username, cred_id)| (username == user).then_some(cred_id))
@@ -455,8 +452,8 @@ pub fn cmd_credential_rm(
 
     // ── Step 1: deleteCredential (subcommand 0x06) ───────────────────────
     // subCommandParams = CBOR({0x02: PublicKeyCredentialDescriptor})
-    // Key 0x01 (CM_subCommandRpId) is for rpIdHash in enumerateCredentials.
-    // Key 0x02 (CM_subCommandCred) is for the credential descriptor in deleteCredential.
+    // Key 0x01 (CM_subCommandRpId) holds the rpIdHash in enumerateCredentials.
+    // Key 0x02 (CM_subCommandCred) holds the credential descriptor in deleteCredential.
     // PublicKeyCredentialDescriptor = {"type": "public-key", "id": <bytes>}
     let cred_descriptor = ciborium::value::Value::Map(vec![
         (
@@ -475,7 +472,7 @@ pub fn cmd_credential_rm(
     let del_pin_uv_auth = pin_uv_auth(pin_token, &del_auth_msg)?;
 
     // Send: authenticatorCredentialManagement CBOR =
-    //   {0x01: 6, 0x02: {0x01: cred_id_bytes}, 0x03: 1, 0x04: pinUvAuthParam}
+    //   {0x01: 6, 0x02: {0x02: {"type": "public-key", "id": cred_id_bytes}}, 0x03: 1, 0x04: pinUvAuthParam}
     let del_cbor = int_map([
         (0x01, cbor_int(6)),                 // subCommand = deleteCredential
         (0x02, del_params),                  // subCommandParams
@@ -527,7 +524,7 @@ mod tests {
         ]);
         let del_params = int_map([(0x02i64, cred_descriptor)]);
 
-        // Serialise and deserialise to confirm key 0x02 is present, not 0x01.
+        // Serialise and deserialise. Check that key 0x02 is present and 0x01 is not.
         let mut buf = Vec::new();
         ciborium::ser::into_writer(&del_params, &mut buf).unwrap();
         let roundtrip: Value = ciborium::de::from_reader(buf.as_slice()).unwrap();

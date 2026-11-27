@@ -27,6 +27,9 @@ pub struct VersionedSignature {
     pub signature: String,
 }
 
+/// Start address of the application in flash on a Solo 1 key.
+const APP_START_ADDRESS: u32 = 0x0800_5000;
+
 impl FirmwareJson {
     /// Load from a JSON file.
     ///
@@ -38,7 +41,7 @@ impl FirmwareJson {
         Ok(serde_json::from_str(&data)?)
     }
 
-    /// Decode the raw bytes from the firmware field (may be Intel HEX text or binary).
+    /// Decode the bytes of the firmware field. They are Intel HEX text or raw binary.
     ///
     /// # Errors
     /// Returns [`Error::Firmware`] if the `firmware` field is not valid
@@ -49,9 +52,9 @@ impl FirmwareJson {
 
     /// Decode firmware to a flat binary with its base flash address.
     ///
-    /// The official `SoloKeys` firmware JSONs store Intel HEX text in the `firmware`
-    /// field (base64-encoded). This method detects that and parses it correctly.
-    /// Raw binary (from our own `cmd_sign`) is also handled.
+    /// The official `SoloKeys` firmware JSON files store Intel HEX text in the
+    /// `firmware` field, base64-encoded. This method detects the HEX text and
+    /// parses it. It also accepts raw binary (from our own `cmd_sign`).
     ///
     /// Returns `(base_address, binary_bytes)`.
     ///
@@ -69,7 +72,7 @@ impl FirmwareJson {
             parse_hex_string(&hex_str)
         } else {
             // Raw binary — use the Solo 1 application start address
-            Ok((0x0800_5000, bytes))
+            Ok((APP_START_ADDRESS, bytes))
         }
     }
 
@@ -94,8 +97,8 @@ impl FirmwareJson {
         version.map_or_else(|| self.signature_bytes(), |v| self.signature_for_version(v))
     }
 
-    /// Select the appropriate signature based on firmware version.
-    /// Version constraint format: "<=2.5.3" or ">2.5.3"
+    /// Select the signature whose version constraint matches `version`.
+    /// A constraint looks like "<=2.5.3" or ">2.5.3".
     ///
     /// # Errors
     /// Returns [`Error::Firmware`] if a version constraint string is
@@ -123,9 +126,9 @@ impl FirmwareJson {
 
 /// Read the Solo bootloader version from a device in bootloader mode.
 ///
-/// Returns `None` if the query fails or the device returns no data, so callers
-/// fall back to the default (latest) signature rather than incorrectly
-/// matching "<=2.5.3". A one- or two-byte response is read as `0.0.<first>`.
+/// Returns `None` if the query fails or the device returns no data. Callers
+/// then use the default (latest) signature. This avoids a wrong match with
+/// "<=2.5.3". A reply of one or two bytes is read as `0.0.<first byte>`.
 pub fn read_bootloader_version(hid: &impl HidDevice) -> Option<FirmwareVersion> {
     match bootloader_cmd(hid, CMD_VERSION, 0, &[]) {
         Ok(resp) => match resp.as_slice() {
@@ -165,29 +168,20 @@ impl FirmwareVersion {
     /// Returns [`Error::Firmware`] if the string does not have exactly
     /// three dot-separated components, or any component is not a valid `u32`.
     pub fn parse(s: &str) -> Result<Self> {
-        let parts: Vec<&str> = s.trim_start_matches('v').split('.').collect();
-        if parts.len() != 3 {
+        let mut parts = s.trim_start_matches('v').split('.');
+        let (Some(major), Some(minor), Some(patch), None) = (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
             return Err(Error::Firmware(format!("Invalid version string: {s}")));
-        }
-        let major_str: &str = parts
-            .first()
-            .ok_or_else(|| Error::Firmware(format!("Invalid version string: {s}")))?;
-        let minor_str: &str = parts
-            .get(1)
-            .ok_or_else(|| Error::Firmware(format!("Invalid version string: {s}")))?;
-        let patch_str: &str = parts
-            .get(2)
-            .ok_or_else(|| Error::Firmware(format!("Invalid version string: {s}")))?;
-        let major = major_str
-            .parse()
-            .map_err(|_| Error::Firmware(format!("Invalid major: {major_str}")))?;
-        let minor = minor_str
-            .parse()
-            .map_err(|_| Error::Firmware(format!("Invalid minor: {minor_str}")))?;
-        let patch = patch_str
-            .parse()
-            .map_err(|_| Error::Firmware(format!("Invalid patch: {patch_str}")))?;
-        Ok(Self { major, minor, patch })
+        };
+        let component = |name: &str, text: &str| {
+            text.parse()
+                .map_err(|_| Error::Firmware(format!("Invalid {name}: {text}")))
+        };
+        Ok(Self {
+            major: component("major", major)?,
+            minor: component("minor", minor)?,
+            patch: component("patch", patch)?,
+        })
     }
 }
 
@@ -197,31 +191,30 @@ impl std::fmt::Display for FirmwareVersion {
     }
 }
 
-/// Check if a version matches a constraint like "<=2.5.3" or ">2.5.3".
+/// Check whether a version matches a constraint like "<=2.5.3" or ">2.5.3".
 ///
 /// # Errors
 /// Returns [`Error::Firmware`] if `constraint` has no recognised
 /// comparison prefix (`<=`, `>=`, `<`, `>`, `=`), or the version it contains
 /// cannot be parsed.
 pub fn version_matches_constraint(version: &FirmwareVersion, constraint: &str) -> Result<bool> {
-    if let Some(rest) = constraint.strip_prefix("<=") {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version <= bound)
-    } else if let Some(rest) = constraint.strip_prefix(">=") {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version >= bound)
-    } else if let Some(rest) = constraint.strip_prefix('<') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version < bound)
-    } else if let Some(rest) = constraint.strip_prefix('>') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version > bound)
-    } else if let Some(rest) = constraint.strip_prefix('=') {
-        let bound = FirmwareVersion::parse(rest)?;
-        Ok(*version == bound)
-    } else {
-        Err(Error::Firmware(format!("Unknown version constraint: {constraint}")))
+    use std::cmp::Ordering;
+
+    // Two-character prefixes come first, so "<=" is not read as "<".
+    type Holds = fn(Ordering) -> bool;
+    let table: [(&str, Holds); 5] = [
+        ("<=", Ordering::is_le),
+        (">=", Ordering::is_ge),
+        ("<", Ordering::is_lt),
+        (">", Ordering::is_gt),
+        ("=", Ordering::is_eq),
+    ];
+    for (prefix, holds) in table {
+        if let Some(rest) = constraint.strip_prefix(prefix) {
+            return Ok(holds(version.cmp(&FirmwareVersion::parse(rest)?)));
+        }
     }
+    Err(Error::Firmware(format!("Unknown version constraint: {constraint}")))
 }
 
 /// Parse an Intel HEX file into a flat binary buffer.
@@ -254,11 +247,11 @@ pub fn parse_hex_string(content: &str) -> Result<(u32, Vec<u8>)> {
 /// Maximum allowed address span (highest end address minus lowest start
 /// address) of parsed Intel HEX content.
 ///
-/// HEX content can arrive from the network (the firmware JSON downloaded by
-/// `update`), and the span determines the allocation size when flattening to
-/// a binary. Solo flash is only 256 KiB, so 16 MiB is generous while still
-/// preventing a crafted `ExtendedLinearAddress` record from forcing a multi-GB
-/// allocation.
+/// HEX content can come from the network (the firmware JSON that `update`
+/// downloads). The span sets the allocation size when the HEX is flattened to
+/// a binary. Solo flash is only 256 KiB, so 16 MiB is plenty. It still stops a
+/// crafted `ExtendedLinearAddress` record from forcing an allocation of many
+/// gigabytes.
 const MAX_FIRMWARE_SPAN: u32 = 16 * 1024 * 1024;
 
 /// Walk Intel HEX records and accumulate `(absolute_address, data)` segments.
@@ -267,9 +260,9 @@ const MAX_FIRMWARE_SPAN: u32 = 16 * 1024 * 1024;
 /// records and stops at the first `EndOfFile` record. Start-address records
 /// are ignored. Segments are returned in record order (not sorted).
 ///
-/// Rejects records whose absolute address arithmetic overflows `u32`, and
-/// content whose total address span exceeds [`MAX_FIRMWARE_SPAN`], so that
-/// untrusted HEX input cannot trigger huge allocations or address wrap-around.
+/// Rejects records whose absolute address overflows `u32`. Also rejects
+/// content whose total address span is more than [`MAX_FIRMWARE_SPAN`]. So
+/// untrusted HEX input cannot cause huge allocations or address wrap-around.
 fn hex_records_to_segments(records: &[Record]) -> Result<Vec<(u32, Vec<u8>)>> {
     let mut segments: Vec<(u32, Vec<u8>)> = Vec::new();
     let mut base_addr: u32 = 0;
@@ -354,8 +347,8 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
         .first()
         .ok_or_else(|| Error::Firmware("No data records in HEX file".into()))?
         .0;
-    // Per-record overflow and the MAX_FIRMWARE_SPAN cap were already enforced
-    // by hex_records_to_segments; keep checked arithmetic as defense in depth.
+    // `hex_records_to_segments` already checks overflow and `MAX_FIRMWARE_SPAN`.
+    // Keep the checked arithmetic as a second safety layer.
     let mut max_addr = min_addr;
     for (addr, data) in &segments {
         let data_len = u32::try_from(data.len()).map_err(|_| {
@@ -369,8 +362,8 @@ pub fn hex_records_to_binary(records: &[Record]) -> Result<(u32, Vec<u8>)> {
         max_addr = max_addr.max(end);
     }
 
-    // max_addr >= min_addr by construction, and the span is capped, so this
-    // allocation is bounded by MAX_FIRMWARE_SPAN.
+    // `max_addr >= min_addr` by construction, and the span has a limit, so
+    // this allocation is at most `MAX_FIRMWARE_SPAN`.
     let size = usize::try_from(
         max_addr
             .checked_sub(min_addr)
@@ -559,6 +552,52 @@ fn patch_attestation(image: &mut FlashImage, attest_addr: u32, key: &[u8], cert:
     image.write(at(48)?, cert)
 }
 
+/// Returns the 32 attestation key bytes from the contents of a key file.
+///
+/// The format is chosen from the content, never from the file length:
+/// 1. One UTF-8 byte order mark at the start is ignored when deciding if the
+///    file is text. If every other byte is printable ASCII or white space,
+///    the file is text.
+/// 2. A text file must hold exactly 64 hex digits. White space anywhere in it
+///    is ignored. Anything else (such as a `0x` prefix) is an error.
+/// 3. Any other file is binary and must be exactly 32 bytes, which are the
+///    key. The byte order mark is not removed here.
+///
+/// A limit remains: a 32-byte file with any byte that is not printable ASCII
+/// or white space is taken as a raw key, because a raw key can be any 32
+/// bytes and cannot be told apart from such a file.
+///
+/// Error messages never quote the file, because it holds a secret key.
+fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
+    let body = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw);
+    let is_text = body.iter().all(|b| b.is_ascii_graphic() || b.is_ascii_whitespace());
+    if !is_text {
+        if raw.len() != 32 {
+            return Err(Error::Firmware(format!(
+                "Attestation key file is not plain ASCII text, so it is read as a raw key \
+                 and must be exactly 32 bytes, got {}",
+                raw.len()
+            )));
+        }
+        return Ok(raw.to_vec());
+    }
+    let digits: Vec<u8> = body.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+    if !digits.iter().all(u8::is_ascii_hexdigit) {
+        return Err(Error::Firmware(
+            "Attestation key file is text, so it must hold exactly 64 hex digits, \
+             but it has a character that is not a hex digit"
+                .into(),
+        ));
+    }
+    if digits.len() != 64 {
+        return Err(Error::Firmware(format!(
+            "Attestation key file is text, so it must hold exactly 64 hex digits, got {}",
+            digits.len()
+        )));
+    }
+    hex::decode(&digits).map_err(|_| Error::Firmware("Attestation key file has invalid hex".into()))
+}
+
 /// Merge multiple Intel HEX files into one output HEX file.
 ///
 /// Matches the Python reference (operations.py mergehex) which:
@@ -566,12 +605,12 @@ fn patch_attestation(image: &mut FlashImage, attest_addr: u32, key: &[u8], cert:
 /// 2. Sets boot authorization bytes at `AUTH_WORD_ADDR`
 /// 3. Patches attestation key, device settings, cert size, and cert at `ATTEST_ADDR`
 ///
-/// If no `attestation_key/cert` files are provided, uses the default hacker
-/// attestation key and cert. Both must be provided or both must be None.
+/// If you pass no attestation key and cert files, it uses the default hacker
+/// attestation key and cert. Pass both files or neither.
 ///
 /// Layout constants (`APPLICATION_END_PAGE_COUNT=20`, default for new bootloaders):
 ///   `APPLICATION_END_PAGE` = 128 - 20 = 108
-///   `AUTH_WORD_ADDR` = `flash_addr(108)` - 8 = 0x080367F8
+///   `AUTH_WORD_ADDR` = `flash_addr(108)` - 8 = 0x08035FF8
 ///   `ATTEST_ADDR` = `flash_addr(128` - 15) = `flash_addr(113)` = 0x08038800
 ///
 /// Attestation layout at `ATTEST_ADDR`:
@@ -595,23 +634,16 @@ pub fn merge_hex_files(
     // APPLICATION_END_PAGE_COUNT = 20 (default, for new bootloader)
     const APPLICATION_END_PAGE_COUNT: u32 = 20;
 
-    // Validate that key and cert are either both provided or both None
+    // Pass both the key and the cert, or neither.
     if attestation_key.is_some() != attestation_cert.is_some() {
         return Err(Error::Firmware(
             "Need to provide certificate with attestation_key".into(),
         ));
     }
 
-    // Read attestation key bytes (32 bytes raw)
+    // Read attestation key bytes (32 raw bytes, or 64 hex digits as text)
     let key_bytes: Vec<u8> = if let Some(key_path) = attestation_key {
-        let raw = std::fs::read(key_path)?;
-        if raw.len() == 64 || raw.len() == 65 {
-            // Hex-encoded key file
-            hex::decode(std::str::from_utf8(&raw).unwrap_or("").trim())
-                .map_err(|e| Error::Firmware(format!("Invalid attestation key hex: {e}")))?
-        } else {
-            raw
-        }
+        parse_attestation_key(&std::fs::read(key_path)?)?
     } else {
         hex::decode(HACKER_ATTESTATION_KEY_HEX)?
     };
@@ -661,79 +693,64 @@ pub fn merge_hex_files(
 }
 
 /// Write segments as an Intel HEX file.
+///
+/// Data records hold at most 16 bytes and never cross a 64 KiB boundary.
+/// An Extended Linear Address record is written whenever the upper 16 address
+/// bits change.
 fn write_hex_file(path: &Path, segments: &[(u32, Vec<u8>)]) -> Result<()> {
-    use std::fmt::Write as FmtWrite;
-    let mut output = String::new();
-    let mut current_upper: u32 = 0xFFFF_FFFF;
+    let overflow = || Error::Firmware("HEX address overflow".into());
+    let mut records: Vec<Record> = Vec::new();
+    let mut current_upper: Option<u16> = None;
 
-    for (addr, data) in segments {
-        let upper = addr >> 16;
-        if upper != current_upper {
-            // Emit Extended Linear Address record
-            let upper16 = u16::try_from(upper).map_err(|_| Error::Firmware("upper address overflow".into()))?;
-            // Big-endian 2-byte encoding of the upper 16 address bits.
-            let record_data = upper16.to_be_bytes();
-            let checksum = ihex_checksum(0x02, 0x0000, 0x04, &record_data)?;
-            writeln!(output, ":02000004{upper16:04X}{checksum:02X}")
-                .map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
-            current_upper = upper;
-        }
-
-        // Write data in chunks of 16 bytes
-        let offset_base =
-            u16::try_from(*addr & 0xFFFF).map_err(|_| Error::Firmware("segment offset overflow".into()))?;
+    for (start, data) in segments {
         let mut pos: usize = 0;
-        while pos < data.len() {
-            let chunk_size = data
-                .len()
-                .checked_sub(pos)
-                .ok_or_else(|| Error::Firmware("chunk size underflow".into()))?
-                .min(16);
-            let chunk_end = pos
-                .checked_add(chunk_size)
-                .ok_or_else(|| Error::Firmware("chunk range overflow".into()))?;
-            let chunk = data
-                .get(pos..chunk_end)
-                .ok_or_else(|| Error::Firmware("chunk out of range".into()))?;
-            // Preserve the original 16-bit offset wrap: (offset_base + pos) mod 2^16.
-            let pos_low = u16::try_from(pos & 0xFFFF).map_err(|_| Error::Firmware("offset overflow".into()))?;
-            let offset = offset_base.wrapping_add(pos_low);
-            let chunk_len = u8::try_from(chunk_size).map_err(|_| Error::Firmware("chunk length overflow".into()))?;
-            let checksum = ihex_checksum(chunk_len, offset, 0x00, chunk)?;
-            write!(output, ":{chunk_size:02X}{offset:04X}00")
-                .map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
-            for b in chunk {
-                write!(output, "{b:02X}").map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
+        for chunk in data.chunks(16) {
+            let addr = u32::try_from(pos)
+                .ok()
+                .and_then(|p| start.checked_add(p))
+                .ok_or_else(overflow)?;
+            // The last byte of the chunk must stay in the same 64 KiB block.
+            let last = u32::try_from(chunk.len().saturating_sub(1))
+                .ok()
+                .and_then(|n| addr.checked_add(n))
+                .ok_or_else(overflow)?;
+            let upper = u16::try_from(addr >> 16).map_err(|_| overflow())?;
+            if current_upper != Some(upper) {
+                records.push(Record::ExtendedLinearAddress(upper));
+                current_upper = Some(upper);
             }
-            writeln!(output, "{checksum:02X}").map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
-            pos = pos
-                .checked_add(chunk_size)
-                .ok_or_else(|| Error::Firmware("position overflow".into()))?;
+            let offset = u16::try_from(addr & 0xFFFF).map_err(|_| overflow())?;
+            if last >> 16 == addr >> 16 {
+                records.push(Record::Data {
+                    offset,
+                    value: chunk.to_vec(),
+                });
+            } else {
+                // Split the chunk at the boundary. The tail goes after a new ELA record.
+                let head_len =
+                    usize::try_from(0x1_0000_u32.saturating_sub(u32::from(offset))).map_err(|_| overflow())?;
+                let (head, tail) = chunk.split_at_checked(head_len).ok_or_else(overflow)?;
+                records.push(Record::Data {
+                    offset,
+                    value: head.to_vec(),
+                });
+                let next_upper = upper.checked_add(1).ok_or_else(overflow)?;
+                records.push(Record::ExtendedLinearAddress(next_upper));
+                current_upper = Some(next_upper);
+                records.push(Record::Data {
+                    offset: 0,
+                    value: tail.to_vec(),
+                });
+            }
+            pos = pos.checked_add(chunk.len()).ok_or_else(overflow)?;
         }
     }
 
-    // EOF record
-    writeln!(output, ":00000001FF").map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
+    records.push(Record::EndOfFile);
+    let output = ihex::create_object_file_representation(&records)
+        .map_err(|e| Error::Firmware(format!("HEX write error: {e}")))?;
     std::fs::write(path, output)?;
     Ok(())
-}
-
-fn ihex_checksum(byte_count: u8, offset: u16, record_type: u8, data: &[u8]) -> Result<u8> {
-    let overflow = || Error::Firmware("checksum accumulator overflow".into());
-    let mut sum: u32 = 0;
-    sum = sum.checked_add(u32::from(byte_count)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(offset >> 8)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(offset & 0xFF)).ok_or_else(overflow)?;
-    sum = sum.checked_add(u32::from(record_type)).ok_or_else(overflow)?;
-    for b in data {
-        sum = sum.checked_add(u32::from(*b)).ok_or_else(overflow)?;
-    }
-    // Two's-complement checksum: (0x100 - (sum & 0xFF)) mod 0x100.
-    // (256 - low) mod 256 == low.wrapping_neg(), including the low == 0 -> 0 case,
-    // which the old `(0x100 - (sum & 0xFF)) as u8` relied on wrapping to produce.
-    Ok(u8::try_from(sum & 0xFF)
-        .map_err(|_| Error::Firmware("checksum overflow".into()))?
-        .wrapping_neg())
 }
 
 /// Flash base address for STM32L4.
@@ -746,8 +763,8 @@ pub const FLASH_PAGE_SIZE: u32 = 2048;
 /// Compute the flash address for a given page number.
 #[must_use]
 pub const fn flash_addr(page: u32) -> u32 {
-    // saturating_add / saturating_mul are const-stable and never saturate for
-    // valid page numbers, so the result is identical to `FLASH_BASE + page * FLASH_PAGE_SIZE`.
+    // Saturating math works in a `const fn`. It never saturates for valid page
+    // numbers, so the result equals `FLASH_BASE + page * FLASH_PAGE_SIZE`.
     FLASH_BASE.saturating_add(page.saturating_mul(FLASH_PAGE_SIZE))
 }
 
@@ -833,14 +850,14 @@ pub fn firmware_bytes_to_sign_for_version(hex_path: &Path, app_end_page: u32) ->
 
 /// Create a `FirmwareJson` from the hex file text and both versioned signatures.
 ///
-/// The firmware field contains the base64 of the HEX FILE TEXT (not binary),
-/// matching the Python reference which does:
+/// The firmware field holds the base64 of the HEX FILE TEXT, not of the binary.
+/// The Python reference does the same:
 ///   fw = `base64.b64encode(open(hex_file`, "`r").read().encode()`)
 ///
 /// # Errors
 /// Returns an error if the HEX file cannot be read.
 pub fn create_firmware_json_versioned(hex_path: &Path, sig_v1: &[u8], sig_v2: &[u8]) -> Result<FirmwareJson> {
-    // Read the hex file as text and base64-encode it (matching Python reference)
+    // Read the HEX file as text and base64-encode it, as the Python reference does.
     let hex_text = std::fs::read_to_string(hex_path)?;
     let firmware_b64 = websafe_b64_encode(hex_text.as_bytes());
 
@@ -860,7 +877,7 @@ pub fn create_firmware_json_versioned(hex_path: &Path, sig_v1: &[u8], sig_v2: &[
 
     Ok(FirmwareJson {
         firmware: firmware_b64,
-        signature: websafe_b64_encode(sig_v2), // default is v2 (new bootloaders)
+        signature: websafe_b64_encode(sig_v2), // The default is v2 (new bootloaders).
         versions,
     })
 }
@@ -909,6 +926,20 @@ mod tests {
     fn test_firmware_version_parse_v_prefix() {
         let v = FirmwareVersion::parse("v3.1.0").unwrap();
         assert_eq!(v, FirmwareVersion::new(3, 1, 0));
+    }
+
+    #[test]
+    fn test_firmware_version_parse_rejects_bad_input() {
+        for bad in [
+            "", "1.2", "1.2.3.4", "1..3", "a.2.3", "1.b.3", "1.2.c", "1.2.-3", "1.2.3 ",
+        ] {
+            assert!(FirmwareVersion::parse(bad).is_err(), "{bad:?} should be rejected");
+        }
+        // Every leading `v` is stripped.
+        assert_eq!(
+            FirmwareVersion::parse("vv1.2.3").unwrap(),
+            FirmwareVersion::new(1, 2, 3)
+        );
     }
 
     #[test]
@@ -1387,6 +1418,54 @@ mod tests {
         assert_eq!(bytes, vec![0x01, 0x02, 0x03, 0x04]);
     }
 
+    /// Write one segment, read it back with the parser.
+    fn hex_round_trip(addr: u32, data: &[u8]) -> (u32, Vec<u8>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.hex");
+        write_hex_file(&path, &[(addr, data.to_vec())]).unwrap();
+        parse_hex_file(&path).unwrap()
+    }
+
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| u8::try_from(i % 251).unwrap()).collect()
+    }
+
+    #[test]
+    fn test_write_hex_crossing_64k_boundary() {
+        // Starts 0x20 bytes before a 64 KiB boundary and runs past it.
+        let data = pattern(0x1_0000 + 0x57);
+        let (base, bytes) = hex_round_trip(0x0800_FFE0, &data);
+        assert_eq!(base, 0x0800_FFE0);
+        assert_eq!(bytes, data);
+    }
+
+    #[test]
+    fn test_write_hex_ending_on_64k_boundary() {
+        let data = pattern(0x40);
+        let (base, bytes) = hex_round_trip(0x0800_FFC0, &data);
+        assert_eq!(base, 0x0800_FFC0);
+        assert_eq!(bytes, data);
+    }
+
+    #[test]
+    fn test_write_hex_small_segment_output_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.hex");
+        write_hex_file(&path, &[(0x0800_0000, vec![1, 2, 3, 4])]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            ":020000040800F2\n:0400000001020304F2\n:00000001FF\n"
+        );
+    }
+
+    #[test]
+    fn test_write_hex_address_overflow_is_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.hex");
+        let result = write_hex_file(&path, &[(0xFFFF_FFFE, vec![0; 4])]);
+        assert!(result.is_err());
+    }
+
     #[test]
     fn test_create_firmware_json() {
         let firmware = b"test firmware";
@@ -1424,6 +1503,117 @@ mod tests {
         let app_end_page = FLASH_PAGES - 20; // 108
         let auth_word_addr = flash_addr(app_end_page) - 8;
         assert_eq!(auth_word_addr, 0x0803_5FF8);
+    }
+
+    fn key_err(raw: &[u8]) -> String {
+        parse_attestation_key(raw).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn test_parse_attestation_key_formats() {
+        let key = [0xabu8; 32];
+        let hex_key = "ab".repeat(32);
+        let mut one_unprintable = [b'a'; 32];
+        one_unprintable[0] = 0;
+        let spaced = "ab ".repeat(32);
+        let xxd = format!("{}\n{}\n", "ab".repeat(30), "ab".repeat(2));
+        let ok = |raw: &[u8]| parse_attestation_key(raw).unwrap();
+
+        assert_eq!(ok(&key), key);
+        assert_eq!(ok(&one_unprintable), one_unprintable);
+        assert_eq!(ok(hex_key.as_bytes()), key);
+        assert_eq!(ok(format!("{hex_key}\n").as_bytes()), key);
+        assert_eq!(ok(format!("{hex_key}\r\n").as_bytes()), key);
+        assert_eq!(ok(format!(" \t{hex_key} \t").as_bytes()), key);
+        assert_eq!(ok("AB".repeat(32).as_bytes()), key);
+        assert_eq!(ok(xxd.as_bytes()), key);
+        assert_eq!(ok(spaced.as_bytes()), key);
+    }
+
+    #[test]
+    fn test_parse_attestation_key_rejects_text_that_is_not_64_hex_digits() {
+        let hex64 = "ab".repeat(32);
+        let bad: Vec<Vec<u8>> = vec![
+            "ab".repeat(16).into_bytes(),                 // 32 bytes of hex text
+            format!("{}\n", "a".repeat(31)).into_bytes(), // 32 bytes with LF
+            b"this is a 32 byte note, no key.".to_vec(),  // 32 bytes of other text
+            format!("0x{hex64}").into_bytes(),
+            "a".repeat(63).into_bytes(),
+            "a".repeat(65).into_bytes(),
+            "a".repeat(66).into_bytes(),
+            "a".repeat(128).into_bytes(),
+            "zz".repeat(32).into_bytes(),
+            b"abcd".to_vec(),
+            Vec::new(),
+            b" \t\r\n".to_vec(),
+        ];
+        for raw in &bad {
+            assert!(parse_attestation_key(raw).is_err(), "accepted {} bytes", raw.len());
+        }
+    }
+
+    #[test]
+    fn test_parse_attestation_key_rejects_bad_binary_lengths() {
+        for len in [31, 33, 64, 65] {
+            assert!(parse_attestation_key(&vec![0xffu8; len]).is_err(), "len {len}");
+            assert!(parse_attestation_key(&vec![0x01u8; len]).is_err(), "len {len}");
+        }
+    }
+
+    #[test]
+    fn test_parse_attestation_key_bom_only_applies_to_text() {
+        let key = [0xabu8; 32];
+        let hex_key = "ab".repeat(32);
+        let bom = b"\xEF\xBB\xBF";
+        let with_bom = |tail: &str| [bom.as_slice(), tail.as_bytes()].concat();
+
+        assert_eq!(
+            parse_attestation_key(&with_bom(&format!("{hex_key}\r\n"))).unwrap(),
+            key
+        );
+        assert_eq!(parse_attestation_key(&with_bom(&hex_key)).unwrap(), key);
+        assert!(key_err(&with_bom(&"ab".repeat(16))).contains("text"));
+        assert!(key_err(bom).contains("text"));
+
+        // A raw key may start with the same three bytes: it is returned unchanged.
+        let raw_key = [bom.as_slice(), &[0xffu8; 29]].concat();
+        assert_eq!(raw_key.len(), 32);
+        assert_eq!(parse_attestation_key(&raw_key).unwrap(), raw_key);
+
+        // The BOM is not removed on the binary path, so 35 bytes is an error.
+        let too_long = [bom.as_slice(), &[0xffu8; 32]].concat();
+        let err = key_err(&too_long);
+        assert!(err.contains("raw key") && err.contains("got 35"));
+    }
+
+    #[test]
+    fn test_parse_attestation_key_rejects_utf16_text() {
+        let utf16: Vec<u8> = [0xff, 0xfe]
+            .into_iter()
+            .chain("ab".repeat(32).bytes().flat_map(|b| [b, 0]))
+            .collect();
+        assert!(key_err(&utf16).contains("not plain ASCII text"));
+    }
+
+    #[test]
+    fn test_parse_attestation_key_errors_name_format_and_hide_content() {
+        // Each input uses characters that cannot appear in any of our messages.
+        let bad_char = key_err(format!("{}#", "a".repeat(63)).as_bytes());
+        assert!(bad_char.contains("text") && bad_char.contains("not a hex digit"));
+        assert!(!bad_char.contains('#') && !bad_char.contains('\''));
+        assert!(bad_char.is_ascii());
+
+        let count = key_err("7".repeat(32).as_bytes());
+        assert!(count.contains("text") && count.contains("64 hex digits") && count.contains("got 32"));
+        assert!(!count.contains('7'));
+        assert!(count.is_ascii());
+
+        let err = parse_attestation_key(&[0xc3u8; 33]).unwrap_err();
+        assert!(err.to_string().contains("raw key") && err.to_string().contains("got 33"));
+        for text in [format!("{err}"), format!("{err:?}")] {
+            assert!(!text.contains("c3") && !text.contains("C3") && !text.contains("195"));
+            assert!(text.is_ascii(), "message is not plain ASCII");
+        }
     }
 
     #[test]

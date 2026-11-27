@@ -32,8 +32,8 @@ fn run(cli: Cli) -> error::Result<()> {
             top::cmd_version(json)?;
         }
 
-        Commands::Genkey { output, entropy, json } => {
-            top::cmd_genkey(output.as_deref(), entropy.as_deref(), json)?;
+        Commands::Genkey { output, json } => {
+            top::cmd_genkey(output.as_deref(), json)?;
         }
 
         Commands::Sign { key, firmware_hex } => {
@@ -79,9 +79,9 @@ fn run_key_command(
     json: bool,
     timeout: std::time::Duration,
 ) -> error::Result<()> {
-    // Every key subcommand talks to a device, so open it once up front.
-    // Vendor commands are model-specific (Solo 1 and Solo 2 reuse codes), so
-    // those arms check the model first; CTAPHID and CTAP2 commands work on any.
+    // Every key subcommand talks to a device, so open it once here.
+    // Vendor commands depend on the model (Solo 1 and Solo 2 reuse codes), so
+    // those arms check the model first. CTAPHID and CTAP2 commands work on any model.
     let key = Key::open(serial, timeout)?;
     let hid = &key.hid;
     match cmd {
@@ -111,7 +111,7 @@ fn run_key_command(
         }
 
         KeyCommands::Verify => {
-            // Attestation fingerprints are only known for Solo 1 so far.
+            // Only Solo 1 attestation fingerprints are known.
             key.require(Model::Solo1, "key verify")?;
             key::cmd_verify(hid, json)?;
         }
@@ -126,7 +126,7 @@ fn run_key_command(
         }
 
         KeyCommands::Ping { count, data } => {
-            // Parse data as hex if it decodes cleanly, otherwise use as UTF-8 bytes
+            // Use the data as hex bytes if it is valid hex. Otherwise use its UTF-8 bytes.
             let ping_data = hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec());
             key::cmd_ping(hid, count, &ping_data, json)?;
         }
@@ -167,7 +167,7 @@ fn run_key_command(
 
         KeyCommands::Update { firmware } => {
             key.require(Model::Solo1, "key update")?;
-            key::cmd_update(hid, firmware.as_deref())?;
+            key::cmd_update(hid, firmware.as_deref(), serial, timeout)?;
         }
 
         KeyCommands::Credential { command } => match command {
@@ -204,13 +204,19 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
             program::cmd_program_dfu(&firmware)?;
         }
 
+        // A device in ST DFU mode is not a HID device, so do not open one.
+        ProgramCommands::Aux {
+            command: AuxCommands::LeaveDfu,
+        } => aux::cmd_leave_dfu()?,
+
         ProgramCommands::Aux { command } => {
             let hid = solo1::open(serial, timeout)?;
             match command {
                 AuxCommands::EnterBootloader => aux::cmd_enter_bootloader(&hid)?,
                 AuxCommands::LeaveBootloader => aux::cmd_leave_bootloader(&hid)?,
                 AuxCommands::EnterDfu => aux::cmd_enter_dfu(&hid)?,
-                AuxCommands::LeaveDfu => aux::cmd_leave_dfu(&hid)?,
+                // Handled above, without a HID device.
+                AuxCommands::LeaveDfu => {}
                 AuxCommands::Reboot => aux::cmd_reboot(&hid)?,
                 AuxCommands::BootloaderVersion => aux::cmd_bootloader_version(&hid)?,
             }
@@ -241,6 +247,7 @@ fn run_monitor(port: &str) -> error::Result<()> {
 /// # Errors
 ///
 /// Returns any read or write error other than a timeout or an interruption.
+/// If the writer's pipe is closed (`BrokenPipe`), the copy stops with `Ok(())`.
 fn copy_until_eof(mut reader: impl std::io::Read, mut writer: impl std::io::Write) -> std::io::Result<()> {
     use std::io::ErrorKind;
 
@@ -248,10 +255,14 @@ fn copy_until_eof(mut reader: impl std::io::Read, mut writer: impl std::io::Writ
     loop {
         match reader.read(&mut buf) {
             Ok(0) => return Ok(()),
-            Ok(n) => {
-                writer.write_all(buf.get(..n).unwrap_or_default())?;
-                writer.flush()?;
-            }
+            Ok(n) => match writer
+                .write_all(buf.get(..n).unwrap_or_default())
+                .and_then(|()| writer.flush())
+            {
+                Ok(()) => {}
+                Err(e) if e.kind() == ErrorKind::BrokenPipe => return Ok(()),
+                Err(e) => return Err(e),
+            },
             Err(e) if matches!(e.kind(), ErrorKind::TimedOut | ErrorKind::Interrupted) => {}
             Err(e) => return Err(e),
         }
@@ -270,6 +281,19 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
+
+    #[test]
+    fn udp_flag_is_rejected() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "key", "--udp", "wink"]).is_err());
+        assert!(Cli::try_parse_from(["solo", "program", "--udp", "aux", "reboot"]).is_err());
+    }
+
+    #[test]
+    fn genkey_entropy_option_is_rejected() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "genkey", "--entropy", "x"]).is_err());
+    }
 
     #[test]
     fn cli_timeout_default_is_30() {
@@ -309,5 +333,35 @@ mod tests {
         let mut out = Vec::new();
         copy_until_eof(reader, &mut out).unwrap();
         assert_eq!(out, b"hello\xff\xfe\nend");
+    }
+
+    #[test]
+    fn copy_until_eof_stops_quietly_on_broken_pipe_but_reports_other_errors() {
+        use std::io::{Error, ErrorKind, Write};
+
+        struct Fail(ErrorKind);
+        impl Write for Fail {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(Error::from(self.0))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        struct FlushFail;
+        impl Write for FlushFail {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Err(Error::from(ErrorKind::BrokenPipe))
+            }
+        }
+
+        copy_until_eof(&b"data"[..], FlushFail).unwrap();
+        copy_until_eof(&b"data"[..], Fail(ErrorKind::BrokenPipe)).unwrap();
+        let err = copy_until_eof(&b"data"[..], Fail(ErrorKind::PermissionDenied)).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::PermissionDenied);
     }
 }

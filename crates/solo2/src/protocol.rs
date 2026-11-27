@@ -10,8 +10,8 @@
 // The legacy admin commands below are sent as raw CTAPHID vendor commands
 // (the code is the CTAPHID frame command byte). Several codes collide with
 // Solo 1 vendor commands that mean something else (e.g. 0x53 is "program
-// keyboard" on Solo 1 but "reboot" here), so callers must know which model
-// they are talking to before sending any of them.
+// keyboard" on Solo 1 but "reboot" here). Callers must know which model
+// they are talking to before they send any of them.
 
 // USB identifiers
 pub const SOLO2_VID: u16 = 0x1209;

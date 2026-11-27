@@ -2,8 +2,8 @@
 //! commands.
 //!
 //! Solo 2 runs Trussed firmware on an NXP LPC55S69. Generic CTAP2 operations
-//! (PINs, credentials, hmac-secret) work through `solo-ctap2` unchanged; this
-//! crate only holds what is specific to Solo 2. Firmware updates (the LPC55
+//! (PINs, credentials, hmac-secret) work through `solo-ctap2` unchanged. This
+//! crate holds only what is specific to Solo 2. Firmware updates (the LPC55
 //! ROM bootloader and SB2 images) are not implemented yet.
 
 pub mod error;
