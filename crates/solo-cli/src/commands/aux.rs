@@ -6,8 +6,8 @@ use solo1::dfu::DfuDevice;
 use solo1::protocol::{CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION};
 
 /// Enter bootloader mode (from firmware).
-/// Sends command 0x51 directly — no bootloader wrapper — as the firmware handles it.
-/// The device reboots immediately so we don't wait for a response.
+/// Sends command 0x51 directly, without the bootloader wrapper, because the
+/// firmware handles it. The device reboots at once, so there is no reply to wait for.
 ///
 /// # Errors
 /// This function does not return an error; the send result is intentionally
@@ -30,7 +30,7 @@ pub fn cmd_leave_bootloader(hid: &impl HidDevice) -> Result<()> {
 }
 
 /// Enter ST DFU mode (from firmware).
-/// Sends command 0x52 directly — the firmware handles it, device reboots.
+/// Sends command 0x52 directly, because the firmware handles it. The device then reboots.
 ///
 /// # Errors
 /// This function does not return an error; the send result is intentionally
@@ -79,8 +79,8 @@ pub fn cmd_bootloader_version(hid: &impl HidDevice) -> Result<()> {
 
 /// Format raw version response bytes into a human-readable version string.
 ///
-/// If the response contains at least 3 bytes, formats as "major.minor.patch".
-/// Otherwise falls back to hex encoding of the raw bytes.
+/// With at least 3 bytes, the result is "major.minor.patch". Otherwise it is
+/// the raw bytes as hex.
 #[must_use]
 pub fn format_bootloader_version(response: &[u8]) -> String {
     if let [major, minor, patch, ..] = response {
@@ -103,10 +103,9 @@ mod tests {
     )]
     use super::*;
 
-    // All aux command functions (cmd_enter_bootloader, cmd_leave_bootloader,
-    // cmd_enter_dfu, cmd_leave_dfu, cmd_reboot) are single-line device calls
-    // with no logic beyond forwarding to the HID layer. There is nothing to
-    // test without a real device.
+    // The other aux functions (cmd_enter_bootloader, cmd_leave_bootloader,
+    // cmd_enter_dfu, cmd_leave_dfu, cmd_reboot) only pass one command to the
+    // HID layer. There is nothing to test without a real device.
 
     #[test]
     fn test_format_bootloader_version_three_bytes() {

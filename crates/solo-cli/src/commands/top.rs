@@ -92,14 +92,14 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 
 /// Sign a firmware hex file with the given key.
 ///
-/// Generates two signatures for different bootloader versions (matching Python reference):
+/// Makes two signatures, one for each bootloader generation (as the Python tool does):
 ///   - v1: signed over region using `APPLICATION_END_PAGE=19` (bootloaders <=2.5.3)
 ///   - v2: signed over region using `APPLICATION_END_PAGE=20` (bootloaders >2.5.3)
 ///
-/// The firmware field in the output JSON is the base64 of the HEX FILE TEXT,
-/// not the binary, matching the Python reference implementation.
+/// The `firmware` field in the output JSON is the base64 of the HEX FILE TEXT,
+/// not of the binary. The Python tool does the same.
 ///
-/// Outputs JSON {firmware, signature, versions} to stdout.
+/// Prints JSON {firmware, signature, versions} to stdout.
 ///
 /// # Errors
 /// Returns an error if the signing key cannot be loaded, the firmware hex
@@ -108,12 +108,12 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
     let signing_key = load_signing_key(key_path)?;
 
-    // Sign for v1 bootloaders (<=2.5.3) using app_end_page=19
+    // v1 bootloaders (<=2.5.3): app_end_page=19
     let bytes_v1 = firmware_bytes_to_sign_for_version(firmware_hex, 19)?;
     eprintln!("im_size (v1): {}", bytes_v1.len());
     let sig_v1 = sign_firmware(&signing_key, &bytes_v1)?;
 
-    // Sign for v2 bootloaders (>2.5.3) using app_end_page=20
+    // v2 bootloaders (>2.5.3): app_end_page=20
     let bytes_v2 = firmware_bytes_to_sign_for_version(firmware_hex, 20)?;
     eprintln!("im_size (v2): {}", bytes_v2.len());
     let sig_v2 = sign_firmware(&signing_key, &bytes_v2)?;
