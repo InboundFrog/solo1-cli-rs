@@ -210,7 +210,7 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
     match cmd {
         ProgramCommands::Bootloader { firmware } => {
             let hid = solo1::open(serial, timeout)?;
-            program::cmd_program_bootloader(&hid, &firmware)?;
+            program::cmd_program_bootloader(hid, &firmware, serial, timeout)?;
         }
 
         ProgramCommands::Dfu { firmware } => {
