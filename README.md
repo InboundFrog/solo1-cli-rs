@@ -167,9 +167,11 @@ names. The check passes only if all of these are true:
 
 If a check fails, the command says which one and exits with a non-zero code. If all pass, it prints
 that the signature is good, the rpId, whether the user-verified flag is set, and the signature
-counter. With `--json` it prints one JSON object with `valid` (always `true`), `rp_id`,
-`user_verified` and `sign_count`. A failed check prints no JSON: the error goes to stderr, as with
-every command.
+counter. With `--json` it prints one JSON object with `rp_id`, `user_verified` and `sign_count`.
+The exit code is the result, so there is no `valid` field. If a check fails, stdout is empty and the
+error goes to stderr. This differs from `key verify --json`, which prints a report with
+`signature_valid: false` and then fails. `verify-file` stops at the first failed check and has no
+facts to report.
 
 As a second way, you can run this OpenSSL command in bash or zsh. It checks only the signature, not
 the rpId or the flags:
