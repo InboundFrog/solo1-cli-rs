@@ -69,8 +69,15 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
 /// handle that another program opened on the old file cannot read it. A
 /// symbolic link or any other kind of existing path gives an error and is left
 /// untouched.
-#[cfg(unix)]
+///
+/// Every error names `path` and keeps the `ErrorKind` of the original error.
 fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
+    write_private_key_inner(path, contents)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", path.display())))
+}
+
+#[cfg(unix)]
+fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -113,7 +120,7 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 
 /// Write a file that holds a private key to `path` (non-Unix fallback).
 #[cfg(not(unix))]
-fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
+fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
     std::fs::write(path, contents)
 }
 
@@ -678,6 +685,7 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "target");
     }
@@ -694,6 +702,7 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
         assert!(!target.exists());
     }
@@ -718,7 +727,9 @@ mod tests {
         let content = std::fs::read_to_string(&path);
         std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o700)).unwrap();
 
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert_eq!(content.unwrap(), "old");
     }
 
@@ -777,6 +788,7 @@ mod tests {
         let err = write_private_key(&path, KEY_PEM).unwrap_err();
 
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains(&path.display().to_string()));
     }
 
     /// A Unix socket at the path gives an error and is left untouched.
@@ -792,6 +804,7 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_socket());
     }
 
@@ -806,6 +819,7 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert!(path.is_dir());
     }
 
