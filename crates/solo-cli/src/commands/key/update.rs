@@ -44,9 +44,9 @@ fn check_restart_version(tag: Option<&str>, reported: &FirmwareVersion) -> Resul
 /// Returns an error if the firmware cannot be loaded from the given file or
 /// downloaded from GitHub, if the release contains no firmware asset, if the
 /// firmware JSON is malformed, if reconnecting in bootloader mode fails, if
-/// selecting the signature fails, if writing the firmware fails, or if the key
-/// does not answer as a normal key again within `timeout` after the write, or if the key
-/// restarts with another version than the downloaded release.
+/// selecting the signature fails, if writing the firmware fails, if the key
+/// does not answer as a normal key again within `timeout` after the write, or
+/// if the key restarts with another version than the downloaded release.
 pub fn cmd_update(
     hid: &impl HidDevice,
     firmware_file: Option<&Path>,
