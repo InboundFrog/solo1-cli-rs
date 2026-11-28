@@ -127,7 +127,7 @@ pub struct ProbeOutput {
 /// Serialize `value` to pretty JSON and print to stdout.
 ///
 /// # Errors
-/// Returns an error if `value` cannot be serialized to JSON.
+/// Returns an error if `value` cannot be serialized to JSON or if writing to stdout fails.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
     write_json(&mut std::io::stdout().lock(), value)
 }

@@ -135,8 +135,8 @@ pub const SIGN_FILE_RP_ID: &str = "solokeys.dev";
 /// # Errors
 /// Returns an error if `credential_id` is not valid hex, if the file cannot be
 /// read, if the getAssertion request fails, if the response is missing the
-/// authData or the signature (no file is written then), or if writing the
-/// `.sig` or `.authdata` file fails.
+/// authData or the signature (no file is written then), if writing the
+/// `.sig` or `.authdata` file fails, or if writing to `out` or `err` fails.
 pub fn cmd_sign_file(
     hid: &impl HidDevice,
     credential_id: &str,
