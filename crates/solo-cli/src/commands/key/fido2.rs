@@ -1,11 +1,12 @@
 use crate::error::{Result, SoloError};
-use crate::output::{MakeCredentialOutput, print_json};
+use crate::output::{MakeCredentialOutput, print_json, write_json};
 use p256::elliptic_curve::Generate;
 use sha2::{Digest, Sha256};
 use solo_ctap2::authdata::{AuthenticatorData, FLAG_AT, FLAG_ED};
 use solo_ctap2::cbor::{cbor_bytes, cbor_text, expect_map, find_int_key, find_text_key, int_map};
 use solo_ctap2::{aes256_cbc_decrypt, aes256_cbc_encrypt, ecdh_shared_secret, parse_cbor_map_response};
 use solo_ctaphid::HidDevice;
+use std::io::Write;
 use std::path::Path;
 
 /// Create a FIDO2 credential with hmac-secret extension.
@@ -43,6 +44,7 @@ pub fn cmd_make_credential(
     prompt: &str,
     json: bool,
     public_key_out: Option<&Path>,
+    out: impl Write,
 ) -> Result<()> {
     use ciborium::value::Value;
     use rand::Rng;
@@ -75,7 +77,7 @@ pub fn cmd_make_credential(
 
     // CTAP2 makeCredential (0x01)
     let response = solo_ctap2::ctap2_call(hid, 0x01, &cbor_request)?;
-    finish_make_credential(&response, json, public_key_out)
+    finish_make_credential(&response, json, public_key_out, out)
 }
 
 /// Read the makeCredential response. Returns the credential id as hex and, when
@@ -139,13 +141,18 @@ fn read_make_credential(response: &[u8], want_key: bool) -> Result<MakeCredentia
 }
 
 /// Print the credential id (or the JSON), then write the public key file.
-fn finish_make_credential(response: &[u8], json: bool, public_key_out: Option<&Path>) -> Result<()> {
+fn finish_make_credential(
+    response: &[u8],
+    json: bool,
+    public_key_out: Option<&Path>,
+    mut out: impl Write,
+) -> Result<()> {
     let output = read_make_credential(response, json || public_key_out.is_some())?;
 
     if json {
-        print_json(&output)?;
+        write_json(&mut out, &output)?;
     } else {
-        outln!("{}", output.credential_id);
+        outln!(out, "{}", output.credential_id);
     }
 
     if let (Some(path), Some(pem)) = (public_key_out, output.public_key_pem) {
@@ -586,7 +593,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pub.pem");
 
-        finish_make_credential(&response, false, Some(&path)).unwrap();
+        finish_make_credential(&response, false, Some(&path), std::io::sink()).unwrap();
 
         let pem = std::fs::read_to_string(&path).unwrap();
         assert_eq!(p256::PublicKey::from_public_key_pem(&pem).unwrap(), pub_key);
@@ -615,7 +622,7 @@ mod tests {
     #[test]
     fn test_finish_make_credential_plain_ignores_bad_cose_key() {
         let response = make_credential_response(&[0xF6]); // CBOR null
-        finish_make_credential(&response, false, None).unwrap();
+        finish_make_credential(&response, false, None, std::io::sink()).unwrap();
         assert_eq!(read_make_credential(&response, false).unwrap().credential_id, "abcd");
     }
 
@@ -626,7 +633,7 @@ mod tests {
         let path = dir.path().join("pub.pem");
 
         for (json, out) in [(true, None), (false, Some(path.as_path()))] {
-            let err = finish_make_credential(&response, json, out).unwrap_err();
+            let err = finish_make_credential(&response, json, out, std::io::sink()).unwrap_err();
             assert!(
                 matches!(err, SoloError::MalformedResponse(_)),
                 "unexpected error: {err}"
@@ -649,7 +656,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("missing-dir").join("pub.pem");
 
-        let err = finish_make_credential(&response, false, Some(&path)).unwrap_err();
+        let err = finish_make_credential(&response, false, Some(&path), std::io::sink()).unwrap_err();
         assert!(matches!(err, SoloError::IoError(_)), "unexpected error: {err}");
         let text = err.to_string();
         assert!(text.contains("cannot write public key"));

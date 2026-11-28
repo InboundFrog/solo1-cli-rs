@@ -2,26 +2,30 @@ use std::time::Instant;
 
 use crate::commands::key::common;
 use crate::error::{Result, SoloError};
-use crate::output::{PingOutput, print_json};
+use crate::output::{PingOutput, write_json};
 use solo_ctaphid::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 use solo1::firmware::FirmwareVersion;
 use solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
+use std::io::Write;
 
 /// Print the firmware version of the device.
 ///
 /// # Errors
 /// Returns an error if the version query fails (device/transport error or
 /// timeout), the response is too short, or JSON serialization fails.
-pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{VersionOutput, print_json};
+pub fn cmd_key_version(hid: &impl HidDevice, json: bool, mut out: impl Write) -> Result<()> {
+    use crate::output::VersionOutput;
 
     let version = get_device_version(hid)?;
     if json {
-        return print_json(&VersionOutput {
-            firmware_version: version.to_string(),
-        });
+        return write_json(
+            out,
+            &VersionOutput {
+                firmware_version: version.to_string(),
+            },
+        );
     }
-    outln!("Firmware version: {version}");
+    outln!(out, "Firmware version: {version}");
     Ok(())
 }
 
@@ -30,16 +34,19 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
 /// # Errors
 /// Returns an error if the version query fails (device/transport error or
 /// timeout), the response is not 4 bytes, or JSON serialization fails.
-pub fn cmd_key_version_solo2(hid: &impl HidDevice, json: bool) -> Result<()> {
+pub fn cmd_key_version_solo2(hid: &impl HidDevice, json: bool, mut out: impl Write) -> Result<()> {
     use crate::output::VersionOutput;
 
     let version = solo2::version(hid)?;
     if json {
-        return print_json(&VersionOutput {
-            firmware_version: version.to_string(),
-        });
+        return write_json(
+            out,
+            &VersionOutput {
+                firmware_version: version.to_string(),
+            },
+        );
     }
-    outln!("Firmware version: {version}");
+    outln!(out, "Firmware version: {version}");
     Ok(())
 }
 
@@ -72,7 +79,7 @@ pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
 /// Returns an error if a ping cannot be sent or received (device/transport
 /// error or timeout), the echoed data does not match what was sent, the ping
 /// index overflows, or JSON serialization fails.
-pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Result<()> {
+pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool, mut out: impl Write) -> Result<()> {
     for i in 0..count {
         let start = Instant::now();
         let response = hid.send_recv(CTAPHID_PING, data)?;
@@ -89,6 +96,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
         if json {
             // One compact object per line (JSON Lines), printed as each ping answers.
             outln!(
+                out,
                 "{}",
                 serde_json::to_string(&PingOutput {
                     index,
@@ -98,6 +106,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
             );
         } else {
             outln!(
+                out,
                 "Ping {}: {} bytes, RTT = {:.3}ms",
                 index,
                 data.len(),
@@ -191,7 +200,7 @@ mod tests {
     fn test_cmd_ping_success_echo() {
         let data = vec![0x01u8, 0x02, 0x03, 0x04];
         let device = MockDevice::new(vec![Ok(data.clone())]);
-        let result = cmd_ping(&device, 1, &data, false);
+        let result = cmd_ping(&device, 1, &data, false, std::io::sink());
         assert!(result.is_ok());
     }
 
@@ -200,7 +209,7 @@ mod tests {
     fn test_cmd_ping_json_two_pings() {
         let data = vec![0x01u8, 0x02, 0x03, 0x04];
         let device = MockDevice::new(vec![Ok(data.clone()), Ok(data.clone())]);
-        let result = cmd_ping(&device, 2, &data, true);
+        let result = cmd_ping(&device, 2, &data, true, std::io::sink());
         assert!(result.is_ok());
     }
 
@@ -210,7 +219,7 @@ mod tests {
         let sent = vec![0x01u8, 0x02, 0x03];
         let received = vec![0xFF, 0xFE, 0xFD];
         let device = MockDevice::new(vec![Ok(received)]);
-        let result = cmd_ping(&device, 1, &sent, false);
+        let result = cmd_ping(&device, 1, &sent, false, std::io::sink());
         assert!(result.is_err());
         let msg = result.unwrap_err().to_string();
         assert!(
@@ -223,7 +232,7 @@ mod tests {
     #[test]
     fn test_cmd_ping_timeout() {
         let device = MockDevice::new(vec![]);
-        let result = cmd_ping(&device, 1, &[0xAA], false);
+        let result = cmd_ping(&device, 1, &[0xAA], false, std::io::sink());
         assert!(matches!(result.unwrap_err(), SoloError::Timeout));
     }
 
@@ -232,7 +241,7 @@ mod tests {
     fn test_cmd_ping_count_zero() {
         // No responses queued — if any send_recv is called, it would return Timeout.
         let device = MockDevice::new(vec![]);
-        let result = cmd_ping(&device, 0, &[0x01, 0x02], false);
+        let result = cmd_ping(&device, 0, &[0x01, 0x02], false, std::io::sink());
         assert!(result.is_ok());
     }
 
@@ -301,7 +310,7 @@ mod tests {
     #[test]
     fn test_cmd_key_version_too_short() {
         let device = MockDevice::new(vec![Ok(vec![1, 0])]);
-        let err = cmd_key_version(&device, false).unwrap_err();
+        let err = cmd_key_version(&device, false, std::io::sink()).unwrap_err();
         assert!(matches!(err, SoloError::ProtocolError(_)));
     }
 
@@ -309,7 +318,7 @@ mod tests {
     #[test]
     fn test_cmd_key_version_timeout() {
         let device = MockDevice::new(vec![]);
-        let err = cmd_key_version(&device, false).unwrap_err();
+        let err = cmd_key_version(&device, false, std::io::sink()).unwrap_err();
         assert!(matches!(err, SoloError::Timeout));
     }
 }

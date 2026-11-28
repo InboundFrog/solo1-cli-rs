@@ -113,6 +113,7 @@ fn run_key_command(
     // those arms check the model first. CTAPHID and CTAP2 commands work on any model.
     let key = Key::open(serial, timeout)?;
     let hid = &key.hid;
+    let out = std::io::stdout().lock();
     match cmd {
         KeyCommands::Rng { command } => match command {
             RngCommands::Hexbytes { num } => {
@@ -146,8 +147,8 @@ fn run_key_command(
         }
 
         KeyCommands::Version => match key.model {
-            Model::Solo1 => key::cmd_key_version(hid, json)?,
-            Model::Solo2 => key::cmd_key_version_solo2(hid, json)?,
+            Model::Solo1 => key::cmd_key_version(hid, json, out)?,
+            Model::Solo2 => key::cmd_key_version_solo2(hid, json, out)?,
         },
 
         KeyCommands::Wink => {
@@ -157,7 +158,7 @@ fn run_key_command(
         KeyCommands::Ping { count, data } => {
             // Use the data as hex bytes if it is valid hex. Otherwise use its UTF-8 bytes.
             let ping_data = hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec());
-            key::cmd_ping(hid, count, &ping_data, json)?;
+            key::cmd_ping(hid, count, &ping_data, json, out)?;
         }
 
         KeyCommands::Keyboard { data } => {
@@ -201,7 +202,7 @@ fn run_key_command(
 
         KeyCommands::Credential { command } => match command {
             CredentialCommands::Info => {
-                key::credential::cmd_credential_info(hid, json)?;
+                key::credential::cmd_credential_info(hid, json, out)?;
             }
             CredentialCommands::Ls => {
                 key::credential::cmd_credential_ls(hid, json)?;
@@ -219,7 +220,7 @@ fn run_key_command(
                 prompt,
                 public_key_out,
             } => {
-                key::cmd_make_credential(hid, &host, &user, &prompt, json, public_key_out.as_deref())?;
+                key::cmd_make_credential(hid, &host, &user, &prompt, json, public_key_out.as_deref(), out)?;
             }
         },
     }

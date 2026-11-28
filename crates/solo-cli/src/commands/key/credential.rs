@@ -12,8 +12,8 @@ use solo_ctaphid::{CTAPHID_CBOR, HidDevice};
 /// # Errors
 /// Returns an error if the getInfo request fails or its response is not a valid
 /// CBOR map, or if printing JSON output fails.
-pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{CredentialInfoOutput, print_json};
+pub fn cmd_credential_info(hid: &impl HidDevice, json: bool, mut out: impl std::io::Write) -> Result<()> {
+    use crate::output::{CredentialInfoOutput, write_json};
     use ciborium::value::Value;
     use std::collections::HashMap;
 
@@ -76,51 +76,54 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     let remaining_discoverable_credentials = find_uint(&pairs, 0x0A);
 
     if json {
-        return print_json(&CredentialInfoOutput {
-            versions,
-            extensions,
-            aaguid,
-            options,
-            max_msg_size,
-            pin_uv_auth_protocols,
-            max_credential_count_in_list,
-            max_credential_id_length,
-            remaining_discoverable_credentials,
-        });
+        return write_json(
+            out,
+            &CredentialInfoOutput {
+                versions,
+                extensions,
+                aaguid,
+                options,
+                max_msg_size,
+                pin_uv_auth_protocols,
+                max_credential_count_in_list,
+                max_credential_id_length,
+                remaining_discoverable_credentials,
+            },
+        );
     }
 
-    outln!("CTAP2 authenticatorGetInfo");
-    outln!("{}", "=".repeat(40));
-    outln!("Versions:                       {}", versions.join(", "));
+    outln!(out, "CTAP2 authenticatorGetInfo");
+    outln!(out, "{}", "=".repeat(40));
+    outln!(out, "Versions:                       {}", versions.join(", "));
     if !extensions.is_empty() {
-        outln!("Extensions:                     {}", extensions.join(", "));
+        outln!(out, "Extensions:                     {}", extensions.join(", "));
     }
-    outln!("AAGUID:                         {aaguid}");
+    outln!(out, "AAGUID:                         {aaguid}");
     if !options.is_empty() {
         let mut opt_strs: Vec<String> = options.iter().map(|(k, v)| format!("{k}: {v}")).collect();
         opt_strs.sort();
-        outln!("Options:                        {}", opt_strs.join(", "));
+        outln!(out, "Options:                        {}", opt_strs.join(", "));
     }
     if let Some(size) = max_msg_size {
-        outln!("Max message size:               {size}");
+        outln!(out, "Max message size:               {size}");
     }
     if !pin_uv_auth_protocols.is_empty() {
         let proto_strs: Vec<String> = pin_uv_auth_protocols
             .iter()
             .map(std::string::ToString::to_string)
             .collect();
-        outln!("PIN/UV auth protocols:          {}", proto_strs.join(", "));
+        outln!(out, "PIN/UV auth protocols:          {}", proto_strs.join(", "));
     }
     if let Some(c) = max_credential_count_in_list {
-        outln!("Max credential count in list:   {c}");
+        outln!(out, "Max credential count in list:   {c}");
     }
     if let Some(l) = max_credential_id_length {
-        outln!("Max credential ID length:       {l}");
+        outln!(out, "Max credential ID length:       {l}");
     }
     if let Some(r) = remaining_discoverable_credentials {
-        outln!("Remaining discoverable creds:   {r}");
+        outln!(out, "Remaining discoverable creds:   {r}");
     } else {
-        outln!("Remaining discoverable creds:   (not reported by device)");
+        outln!(out, "Remaining discoverable creds:   (not reported by device)");
     }
 
     Ok(())
