@@ -126,7 +126,7 @@ fn run_key_command(
         }
 
         KeyCommands::Version => match key.model {
-            Model::Solo1 => key::cmd_key_version(hid, key.hid.info().product.as_deref(), json)?,
+            Model::Solo1 => key::cmd_key_version(hid, hid.info().product.as_deref(), json)?,
             Model::Solo2 => key::cmd_key_version_solo2(hid, json)?,
         },
 

@@ -27,25 +27,22 @@ pub fn cmd_key_version(hid: &impl HidDevice, product: Option<&str>, json: bool) 
 fn key_version_output(hid: &impl HidDevice, product: Option<&str>) -> Result<Solo1VersionOutput> {
     let version = get_device_version(hid)?.to_string();
     Ok(if common::is_bootloader(product) {
-        Solo1VersionOutput {
-            mode: "bootloader",
-            firmware_version: None,
-            bootloader_version: Some(version),
+        Solo1VersionOutput::Bootloader {
+            bootloader_version: version,
         }
     } else {
-        Solo1VersionOutput {
-            mode: "normal",
-            firmware_version: Some(version),
-            bootloader_version: None,
+        Solo1VersionOutput::Normal {
+            firmware_version: version,
         }
     })
 }
 
 fn key_version_text(out: &Solo1VersionOutput) -> String {
-    match (&out.bootloader_version, &out.firmware_version) {
-        (Some(v), _) => format!("Bootloader version: {v}\nThe key is in bootloader mode."),
-        (None, Some(v)) => format!("Firmware version: {v}"),
-        (None, None) => String::new(),
+    match out {
+        Solo1VersionOutput::Bootloader { bootloader_version: v } => {
+            format!("Bootloader version: {v}\nThe key is in bootloader mode.")
+        }
+        Solo1VersionOutput::Normal { firmware_version: v } => format!("Firmware version: {v}"),
     }
 }
 

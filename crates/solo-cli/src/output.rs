@@ -65,17 +65,12 @@ pub struct VersionOutput {
     pub firmware_version: String,
 }
 
-/// Output of `solo key version` for a Solo 1.
-///
-/// Exactly one of `firmware_version` and `bootloader_version` is set.
+/// Output of `solo key version` for a Solo 1. The `mode` field says which variant it is.
 #[derive(Serialize)]
-pub struct Solo1VersionOutput {
-    /// "normal" or "bootloader".
-    pub mode: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub firmware_version: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub bootloader_version: Option<String>,
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum Solo1VersionOutput {
+    Normal { firmware_version: String },
+    Bootloader { bootloader_version: String },
 }
 
 #[derive(Serialize)]
