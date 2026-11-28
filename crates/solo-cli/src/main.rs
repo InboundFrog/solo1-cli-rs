@@ -206,14 +206,14 @@ fn run_key_command(
 
         KeyCommands::Probe { hash_type, filename } => {
             key.require(Model::Solo1, "key probe")?;
-            key::cmd_probe(hid, &hash_type, &filename)?;
+            key::cmd_probe(hid, &hash_type, &filename, json)?;
         }
 
         KeyCommands::SignFile {
             credential_id,
             filename,
         } => {
-            key::cmd_sign_file(hid, &credential_id, &filename)?;
+            key::cmd_sign_file(hid, &credential_id, &filename, json)?;
         }
 
         KeyCommands::Update { firmware } => {
