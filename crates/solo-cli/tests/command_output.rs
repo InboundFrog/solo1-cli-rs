@@ -14,7 +14,12 @@ struct Run {
 }
 
 fn solo(args: &[&str]) -> Run {
-    let out = Command::new(env!("CARGO_BIN_EXE_solo")).args(args).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_solo"))
+        .args(args)
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("CLICOLOR")
+        .output()
+        .unwrap();
     Run {
         stdout: String::from_utf8(out.stdout).unwrap(),
         stderr: String::from_utf8(out.stderr).unwrap(),

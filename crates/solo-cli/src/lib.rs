@@ -3,7 +3,9 @@
 /// `Result<_, SoloError>`.
 ///
 /// `outln!(out, "...")` with a writer name first writes to that writer instead.
-/// A write error is a `SoloError::Stdout` in both forms.
+/// A write error is a `SoloError::Stdout` in both forms. The writer form has no
+/// `use Write`, because `out: impl Write` already brings the methods in scope
+/// and a second import is an unused-import error.
 #[macro_export]
 macro_rules! outln {
     ($out:ident, $($arg:tt)*) => {{
@@ -18,9 +20,6 @@ macro_rules! outln {
 /// Like `print!`, with the same error handling as [`outln!`].
 #[macro_export]
 macro_rules! out {
-    ($out:ident, $($arg:tt)*) => {{
-        write!($out, $($arg)*).map_err($crate::error::SoloError::Stdout)?
-    }};
     ($($arg:tt)*) => {{
         use ::std::io::Write as _;
         write!(::std::io::stdout().lock(), $($arg)*).map_err($crate::error::SoloError::Stdout)?

@@ -113,7 +113,7 @@ fn run_key_command(
     // those arms check the model first. CTAPHID and CTAP2 commands work on any model.
     let key = Key::open(serial, timeout)?;
     let hid = &key.hid;
-    let out = std::io::stdout().lock();
+    let out = std::io::stdout();
     match cmd {
         KeyCommands::Rng { command } => match command {
             RngCommands::Hexbytes { num } => {
