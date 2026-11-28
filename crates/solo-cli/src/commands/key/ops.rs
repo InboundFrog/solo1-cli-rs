@@ -66,6 +66,17 @@ pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
     Ok(())
 }
 
+/// Choose the ping payload: the text bytes of `--data`, the decoded bytes of
+/// `--hex` (already checked by clap), or `de ad be ef` when neither is given.
+#[must_use]
+pub fn ping_payload(data: Option<&str>, hex: Option<&[u8]>) -> Vec<u8> {
+    match (data, hex) {
+        (Some(text), _) => text.as_bytes().to_vec(),
+        (None, Some(bytes)) => bytes.to_vec(),
+        (None, None) => vec![0xde, 0xad, 0xbe, 0xef],
+    }
+}
+
 /// Send ping(s) and measure round-trip time.
 ///
 /// # Errors
@@ -183,6 +194,14 @@ mod tests {
     use super::*;
     use crate::error::SoloError;
     use solo_ctaphid::mock::MockDevice;
+
+    #[test]
+    fn ping_payload_text_hex_default() {
+        assert_eq!(ping_payload(Some("beef"), None), b"beef");
+        assert_eq!(ping_payload(Some(""), None), b"");
+        assert_eq!(ping_payload(None, Some(&[0xbe, 0xef])), [0xbe, 0xef]);
+        assert_eq!(ping_payload(None, None), [0xde, 0xad, 0xbe, 0xef]);
+    }
 
     // ── cmd_ping ────────────────────────────────────────────────────────────
 

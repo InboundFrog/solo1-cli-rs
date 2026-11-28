@@ -97,7 +97,7 @@ solo ls [--json]                        # List connected Solo devices
 ```sh
 solo key version                           # Get firmware version
 solo key wink                              # Blink LED
-solo key ping [--count N] [--data DATA]    # Ping and measure RTT (DATA: hex or plain text, default deadbeef; N default 1)
+solo key ping [--count N] [--data TEXT | --hex HEX]  # Ping and measure RTT (TEXT is sent as text, HEX as bytes; default: hex deadbeef; N default 1)
 solo key rng hexbytes <N>                  # Print N random bytes as hex
 solo key rng raw                           # Stream raw entropy to stdout
 solo key rng feedkernel                    # Feed entropy to /dev/random (Linux)

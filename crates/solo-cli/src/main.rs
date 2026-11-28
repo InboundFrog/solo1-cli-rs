@@ -134,9 +134,8 @@ fn run_key_command(
             key::cmd_wink(hid)?;
         }
 
-        KeyCommands::Ping { count, data } => {
-            // Use the data as hex bytes if it is valid hex. Otherwise use its UTF-8 bytes.
-            let ping_data = hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec());
+        KeyCommands::Ping { count, data, hex } => {
+            let ping_data = key::ping_payload(data.as_deref(), hex.as_deref());
             key::cmd_ping(hid, count, &ping_data, json)?;
         }
 
@@ -307,6 +306,27 @@ mod tests {
     fn genkey_entropy_option_is_rejected() {
         use clap::Parser;
         assert!(Cli::try_parse_from(["solo", "genkey", "--entropy", "x"]).is_err());
+    }
+
+    #[test]
+    fn ping_data_and_hex_conflict() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--data", "a", "--hex", "aa"]).is_err());
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--data", "a"]).is_ok());
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "aa"]).is_ok());
+    }
+
+    #[test]
+    fn ping_invalid_hex_is_rejected_by_clap() {
+        use clap::Parser;
+        for bad in ["abc", "zz"] {
+            let e = Cli::try_parse_from(["solo", "key", "ping", "--hex", bad]).unwrap_err();
+            assert_eq!(e.kind(), clap::error::ErrorKind::ValueValidation);
+            assert!(e.to_string().contains("--hex"), "{e}");
+        }
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "AbCd"]).is_ok());
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "0xab"]).is_err());
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "ab cd"]).is_err());
     }
 
     #[test]
