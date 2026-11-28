@@ -1,9 +1,9 @@
 use crate::error::Result;
 /// `program aux` subcommands: bootloader mode switching, reboot, DFU mode.
 use solo_ctaphid::HidDevice;
-use solo1::bootloader::bootloader_cmd;
+use solo1::bootloader::{bootloader_cmd, build_bootloader_packet};
 use solo1::dfu::DfuDevice;
-use solo1::protocol::{CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION};
+use solo1::protocol::{CMD_BOOT, CMD_ENTER_BOOT, CMD_ENTER_DFU, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION};
 
 /// Enter bootloader mode (from firmware).
 /// Sends command 0x51 directly, without the bootloader wrapper, because the
@@ -29,14 +29,33 @@ pub fn cmd_leave_bootloader(hid: &impl HidDevice) -> Result<()> {
     Ok(())
 }
 
-/// Enter ST DFU mode (from firmware).
-/// Sends command 0x52 directly, because the firmware handles it. The device then reboots.
+/// Enter ST DFU mode.
+///
+/// Like the reference tool (`enter_st_dfu` in `solo/devices/solo_v1.py`), this first asks the
+/// key for the bootloader version. If the key answers, it runs the Solo bootloader, and the
+/// `CMD_ENTER_DFU` (0x46) operation is sent inside a `CMD_BOOT` packet. Otherwise it runs the
+/// normal firmware, and `CMD_ENTER_ST_BOOT` (0x52) is sent. The value 0x46 is `st_dfu` in
+/// `solo/commands.py` (line 29) of solokeys/solo1-cli and `BootBootloader` in
+/// `targets/stm32l432/bootloader/bootloader.c` (line 39) of solokeys/solo at tag 4.1.5.
+/// That firmware handles it only in development ("hacker") builds (`SOLO_HACKER`, line 292).
+/// Nothing here was tried on a key.
+///
+/// A key that jumps to ST DFU does not reply, so the send does not wait for a reply. The text
+/// is printed when the send worked. It does not show that the key entered ST DFU mode:
+/// firmware 4.1.5 does not handle 0x52 (only `fido2/ctaphid.h` line 29 defines it; tags 1.1.0
+/// and 2.0.0 handled it in hacker builds), and a release-build bootloader answers 0x46 with an
+/// error status. Neither reply is read.
 ///
 /// # Errors
-/// This function does not return an error; the send result is intentionally
-/// ignored because the device reboots without replying.
+/// Returns an error if the command cannot be sent to the device.
 pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
-    let _ = hid.send(CMD_ENTER_ST_BOOT, &[]);
+    match bootloader_cmd(hid, CMD_VERSION, 0, &[]) {
+        Ok(_) => hid.send(CMD_BOOT, &build_bootloader_packet(CMD_ENTER_DFU, 0, &[])?)?,
+        Err(e) => {
+            log::debug!("bootloader version query failed, so the key runs normal firmware: {e}");
+            hid.send(CMD_ENTER_ST_BOOT, &[])?;
+        }
+    }
     println!("Entering ST DFU mode...");
     Ok(())
 }
@@ -104,8 +123,75 @@ mod tests {
     use super::*;
 
     // The other aux functions (cmd_enter_bootloader, cmd_leave_bootloader,
-    // cmd_enter_dfu, cmd_leave_dfu, cmd_reboot) only pass one command to the
-    // HID layer. There is nothing to test without a real device.
+    // cmd_leave_dfu, cmd_reboot) only pass one command to the HID layer.
+    // There is nothing to test without a real device.
+
+    use std::cell::RefCell;
+
+    /// Records every `send`. `send_recv` answers the version query with `version`.
+    struct Recorder {
+        version: Option<Vec<u8>>,
+        send_fails: bool,
+        sent: RefCell<Vec<(u8, Vec<u8>)>>,
+        queried: RefCell<Vec<(u8, Vec<u8>)>>,
+    }
+
+    impl HidDevice for Recorder {
+        fn send_recv(&self, cmd: u8, data: &[u8]) -> solo_ctaphid::Result<Vec<u8>> {
+            self.queried.borrow_mut().push((cmd, data.to_vec()));
+            // A 4.1.5 firmware key answers the query with CTAPHID error 01 (invalid command).
+            self.version
+                .clone()
+                .ok_or_else(|| solo_ctaphid::Error::Protocol("CTAPHID error: 01".into()))
+        }
+
+        fn send(&self, cmd: u8, data: &[u8]) -> solo_ctaphid::Result<()> {
+            self.sent.borrow_mut().push((cmd, data.to_vec()));
+            if self.send_fails {
+                Err(solo_ctaphid::Error::Device("send failed".into()))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn recorder(bootloader: bool, send_fails: bool) -> Recorder {
+        Recorder {
+            version: bootloader.then(|| vec![0, 2, 5, 3]),
+            send_fails,
+            sent: RefCell::new(Vec::new()),
+            queried: RefCell::new(Vec::new()),
+        }
+    }
+
+    #[test]
+    fn enter_dfu_send_failure_is_returned() {
+        assert!(cmd_enter_dfu(&recorder(false, true)).is_err());
+        assert!(cmd_enter_dfu(&recorder(true, true)).is_err());
+    }
+
+    #[test]
+    fn enter_dfu_normal_mode_sends_0x52() {
+        let dev = recorder(false, false);
+        cmd_enter_dfu(&dev).unwrap();
+        assert_eq!(
+            *dev.queried.borrow(),
+            vec![(CMD_BOOT, build_bootloader_packet(CMD_VERSION, 0, &[]).unwrap())]
+        );
+        assert_eq!(*dev.sent.borrow(), vec![(CMD_ENTER_ST_BOOT, vec![])]);
+    }
+
+    #[test]
+    fn enter_dfu_bootloader_mode_sends_0x46_inside_boot_packet() {
+        let dev = recorder(true, false);
+        cmd_enter_dfu(&dev).unwrap();
+        assert_eq!(
+            *dev.queried.borrow(),
+            vec![(CMD_BOOT, build_bootloader_packet(CMD_VERSION, 0, &[]).unwrap())]
+        );
+        let packet = build_bootloader_packet(CMD_ENTER_DFU, 0, &[]).unwrap();
+        assert_eq!(*dev.sent.borrow(), vec![(CMD_BOOT, packet)]);
+    }
 
     #[test]
     fn test_format_bootloader_version_three_bytes() {
