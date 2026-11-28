@@ -223,6 +223,14 @@ mod tests {
         assert!(matches!(err, Error::Protocol(m) if m.contains("0x41")));
     }
 
+    /// An empty reply to a flash write chunk must fail the write.
+    #[test]
+    fn test_write_firmware_chunks_empty_reply_errors() {
+        let device = MockDevice::new(vec![Ok(vec![])]);
+        let err = write_firmware_chunks(&device, 0x0800_5000, &[0xAB; 10], |_, _| {}).unwrap_err();
+        assert!(matches!(err, Error::Protocol(m) if m.contains("0x40")));
+    }
+
     /// A status-only reply to the final check is accepted.
     #[test]
     fn test_finish_firmware_status_only_ok() {
