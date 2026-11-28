@@ -249,7 +249,7 @@ attestation certificate with known fingerprints. It computes two kinds of finger
 | Solo 1               | not yet collected                                                               |
 | Solo Mu              | not yet collected                                                               |
 | Solo ≤v3.0.0         | not yet collected                                                               |
-| Solo Hacker          | not yet collected                                                               |
+| Solo Hacker          | `ac2fb933d680b1f427be5f197856c0ef827b8987d3b5d9546d8030ad8b8e8ac5`              |
 | Emulation/simulation | not yet collected                                                               |
 
 To get a missing value, run `solo key verify --json` with a real key. Read the
