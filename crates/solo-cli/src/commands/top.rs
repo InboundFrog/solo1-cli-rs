@@ -280,7 +280,9 @@ pub fn cmd_mergehex(
     if attestation_key.is_some() {
         write_private_key(output, &text)?;
     } else {
-        std::fs::write(output, text)?;
+        // Same `<path>: <error>` form as `write_private_key`.
+        std::fs::write(output, text)
+            .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", output.display())))?;
     }
     println!("Merged {} files into {}", inputs.len(), output.display());
     Ok(())
@@ -906,5 +908,22 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         super::cmd_mergehex(&[hex], &link, None, None).unwrap();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), expected);
+    }
+
+    /// Without an attestation key, a write error names the output path and
+    /// keeps the `ErrorKind`.
+    #[test]
+    fn test_mergehex_without_attestation_key_write_error_names_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hex, _, _) = mergehex_inputs(dir.path());
+        let out = dir.path().join("no_such_dir").join("out.hex");
+
+        let err = super::cmd_mergehex(&[hex], &out, None, None).unwrap_err();
+
+        assert!(err.to_string().contains(&out.display().to_string()), "{err}");
+        assert!(
+            matches!(err, crate::error::SoloError::IoError(ref e) if e.kind() == std::io::ErrorKind::NotFound),
+            "{err:?}"
+        );
     }
 }
