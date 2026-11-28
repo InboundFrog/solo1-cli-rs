@@ -1,7 +1,7 @@
+use super::tty::prompt_secret;
 use crate::error::{Result, SoloError};
 use solo_ctap2::cbor::{cbor_bytes, cbor_int, int_map};
 use solo_ctaphid::HidDevice;
-use zeroize::Zeroizing;
 
 /// Change the existing PIN (prompts for old and new PIN).
 ///
@@ -19,9 +19,9 @@ use zeroize::Zeroizing;
 /// match, if the new PIN is too short or too long, if key agreement or
 /// encryption fails, or if the changePin command is rejected by the device.
 pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
-    let old_pin = Zeroizing::new(rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?);
-    let new_pin = Zeroizing::new(rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?);
-    let confirm_pin = Zeroizing::new(rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?);
+    let old_pin = prompt_secret("Current PIN: ")?;
+    let new_pin = prompt_secret("New PIN: ")?;
+    let confirm_pin = prompt_secret("Confirm new PIN: ")?;
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
@@ -70,8 +70,8 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 /// match, if the PIN is too short or too long, if key agreement or encryption
 /// fails, or if the setPin command is rejected by the device.
 pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
-    let new_pin = Zeroizing::new(rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?);
-    let confirm_pin = Zeroizing::new(rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?);
+    let new_pin = prompt_secret("New PIN: ")?;
+    let confirm_pin = prompt_secret("Confirm PIN: ")?;
 
     if new_pin != confirm_pin {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
