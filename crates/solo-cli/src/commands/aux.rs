@@ -40,16 +40,21 @@ pub fn cmd_leave_bootloader(hid: &impl HidDevice) -> Result<()> {
 /// That firmware handles it only in development ("hacker") builds (`SOLO_HACKER`, line 292).
 /// Nothing here was tried on a key.
 ///
-/// The key reboots without a reply, so the send does not wait for one. The text is printed
-/// only when the send worked.
+/// A key that jumps to ST DFU does not reply, so the send does not wait for a reply. The text
+/// is printed when the send worked. It does not show that the key entered ST DFU mode:
+/// firmware 4.1.5 does not handle 0x52 (only `fido2/ctaphid.h` line 29 defines it; tags 1.1.0
+/// and 2.0.0 handled it in hacker builds), and a release-build bootloader answers 0x46 with an
+/// error status. Neither reply is read.
 ///
 /// # Errors
 /// Returns an error if the command cannot be sent to the device.
 pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
-    if bootloader_cmd(hid, CMD_VERSION, 0, &[]).is_ok() {
-        hid.send(CMD_BOOT, &build_bootloader_packet(CMD_ENTER_DFU, 0, &[])?)?;
-    } else {
-        hid.send(CMD_ENTER_ST_BOOT, &[])?;
+    match bootloader_cmd(hid, CMD_VERSION, 0, &[]) {
+        Ok(_) => hid.send(CMD_BOOT, &build_bootloader_packet(CMD_ENTER_DFU, 0, &[])?)?,
+        Err(e) => {
+            log::debug!("bootloader version query failed, so the key runs normal firmware: {e}");
+            hid.send(CMD_ENTER_ST_BOOT, &[])?;
+        }
     }
     println!("Entering ST DFU mode...");
     Ok(())
@@ -128,11 +133,16 @@ mod tests {
         version: Option<Vec<u8>>,
         send_fails: bool,
         sent: RefCell<Vec<(u8, Vec<u8>)>>,
+        queried: RefCell<Vec<(u8, Vec<u8>)>>,
     }
 
     impl HidDevice for Recorder {
-        fn send_recv(&self, _cmd: u8, _data: &[u8]) -> solo_ctaphid::Result<Vec<u8>> {
-            self.version.clone().ok_or(solo_ctaphid::Error::Timeout)
+        fn send_recv(&self, cmd: u8, data: &[u8]) -> solo_ctaphid::Result<Vec<u8>> {
+            self.queried.borrow_mut().push((cmd, data.to_vec()));
+            // A 4.1.5 firmware key answers the query with CTAPHID error 01 (invalid command).
+            self.version
+                .clone()
+                .ok_or_else(|| solo_ctaphid::Error::Protocol("CTAPHID error: 01".into()))
         }
 
         fn send(&self, cmd: u8, data: &[u8]) -> solo_ctaphid::Result<()> {
@@ -150,6 +160,7 @@ mod tests {
             version: bootloader.then(|| vec![0, 2, 5, 3]),
             send_fails,
             sent: RefCell::new(Vec::new()),
+            queried: RefCell::new(Vec::new()),
         }
     }
 
@@ -163,6 +174,10 @@ mod tests {
     fn enter_dfu_normal_mode_sends_0x52() {
         let dev = recorder(false, false);
         cmd_enter_dfu(&dev).unwrap();
+        assert_eq!(
+            *dev.queried.borrow(),
+            vec![(CMD_BOOT, build_bootloader_packet(CMD_VERSION, 0, &[]).unwrap())]
+        );
         assert_eq!(*dev.sent.borrow(), vec![(CMD_ENTER_ST_BOOT, vec![])]);
     }
 
@@ -170,6 +185,10 @@ mod tests {
     fn enter_dfu_bootloader_mode_sends_0x46_inside_boot_packet() {
         let dev = recorder(true, false);
         cmd_enter_dfu(&dev).unwrap();
+        assert_eq!(
+            *dev.queried.borrow(),
+            vec![(CMD_BOOT, build_bootloader_packet(CMD_VERSION, 0, &[]).unwrap())]
+        );
         let packet = build_bootloader_packet(CMD_ENTER_DFU, 0, &[]).unwrap();
         assert_eq!(*dev.sent.borrow(), vec![(CMD_BOOT, packet)]);
     }
