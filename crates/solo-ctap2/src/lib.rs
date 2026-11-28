@@ -294,6 +294,27 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
         .map_err(|e| Error::MalformedResponse(format!("Invalid device public key: {e}")))
 }
 
+/// Check that the integer field `key` of a COSE key map equals `expected`.
+///
+/// The error names the field and the value that was found, or says it is missing.
+fn require_cose_int(pairs: &[(Value, Value)], key: i64, name: &str, expected: i64) -> Result<()> {
+    let found = find_int_key(pairs, key).ok_or_else(|| {
+        Error::MalformedResponse(format!(
+            "Credential public key has no {name} ({key}), expected {expected}"
+        ))
+    })?;
+    if matches!(found, Value::Integer(i) if i64::try_from(*i) == Ok(expected)) {
+        return Ok(());
+    }
+    let shown = match found {
+        Value::Integer(i) => i128::from(*i).to_string(),
+        other => format!("{other:?}"),
+    };
+    Err(Error::MalformedResponse(format!(
+        "Credential public key has {name} ({key}) = {shown}, expected {expected}"
+    )))
+}
+
 /// Read the credential public key from the `trailing` bytes of makeCredential authData
 /// and return it as a PEM text (`SubjectPublicKeyInfo`, LF line endings).
 ///
@@ -303,7 +324,9 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
 ///
 /// # Errors
 /// Returns [`Error::MalformedResponse`] if the first CBOR value is missing, is not a
-/// map, or the key length is wrong. A missing coordinate gives [`Error::Protocol`].
+/// map, `kty` (1) is not 2 (EC2), `alg` (3) is not -7 (ES256) or `crv` (-1) is not 1
+/// (P-256) (also when one of them is missing), or the key length is wrong.
+/// A missing coordinate gives [`Error::Protocol`].
 /// [`Error::Crypto`] is returned if the PEM encoding fails.
 pub fn cose_key_pem_from_trailing(trailing: &[u8]) -> Result<String> {
     use p256::pkcs8::{EncodePublicKey, LineEnding};
@@ -314,6 +337,9 @@ pub fn cose_key_pem_from_trailing(trailing: &[u8]) -> Result<String> {
             "Credential public key is not a CBOR map".into(),
         ));
     };
+    require_cose_int(&pairs, 1, "kty", 2)?;
+    require_cose_int(&pairs, 3, "alg", -7)?;
+    require_cose_int(&pairs, -1, "crv", 1)?;
     cose_to_public_key(&pairs)?
         .to_public_key_pem(LineEnding::LF)
         .map_err(|e| Error::Crypto(format!("Public key PEM encode error: {e}")))
@@ -948,6 +974,48 @@ mod tests {
         assert!(pem.ends_with("-----END PUBLIC KEY-----\n"));
         assert!(!pem.contains('\r'));
         assert_eq!(p256::PublicKey::from_public_key_pem(&pem).unwrap(), pub_key);
+    }
+
+    /// Encode a P-256 COSE key with `kty`, `alg` and `crv` given by the caller (`None` leaves the field out).
+    fn cose_bytes(kty: Option<i64>, alg: Option<i64>, crv: Option<i64>) -> Vec<u8> {
+        use p256::Sec1Point;
+        let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
+        let point = Sec1Point::from(&pub_key);
+        let mut pairs = Vec::new();
+        for (k, v) in [(1i64, kty), (3, alg), (-1, crv)] {
+            if let Some(v) = v {
+                pairs.push((Value::Integer(k.into()), Value::Integer(v.into())));
+            }
+        }
+        pairs.push((
+            Value::Integer((-2i64).into()),
+            Value::Bytes(point.x().unwrap().to_vec()),
+        ));
+        pairs.push((
+            Value::Integer((-3i64).into()),
+            Value::Bytes(point.y().unwrap().to_vec()),
+        ));
+        let mut out = Vec::new();
+        ciborium::ser::into_writer(&Value::Map(pairs), &mut out).unwrap();
+        out
+    }
+
+    #[test]
+    fn test_cose_key_pem_from_trailing_checks_kty_alg_crv() {
+        assert!(cose_key_pem_from_trailing(&cose_bytes(Some(2), Some(-7), Some(1))).is_ok());
+        let cases = [
+            (cose_bytes(Some(1), Some(-7), Some(1)), "kty (1) = "),
+            (cose_bytes(Some(2), Some(-25), Some(1)), "alg (3) = "),
+            (cose_bytes(Some(2), Some(-7), Some(2)), "crv (-1) = "),
+            (cose_bytes(None, Some(-7), Some(1)), "no kty (1)"),
+            (cose_bytes(Some(2), None, Some(1)), "no alg (3)"),
+            (cose_bytes(Some(2), Some(-7), None), "no crv (-1)"),
+        ];
+        for (bytes, want) in cases {
+            let err = cose_key_pem_from_trailing(&bytes).unwrap_err();
+            assert!(matches!(err, Error::MalformedResponse(_)), "{err}");
+            assert!(err.to_string().contains(want), "{err} lacks {want}");
+        }
     }
 
     #[test]

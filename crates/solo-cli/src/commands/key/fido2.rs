@@ -363,6 +363,9 @@ mod tests {
         let x = point.x().unwrap().to_vec();
         let y = point.y().unwrap().to_vec();
         vec![
+            (Value::Integer(1u64.into()), Value::Integer(2u64.into())), // kty: EC2
+            (Value::Integer(3u64.into()), Value::Integer((-7i64).into())), // alg: ES256
+            (Value::Integer((-1i64).into()), Value::Integer(1u64.into())), // crv: P-256
             (Value::Integer((-2i64).into()), Value::Bytes(x)),
             (Value::Integer((-3i64).into()), Value::Bytes(y)),
         ]
