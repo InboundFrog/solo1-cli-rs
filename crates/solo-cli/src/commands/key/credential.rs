@@ -296,7 +296,7 @@ fn enumerate_credentials_for_rp(
         }
         .ok_or_else(|| {
             SoloError::MalformedResponse(format!(
-                "credentialId (0x07) missing, or without a byte-string id, for user '{username}'"
+                "credentialId (0x07) missing, or without a non-empty byte-string id, for user '{username}'"
             ))
         })?;
 
@@ -546,7 +546,10 @@ mod tests {
     #[test]
     fn enumerate_credentials_missing_credential_id_is_malformed() {
         let r = enumerate(answer(vec![(0x06, user(Some("alice")))]));
-        assert!(matches!(r, Err(SoloError::MalformedResponse(_))), "{r:?}");
+        let Err(SoloError::MalformedResponse(msg)) = r else {
+            panic!("expected MalformedResponse, got {r:?}")
+        };
+        assert!(msg.contains("alice"), "message names the user: {msg}");
     }
 
     #[test]
