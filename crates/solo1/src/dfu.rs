@@ -18,15 +18,30 @@ pub const DFU_UPLOAD: u8 = 0x02;
 pub const DFU_GETSTATUS: u8 = 0x03;
 pub const DFU_CLRSTATUS: u8 = 0x04;
 
-// DFU states
+// DFU states used by the code.
+//
+// All DFU 1.1 device states (`bState` in the `DFU_GETSTATUS` reply), kept as a
+// record of the protocol:
+//
+// | Value | State                  |
+// |-------|------------------------|
+// | 0x00  | appIDLE                |
+// | 0x01  | appDETACH              |
+// | 0x02  | dfuIDLE                |
+// | 0x03  | dfuDNLOAD-SYNC         |
+// | 0x04  | dfuDNBUSY              |
+// | 0x05  | dfuDNLOAD-IDLE         |
+// | 0x06  | dfuMANIFEST-SYNC       |
+// | 0x07  | dfuMANIFEST            |
+// | 0x08  | dfuMANIFEST-WAIT-RESET |
+// | 0x09  | dfuUPLOAD-IDLE         |
+// | 0x0A  | dfuERROR               |
 pub const DFU_STATE_IDLE: u8 = 0x02;
-pub const DFU_STATE_DOWNLOAD_IDLE: u8 = 0x05;
 pub const DFU_STATE_BUSY: u8 = 0x04;
-pub const DFU_STATE_DOWNLOAD_SYNC: u8 = 0x03;
+pub const DFU_STATE_DOWNLOAD_IDLE: u8 = 0x05;
+pub const DFU_STATE_MANIFEST_SYNC: u8 = 0x06;
 pub const DFU_STATE_UPLOAD_IDLE: u8 = 0x09;
 pub const DFU_STATE_ERROR: u8 = 0x0A;
-pub const DFU_STATE_MANIFEST_SYNC: u8 = 0x06;
-pub const DFU_STATE_MANIFEST: u8 = 0x07;
 
 /// Longest single sleep between status polls. The device reports its own poll
 /// time (up to 24 bits of milliseconds), so a bad value must not stall us.
