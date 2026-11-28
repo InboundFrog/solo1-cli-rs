@@ -217,14 +217,14 @@ mod tests {
     fn test_download_403_names_the_status() {
         let url = serve(reply("403 Forbidden", "Content-Length: 0\r\n", vec![]));
         let text = download_url(&url).unwrap_err().to_string();
-        assert!(text.contains("403"), "{text}");
+        assert!(text.contains("403 Forbidden"), "{text}");
     }
 
     #[test]
     fn test_download_404_names_the_status() {
         let url = serve(reply("404 Not Found", "Content-Length: 0\r\n", vec![]));
         let text = download_url(&url).unwrap_err().to_string();
-        assert!(text.contains("404"), "{text}");
+        assert!(text.contains("404 Not Found"), "{text}");
     }
 
     #[test]
@@ -233,7 +233,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let start = std::time::Instant::now();
         std::thread::spawn(move || tx.send(get_limited_with(&url, Duration::from_millis(300))).unwrap());
-        // Without the timeout the request would wait for ever, so do not wait for it here.
+        // Without the timeout the request would wait 30 s (the reqwest default), so do not wait for it here.
         let err = rx
             .recv_timeout(Duration::from_secs(5))
             .expect("the request did not time out")

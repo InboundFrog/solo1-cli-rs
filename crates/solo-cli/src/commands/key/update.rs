@@ -250,7 +250,7 @@ mod tests {
     ) -> Result<()> {
         let fw = solo1::firmware::create_firmware_json(&[0xAB; 10], &[0x01; 64]);
         let old_key = recorder(log, vec![], false);
-        let mut bl = Some(recorder(log, replies, true));
+        let mut bl = open_ok.then(|| recorder(log, replies, true));
         let open_log = Rc::clone(log);
         let wait_log = Rc::clone(log);
         run_update(
@@ -262,8 +262,8 @@ mod tests {
             move || {
                 open_log.borrow_mut().push("open");
                 match bl.take() {
-                    Some(dev) if open_ok => Ok(dev),
-                    _ => Err(SoloError::DeviceError("no key".into())),
+                    Some(dev) => Ok(dev),
+                    None => Err(SoloError::DeviceError("no key".into())),
                 }
             },
             move || {
@@ -298,10 +298,7 @@ mod tests {
         let log = Log::default();
         let err = run(&log, None, false, good_replies(), V415).unwrap_err();
         assert!(err.to_string().contains("no key"), "{err}");
-        assert_eq!(log.borrow().first_chunk(), Some(&["enter_boot", "open"]));
-        for step in ["version", "write", "done", "wait"] {
-            assert!(!log.borrow().contains(&step), "{step} ran: {:?}", log.borrow());
-        }
+        assert_eq!(*log.borrow(), ["enter_boot", "open"]);
     }
 
     #[test]
