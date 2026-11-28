@@ -522,25 +522,41 @@ fn nfc_pin(pin: &str) -> Result<Zeroizing<String>> {
     Ok(out)
 }
 
+/// Tell if two PIN texts are the same PIN after Unicode normalization form C (NFC).
+///
+/// Use this to compare a new PIN with its confirmation: the key sees the NFC form,
+/// so inputs with different code points can still be the same PIN. Both NFC
+/// copies are wiped when the function returns.
+///
+/// # Errors
+/// Returns [`Error::Protocol`] if a PIN could not be normalized.
+pub fn pins_equal_nfc(a: &str, b: &str) -> Result<bool> {
+    Ok(nfc_pin(a)? == nfc_pin(b)?)
+}
+
 /// Check that `pin` is allowed as a new PIN (CTAP 2.1, setPIN and changePIN).
 ///
 /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
 /// section 6.5.1). The NFC form has at least 4 Unicode code points and at most
-/// 63 bytes of UTF-8.
+/// 63 bytes of UTF-8. It must not end in a zero byte (CTAP 2.1 section 6.5.1).
 ///
 /// # Errors
-/// Returns [`Error::Protocol`] if the PIN is too short or too long.
+/// Returns [`Error::Protocol`] if the PIN is too short, too long or ends in a zero byte.
 pub fn validate_new_pin(pin: &str) -> Result<()> {
     validate_nfc_pin(&nfc_pin(pin)?)
 }
 
-/// Length rules for a PIN that is already in NFC form.
+/// Length and ending rules for a PIN that is already in NFC form.
 fn validate_nfc_pin(pin: &str) -> Result<()> {
     if pin.chars().count() < 4 {
         return Err(Error::Protocol("PIN must be at least 4 characters".into()));
     }
     if pin.len() > 63 {
         return Err(Error::Protocol("PIN must be at most 63 bytes in UTF-8".into()));
+    }
+    // The PIN is padded with zero bytes to 64 bytes, so the key cannot see a zero byte at the end.
+    if pin.ends_with('\0') {
+        return Err(Error::Protocol("PIN must not end in a zero byte".into()));
     }
     Ok(())
 }
@@ -735,6 +751,26 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_new_pin_zero_byte_rules() {
+        // "abc\0" has 4 code points, so the zero-byte rule is the one that fires.
+        let err = validate_new_pin("abc\0").unwrap_err().to_string();
+        assert!(err.contains("zero byte"), "{err}");
+        // "\0\0\0" has 3 code points: the length rule is checked first.
+        let err = validate_new_pin("\0\0\0").unwrap_err().to_string();
+        assert!(err.contains("at least 4"), "{err}");
+        assert!(validate_new_pin("abcd\0").is_err(), "ends in a zero byte");
+        assert!(validate_new_pin("abcd\0\0").is_err(), "ends in two zero bytes");
+        assert!(validate_new_pin("\0\0\0\0").is_err(), "only zero bytes");
+        // A zero byte inside the PIN stays in the PIN, so it is accepted.
+        assert!(validate_new_pin("ab\0cd").is_ok());
+        assert!(validate_new_pin("\0abcd").is_ok());
+        assert!(validate_new_pin("abcd").is_ok());
+        let pub_key = p256::SecretKey::generate_from_rng(&mut rand::rng()).public_key();
+        let session = ClientPinSession::new(&pub_key).unwrap();
+        assert!(session.encrypt_pin("abcd\0").is_err());
+    }
+
+    #[test]
     fn test_validate_new_pin_uses_nfc_form() {
         let decomposed = "e\u{301}";
         // 4 code points after NFC (8 before: 2 each).
@@ -752,6 +788,15 @@ mod tests {
         assert!(validate_new_pin(&devanagari).is_err());
         // NFC leaves compatibility characters alone (NFKC would change them).
         assert_eq!(nfc_pin("\u{FB01}\u{FF11}").unwrap().as_str(), "\u{FB01}\u{FF11}");
+    }
+
+    #[test]
+    fn test_pins_equal_nfc() {
+        // U+00E9 against U+0065 U+0301: same NFC form.
+        assert!(pins_equal_nfc("caf\u{e9}1", "cafe\u{301}1").unwrap());
+        assert!(!pins_equal_nfc("caf\u{e9}1", "cafe1").unwrap());
+        assert!(pins_equal_nfc("1234", "1234").unwrap());
+        assert!(!pins_equal_nfc("1234", "1235").unwrap());
     }
 
     #[test]

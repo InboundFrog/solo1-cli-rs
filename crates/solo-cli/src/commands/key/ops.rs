@@ -25,14 +25,18 @@ pub fn cmd_key_version(hid: &impl HidDevice, product: Option<&str>, json: bool) 
 }
 
 fn key_version_output(hid: &impl HidDevice, product: Option<&str>) -> Result<Solo1VersionOutput> {
-    let version = get_device_version(hid)?.to_string();
+    let (version, locked) = query_version(hid)?;
+    let version = version.to_string();
     Ok(if common::is_bootloader(product) {
+        // The bootloader build compiles the same ctaphid.c (tag 4.1.5), so it also sends the
+        // locked byte. This code does not show it in bootloader mode.
         Solo1VersionOutput::Bootloader {
             bootloader_version: version,
         }
     } else {
         Solo1VersionOutput::Normal {
             firmware_version: version,
+            locked,
         }
     })
 }
@@ -42,7 +46,13 @@ fn key_version_text(out: &Solo1VersionOutput) -> String {
         Solo1VersionOutput::Bootloader { bootloader_version: v } => {
             format!("Bootloader version: {v}\nThe key is in bootloader mode.")
         }
-        Solo1VersionOutput::Normal { firmware_version: v } => format!("Firmware version: {v}"),
+        Solo1VersionOutput::Normal {
+            firmware_version: v,
+            locked,
+        } => {
+            let line = locked.map(|l| format!("\nLocked: {}", if l { "yes" } else { "no" }));
+            format!("Firmware version: {v}{}", line.unwrap_or_default())
+        }
     }
 }
 
@@ -69,14 +79,26 @@ pub fn cmd_key_version_solo2(hid: &impl HidDevice, json: bool) -> Result<()> {
 /// # Errors
 /// Returns an error if the query fails or the response is shorter than three bytes.
 pub fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
+    query_version(hid).map(|(version, _)| version)
+}
+
+/// Ask for the version. The second value is the "locked" flag, the fourth byte of the answer.
+///
+/// The firmware (tag 4.1.5) sends 0 or 1 there. A three-byte answer has no flag, and
+/// any other value is not read as a flag, so both give `None`.
+fn query_version(hid: &impl HidDevice) -> Result<(FirmwareVersion, Option<bool>)> {
     let response = hid.send_recv(CMD_GET_VERSION, &[])?;
-    let [major, minor, patch, ..] = response.as_slice() else {
+    let [major, minor, patch, rest @ ..] = response.as_slice() else {
         return Err(SoloError::ProtocolError("Version response too short".into()));
     };
-    Ok(FirmwareVersion::new(
-        u32::from(*major),
-        u32::from(*minor),
-        u32::from(*patch),
+    let locked = match rest.first() {
+        Some(0) => Some(false),
+        Some(1) => Some(true),
+        _ => None,
+    };
+    Ok((
+        FirmwareVersion::new(u32::from(*major), u32::from(*minor), u32::from(*patch)),
+        locked,
     ))
 }
 
@@ -314,7 +336,7 @@ mod tests {
         assert_eq!(version, FirmwareVersion::new(0, 0, 0));
     }
 
-    /// Extra bytes beyond the first three must be ignored.
+    /// Extra bytes beyond the first three do not change the version.
     #[test]
     fn test_cmd_key_version_extra_bytes_ignored() {
         let device = MockDevice::new(vec![Ok(vec![2, 5, 3, 99, 42])]);
@@ -362,5 +384,47 @@ mod tests {
             v,
             serde_json::json!({"mode": "bootloader", "bootloader_version": "3.0.0"})
         );
+    }
+
+    fn normal_with(bytes: Vec<u8>) -> (String, serde_json::Value) {
+        let device = MockDevice::new(vec![Ok(bytes)]);
+        let out = key_version_output(&device, Some("Solo 4.1.5")).unwrap();
+        (key_version_text(&out), serde_json::to_value(&out).unwrap())
+    }
+
+    /// Fourth byte 1: locked.
+    #[test]
+    fn test_key_version_locked_yes() {
+        let (text, v) = normal_with(vec![4, 1, 5, 1]);
+        assert_eq!(text, "Firmware version: 4.1.5\nLocked: yes");
+        assert_eq!(
+            v,
+            serde_json::json!({"mode": "normal", "firmware_version": "4.1.5", "locked": true})
+        );
+    }
+
+    /// Fourth byte 0: not locked.
+    #[test]
+    fn test_key_version_locked_no() {
+        let (text, v) = normal_with(vec![4, 1, 5, 0]);
+        assert_eq!(text, "Firmware version: 4.1.5\nLocked: no");
+        assert_eq!(v["locked"], serde_json::json!(false));
+    }
+
+    /// Any other fourth byte is not a flag: no line, no field.
+    #[test]
+    fn test_key_version_locked_other_byte() {
+        let (text, v) = normal_with(vec![4, 1, 5, 2]);
+        assert_eq!(text, "Firmware version: 4.1.5");
+        assert!(v.get("locked").is_none(), "{v}");
+    }
+
+    /// Bootloader mode does not show the byte.
+    #[test]
+    fn test_key_version_bootloader_ignores_fourth_byte() {
+        let device = MockDevice::new(vec![Ok(vec![3, 0, 0, 1])]);
+        let out = key_version_output(&device, Some("Solo Bootloader 3.0.0")).unwrap();
+        assert!(!key_version_text(&out).contains("Locked"));
+        assert!(serde_json::to_value(&out).unwrap().get("locked").is_none());
     }
 }

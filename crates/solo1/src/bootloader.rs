@@ -49,7 +49,8 @@ pub fn build_bootloader_packet(cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8
 /// # Errors
 /// Returns an error if the packet cannot be built (data too long), the
 /// command cannot be sent or received (device or transport error, or
-/// timeout), or the bootloader returns a non-zero status.
+/// timeout), the reply is empty (no status byte), or the bootloader returns a
+/// non-zero status.
 pub fn bootloader_cmd(hid: &impl HidDevice, cmd: u8, addr: u32, data: &[u8]) -> Result<Vec<u8>> {
     log::debug!(
         "bootloader cmd=0x{:02X} addr=0x{:08X} data_len={}",
@@ -63,7 +64,9 @@ pub fn bootloader_cmd(hid: &impl HidDevice, cmd: u8, addr: u32, data: &[u8]) -> 
 
     // The first byte of the reply is the status code (0x00 means success).
     let Some((&status, payload)) = resp.split_first() else {
-        return Ok(resp);
+        return Err(Error::Protocol(format!(
+            "Bootloader command 0x{cmd:02X} got an empty reply (no status byte)"
+        )));
     };
     if status != 0x00 {
         return Err(Error::Protocol(format!("Bootloader error status: 0x{status:02X}")));
@@ -197,11 +200,42 @@ mod tests {
         assert!(matches!(err, Error::Protocol(m) if m.contains("0x0A")));
     }
 
-    /// An empty response is passed through unchanged.
+    /// An empty reply has no status byte. It is an error that names the command.
     #[test]
     fn test_bootloader_cmd_empty_response() {
         let device = MockDevice::new(vec![Ok(vec![])]);
+        let err = bootloader_cmd(&device, 0x45, 0, &[]).unwrap_err();
+        assert!(matches!(err, Error::Protocol(m) if m.contains("0x45") && m.contains("empty")));
+    }
+
+    /// A reply of only a zero status byte is success with an empty payload.
+    #[test]
+    fn test_bootloader_cmd_status_only_ok() {
+        let device = MockDevice::new(vec![Ok(vec![0x00])]);
         assert_eq!(bootloader_cmd(&device, 0x45, 0, &[]).unwrap(), [] as [u8; 0]);
+    }
+
+    /// The final signature check must not pass on an empty reply.
+    #[test]
+    fn test_finish_firmware_empty_reply_errors() {
+        let device = MockDevice::new(vec![Ok(vec![])]);
+        let err = finish_firmware(&device, &[0u8; 64]).unwrap_err();
+        assert!(matches!(err, Error::Protocol(m) if m.contains("0x41")));
+    }
+
+    /// An empty reply to a flash write chunk must fail the write.
+    #[test]
+    fn test_write_firmware_chunks_empty_reply_errors() {
+        let device = MockDevice::new(vec![Ok(vec![])]);
+        let err = write_firmware_chunks(&device, 0x0800_5000, &[0xAB; 10], |_, _| {}).unwrap_err();
+        assert!(matches!(err, Error::Protocol(m) if m.contains("0x40")));
+    }
+
+    /// A status-only reply to the final check is accepted.
+    #[test]
+    fn test_finish_firmware_status_only_ok() {
+        let device = MockDevice::new(vec![Ok(vec![0x00])]);
+        finish_firmware(&device, &[0u8; 64]).unwrap();
     }
 
     /// Transport errors propagate.
