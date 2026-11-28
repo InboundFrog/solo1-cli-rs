@@ -24,7 +24,7 @@ pub enum SoloError {
 
     #[error("Authenticator error in {step} (CTAP2 {code:#04x}): {message}")]
     AuthenticatorError {
-        step: String,
+        step: &'static str,
         code: u8,
         message: &'static str,
     },
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn test_ctap2_errors_map_to_existing_variants() {
         let e = SoloError::from(solo_ctap2::Error::Authenticator {
-            step: "setPin".into(),
+            step: "setPin",
             code: 0x31,
             message: "PIN invalid",
         });

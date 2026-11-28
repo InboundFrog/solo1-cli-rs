@@ -197,14 +197,14 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
 /// # Errors
 /// Returns [`Error::MalformedResponse`] if `response` is empty, or
 /// [`Error::Authenticator`] if the status byte is non-zero.
-pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
+pub fn check_ctap_status(response: &[u8], context: &'static str) -> Result<()> {
     let &code = response
         .first()
         .ok_or_else(|| Error::MalformedResponse(format!("Empty response from {context}")))?;
     if code != 0x00 {
         let message = ctap2_status_message(code);
         return Err(Error::Authenticator {
-            step: context.to_owned(),
+            step: context,
             code,
             message,
         });
@@ -219,7 +219,7 @@ pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
 /// # Errors
 /// Returns an error if the status byte is missing or non-zero, the response is truncated,
 /// or the payload is not valid CBOR or not a map.
-pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
+pub fn parse_cbor_map_response(response: &[u8], context: &'static str) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
     let payload = response
         .get(1..)
@@ -235,7 +235,7 @@ pub fn parse_cbor_map_response(response: &[u8], context: &str) -> Result<Vec<(Va
 /// # Errors
 /// Returns an error if the status byte is missing or non-zero, the response is truncated,
 /// or the (non-empty) payload is not valid CBOR or not a map.
-pub fn parse_cbor_map_response_allow_empty(response: &[u8], context: &str) -> Result<Vec<(Value, Value)>> {
+pub fn parse_cbor_map_response_allow_empty(response: &[u8], context: &'static str) -> Result<Vec<(Value, Value)>> {
     check_ctap_status(response, context)?;
     if response.len() == 1 {
         return Ok(vec![]);

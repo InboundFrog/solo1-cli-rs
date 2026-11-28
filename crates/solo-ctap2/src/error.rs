@@ -10,7 +10,7 @@ pub enum Error {
     /// to [`check_ctap_status`](crate::check_ctap_status), for example `"setPin"`.
     #[error("Authenticator error in {step} (CTAP2 {code:#04x}): {message}")]
     Authenticator {
-        step: String,
+        step: &'static str,
         code: u8,
         message: &'static str,
     },
