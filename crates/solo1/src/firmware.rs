@@ -6,6 +6,7 @@ use std::path::Path;
 
 use ihex::Record;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::bootloader::bootloader_cmd;
 use crate::crypto::{websafe_b64_decode, websafe_b64_encode};
@@ -568,7 +569,7 @@ fn patch_attestation(image: &mut FlashImage, attest_addr: u32, key: &[u8], cert:
 /// bytes and cannot be told apart from such a file.
 ///
 /// Error messages never quote the file, because it holds a secret key.
-fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
+fn parse_attestation_key(raw: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     let body = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw);
     let is_text = body.iter().all(|b| b.is_ascii_graphic() || b.is_ascii_whitespace());
     if !is_text {
@@ -579,9 +580,11 @@ fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
                 raw.len()
             )));
         }
-        return Ok(raw.to_vec());
+        return Ok(Zeroizing::new(raw.to_vec()));
     }
-    let digits: Vec<u8> = body.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect();
+    // Fixed capacity: a growing Vec would leave smaller, unwiped copies behind.
+    let mut digits: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::with_capacity(body.len()));
+    digits.extend(body.iter().copied().filter(|b| !b.is_ascii_whitespace()));
     if !digits.iter().all(u8::is_ascii_hexdigit) {
         return Err(Error::Firmware(
             "Attestation key file is text, so it must hold exactly 64 hex digits, \
@@ -595,7 +598,10 @@ fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
             digits.len()
         )));
     }
-    hex::decode(&digits).map_err(|_| Error::Firmware("Attestation key file has invalid hex".into()))
+    let mut key = Zeroizing::new(vec![0u8; 32]);
+    hex::decode_to_slice(&*digits, &mut key)
+        .map_err(|_| Error::Firmware("Attestation key file has invalid hex".into()))?;
+    Ok(key)
 }
 
 /// Merge multiple Intel HEX files into one output HEX file.
@@ -632,7 +638,7 @@ pub fn merge_hex_files(
     attestation_cert: Option<&Path>,
 ) -> Result<()> {
     let text = merge_hex_text(inputs, attestation_key, attestation_cert)?;
-    std::fs::write(output, text)?;
+    std::fs::write(output, text.as_bytes())?;
     Ok(())
 }
 
@@ -649,7 +655,7 @@ pub fn merge_hex_text(
     inputs: &[&Path],
     attestation_key: Option<&Path>,
     attestation_cert: Option<&Path>,
-) -> Result<String> {
+) -> Result<Zeroizing<String>> {
     // APPLICATION_END_PAGE_COUNT = 20 (default, for new bootloader)
     const APPLICATION_END_PAGE_COUNT: u32 = 20;
 
@@ -661,10 +667,10 @@ pub fn merge_hex_text(
     }
 
     // Read attestation key bytes (32 raw bytes, or 64 hex digits as text)
-    let key_bytes: Vec<u8> = if let Some(key_path) = attestation_key {
-        parse_attestation_key(&std::fs::read(key_path)?)?
+    let key_bytes: Zeroizing<Vec<u8>> = if let Some(key_path) = attestation_key {
+        parse_attestation_key(&Zeroizing::new(std::fs::read(key_path)?))?
     } else {
-        hex::decode(HACKER_ATTESTATION_KEY_HEX)?
+        Zeroizing::new(hex::decode(HACKER_ATTESTATION_KEY_HEX)?)
     };
 
     let cert_bytes: Vec<u8> = if let Some(cert_path) = attestation_cert {
@@ -708,7 +714,7 @@ pub fn merge_hex_text(
 
     // Join consecutive addresses into segments for HEX output
     let segments = image.segments();
-    hex_text(&segments)
+    hex_text(&segments).map(Zeroizing::new)
 }
 
 /// Return segments as Intel HEX text.
@@ -1531,7 +1537,7 @@ mod tests {
         one_unprintable[0] = 0;
         let spaced = "ab ".repeat(32);
         let xxd = format!("{}\n{}\n", "ab".repeat(30), "ab".repeat(2));
-        let ok = |raw: &[u8]| parse_attestation_key(raw).unwrap();
+        let ok = |raw: &[u8]| parse_attestation_key(raw).unwrap().to_vec();
 
         assert_eq!(ok(&key), key);
         assert_eq!(ok(&one_unprintable), one_unprintable);
@@ -1582,17 +1588,19 @@ mod tests {
         let with_bom = |tail: &str| [bom.as_slice(), tail.as_bytes()].concat();
 
         assert_eq!(
-            parse_attestation_key(&with_bom(&format!("{hex_key}\r\n"))).unwrap(),
+            parse_attestation_key(&with_bom(&format!("{hex_key}\r\n")))
+                .unwrap()
+                .to_vec(),
             key
         );
-        assert_eq!(parse_attestation_key(&with_bom(&hex_key)).unwrap(), key);
+        assert_eq!(parse_attestation_key(&with_bom(&hex_key)).unwrap().to_vec(), key);
         assert!(key_err(&with_bom(&"ab".repeat(16))).contains("text"));
         assert!(key_err(bom).contains("text"));
 
         // A raw key may start with the same three bytes: it is returned unchanged.
         let raw_key = [bom.as_slice(), &[0xffu8; 29]].concat();
         assert_eq!(raw_key.len(), 32);
-        assert_eq!(parse_attestation_key(&raw_key).unwrap(), raw_key);
+        assert_eq!(parse_attestation_key(&raw_key).unwrap().to_vec(), raw_key);
 
         // The BOM is not removed on the binary path, so 35 bytes is an error.
         let too_long = [bom.as_slice(), &[0xffu8; 32]].concat();

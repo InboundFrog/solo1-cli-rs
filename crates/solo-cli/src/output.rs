@@ -72,9 +72,9 @@ pub struct CliVersionOutput {
 }
 
 #[derive(Serialize)]
-pub struct GenKeyOutput {
-    pub private_key: String,
-    pub public_key: String,
+pub struct GenKeyOutput<'a> {
+    pub private_key: &'a str,
+    pub public_key: &'a str,
 }
 
 #[derive(Serialize)]
@@ -271,8 +271,8 @@ mod tests {
     #[test]
     fn gen_key_output_serializes() {
         let out = GenKeyOutput {
-            private_key: "-----BEGIN PRIVATE KEY-----...".into(),
-            public_key: "-----BEGIN PUBLIC KEY-----...".into(),
+            private_key: "-----BEGIN PRIVATE KEY-----...",
+            public_key: "-----BEGIN PUBLIC KEY-----...",
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();

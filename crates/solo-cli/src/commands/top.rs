@@ -40,8 +40,8 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
     if json {
         use crate::output::{GenKeyOutput, print_json};
         let out = GenKeyOutput {
-            private_key: priv_pem,
-            public_key: pub_pem,
+            private_key: &priv_pem,
+            public_key: &pub_pem,
         };
         return print_json(&out);
     }
@@ -50,7 +50,7 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
         write_private_key(out_path, &priv_pem)?;
         eprintln!("Private key written to {}", out_path.display());
     } else {
-        print!("{priv_pem}");
+        print!("{}", priv_pem.as_str());
     }
 
     eprintln!("Public key:\n{pub_pem}");
@@ -268,7 +268,7 @@ pub fn cmd_mergehex(
     if attestation_key.is_some() {
         write_private_key(output, &text)?;
     } else {
-        std::fs::write(output, text)?;
+        std::fs::write(output, text.as_bytes())?;
     }
     println!("Merged {} files into {}", inputs.len(), output.display());
     Ok(())
@@ -834,7 +834,7 @@ mod tests {
 
         assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o600);
         let expected = solo1::firmware::merge_hex_text(&[hex.as_path()], Some(&key), Some(&cert)).unwrap();
-        assert_eq!(std::fs::read_to_string(&out).unwrap(), expected);
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), expected.as_str());
     }
 
     /// With an attestation key, a symbolic link at the output path is refused
@@ -869,12 +869,12 @@ mod tests {
 
         assert_eq!(std::fs::metadata(&out).unwrap().permissions().mode() & 0o777, 0o644);
         let expected = solo1::firmware::merge_hex_text(&[hex.as_path()], None, None).unwrap();
-        assert_eq!(std::fs::read_to_string(&out).unwrap(), expected);
+        assert_eq!(std::fs::read_to_string(&out).unwrap(), expected.as_str());
 
         let target = dir.path().join("target");
         let link = dir.path().join("link.hex");
         std::os::unix::fs::symlink(&target, &link).unwrap();
         super::cmd_mergehex(&[hex], &link, None, None).unwrap();
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), expected);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), expected.as_str());
     }
 }

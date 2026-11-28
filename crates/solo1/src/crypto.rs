@@ -12,6 +12,7 @@ use p256::{
 use sha2::{Digest, Sha256};
 use x509_cert::Certificate;
 use x509_cert::der::{Decode, Encode};
+use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
 
@@ -43,12 +44,13 @@ pub const KNOWN_FINGERPRINTS: &[(&str, AttestationResult)] = &[
 ];
 
 /// Generate a new ECDSA P-256 key pair.
-/// Returns (`private_key_pem`, `public_key_pem`).
+/// Returns (`private_key_pem`, `public_key_pem`). The private key text is wiped
+/// from memory when it is dropped.
 ///
 /// # Errors
 /// Returns [`Error::Crypto`] if the generated private or public key
 /// cannot be PEM-encoded.
-pub fn generate_keypair() -> Result<(String, String)> {
+pub fn generate_keypair() -> Result<(Zeroizing<String>, String)> {
     let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
     let secret_key = SecretKey::from(*signing_key.as_nonzero_scalar());
     let private_pem = secret_key
@@ -58,7 +60,7 @@ pub fn generate_keypair() -> Result<(String, String)> {
     let public_pem = verifying_key
         .to_public_key_pem(p256::pkcs8::LineEnding::LF)
         .map_err(|e| Error::Crypto(format!("Public key PEM encode error: {e}")))?;
-    Ok((private_pem.to_string(), public_pem))
+    Ok((private_pem, public_pem))
 }
 
 /// Load a signing key from a PEM file path.
