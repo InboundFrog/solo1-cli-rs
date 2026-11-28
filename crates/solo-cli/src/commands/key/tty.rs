@@ -13,10 +13,10 @@ use zeroize::Zeroizing;
 /// Returns [`SoloError::IoError`] if the prompt cannot be shown or the line cannot be read.
 pub fn prompt_secret(prompt: &str) -> Result<Zeroizing<String>> {
     #[cfg(unix)]
-    let _echo_off = unix::EchoOff::new();
-    Ok(Zeroizing::new(
-        rpassword::prompt_password(prompt).map_err(SoloError::IoError)?,
-    ))
+    let line = unix::with_guard(unix::EchoOff::new(), || rpassword::prompt_password(prompt));
+    #[cfg(not(unix))]
+    let line = rpassword::prompt_password(prompt);
+    Ok(Zeroizing::new(line.map_err(SoloError::IoError)?))
 }
 
 /// Put the terminal back as `prompt_secret` found it. The Ctrl-C handler calls this, because it
@@ -47,12 +47,22 @@ mod unix {
     impl EchoOff {
         /// `None` if there is no terminal; then `rpassword` reports its own error.
         pub fn new() -> Option<Self> {
-            let file = File::options().read(true).write(true).open("/dev/tty").ok()?;
+            Self::on(File::options().read(true).write(true).open("/dev/tty").ok()?)
+        }
+
+        /// Turn echo off on the terminal `file`. `None` if it is not a terminal.
+        pub fn on(file: File) -> Option<Self> {
             let fd = file.as_raw_fd();
             let orig = echo_off(fd)?;
             *SAVED.lock().unwrap_or_else(PoisonError::into_inner) = Some((fd, orig));
             Some(Self { _tty: file })
         }
+    }
+
+    /// Run `f` while `guard` is alive. The guard is dropped after `f` returns, also on a panic.
+    pub fn with_guard<R>(guard: Option<EchoOff>, f: impl FnOnce() -> R) -> R {
+        let _guard = guard;
+        f()
     }
 
     impl Drop for EchoOff {
