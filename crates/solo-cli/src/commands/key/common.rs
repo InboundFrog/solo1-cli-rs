@@ -4,6 +4,10 @@ use zeroize::Zeroizing;
 
 /// Prompt for the device PIN without echoing it, rejecting an empty entry.
 ///
+/// The PIN is wiped when the returned value is dropped, but not from all memory:
+/// `rpassword` leaves unwiped copies while it reads the text. See the note at the top
+/// of `pin.rs` for the details.
+///
 /// Add retry logic, PIN caching or a minimum PIN length here. This is the one place to do it.
 ///
 /// # Errors

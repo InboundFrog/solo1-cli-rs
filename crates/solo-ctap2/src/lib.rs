@@ -513,7 +513,9 @@ pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
 ///
 /// The text is written into a `String` that already has room for the result
 /// (NFC makes UTF-8 text at most 3 times longer), so the result is never
-/// reallocated. Only the normalizer's own buffers can hold an unwiped copy.
+/// reallocated. Limit: the result is wiped, but the normalizer's own internal
+/// buffers can hold an unwiped copy of the PIN. We cannot reach them, so the
+/// PIN is not guaranteed to be wiped from all memory.
 fn nfc_pin(pin: &str) -> Result<Zeroizing<String>> {
     let mut out = Zeroizing::new(String::with_capacity(pin.len().saturating_mul(3)));
     ComposingNormalizerBorrowed::new_nfc()
@@ -620,7 +622,12 @@ impl ClientPinSession {
                 "The PIN was converted to Unicode NFC form before use. If it was set in another form (for example by another tool or an older version of this one), the key will reject it and count a failed attempt."
             );
         }
-        let pin_hash_full = Zeroizing::new(<[u8; 32]>::from(Sha256::digest(nfc.as_bytes())));
+        // Write the digest straight into the wiped buffer. `finalize_into` takes the hasher
+        // by value, and sha2 wipes its state on drop (the `zeroize` feature is on).
+        let mut pin_hash_full = Zeroizing::new([0u8; 32]);
+        let mut hasher = Sha256::new();
+        hasher.update(nfc.as_bytes());
+        hasher.finalize_into((&mut *pin_hash_full).into());
         let pin_hash_prefix = pin_hash_full
             .get(..16)
             .ok_or_else(|| Error::Crypto("PIN hash too short".into()))?;
@@ -791,6 +798,13 @@ mod tests {
             aes256_cbc_encrypt(&session.shared_secret, &padded).unwrap()
         );
         let hash = Sha256::digest(pin.as_bytes());
+        // Known vector: SHA-256("123456") starts with 8d969eef6ecad3c29a3a629280e686cf.
+        assert_eq!(
+            hash[..16],
+            [
+                0x8d, 0x96, 0x9e, 0xef, 0x6e, 0xca, 0xd3, 0xc2, 0x9a, 0x3a, 0x62, 0x92, 0x80, 0xe6, 0x86, 0xcf
+            ]
+        );
         assert_eq!(
             session.encrypt_pin_hash(pin).unwrap().to_vec(),
             aes256_cbc_encrypt(&session.shared_secret, &hash[..16]).unwrap()
