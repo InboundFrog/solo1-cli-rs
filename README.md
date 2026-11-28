@@ -128,8 +128,8 @@ Credential IDs: `credential create` prints the credential ID as hex. `credential
 command that takes a credential ID (`challenge-response`, `sign-file`, `credential rm`) accepts both
 forms. A text of only hex digits (0-9, a-f, A-F) with an even length is read as hex. Anything else
 is read as base64, in the standard or the URL-safe alphabet, with or without `=` padding. A
-base64 ID that is made only of hex digits and has an even length would be read as hex. For an ID of
-70 bytes this is extremely unlikely.
+base64 ID that is made only of hex digits and has an even length would be read as hex. The ID that
+`credential ls` prints ends in `==`, so it is never read as hex.
 
 `credential create` prints the credential ID. With `--public-key-out <FILE>`, it also writes the
 public key of the new credential to FILE as PEM text. With `--json`, the JSON object has the extra
