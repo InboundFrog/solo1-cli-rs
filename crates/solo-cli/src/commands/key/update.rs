@@ -4,9 +4,36 @@ use std::time::Duration;
 use crate::commands::restart::{RECONNECT_INTERVAL, retry_open, wait_for_normal_key};
 use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
+use solo1::firmware::FirmwareVersion;
 
 /// Wait after entering the bootloader, so the old firmware is gone before the first open.
 const RECONNECT_SETTLE: Duration = Duration::from_millis(1500);
+
+/// Compare the version the key reports after the restart with the release tag that was written.
+///
+/// The tag has the same form as the version (`4.1.5`, a leading `v` is allowed). A firmware file
+/// from the user has no version, so `tag` is `None` and nothing is checked. A tag that is not a
+/// version is logged and skipped.
+///
+/// # Errors
+/// Returns an error that names both versions if they differ.
+fn check_restart_version(tag: Option<&str>, reported: &FirmwareVersion) -> Result<()> {
+    let Some(tag) = tag else { return Ok(()) };
+    let expected = match FirmwareVersion::parse(tag) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("Could not compare the firmware version: release tag {tag:?} is not a version ({e}).");
+            return Ok(());
+        }
+    };
+    if expected == *reported {
+        return Ok(());
+    }
+    Err(SoloError::FirmwareError(format!(
+        "The firmware was written and the key restarted, but it reports version {reported}, not {expected} \
+         (release {tag}). Run `solo key version` and check the key."
+    )))
+}
 
 /// Update the device firmware.
 ///
@@ -18,7 +45,8 @@ const RECONNECT_SETTLE: Duration = Duration::from_millis(1500);
 /// downloaded from GitHub, if the release contains no firmware asset, if the
 /// firmware JSON is malformed, if reconnecting in bootloader mode fails, if
 /// selecting the signature fails, if writing the firmware fails, or if the key
-/// does not answer as a normal key again within `timeout` after the write.
+/// does not answer as a normal key again within `timeout` after the write, or if the key
+/// restarts with another version than the downloaded release.
 pub fn cmd_update(
     hid: &impl HidDevice,
     firmware_file: Option<&Path>,
@@ -31,6 +59,7 @@ pub fn cmd_update(
     use solo1::firmware::{FIRMWARE_RELEASES_REPO, FirmwareJson, is_firmware_asset};
     use solo1::protocol::CMD_ENTER_BOOT;
 
+    let mut release_tag = None;
     let fw_json = if let Some(path) = firmware_file {
         println!("Loading firmware from {}", path.display());
         FirmwareJson::from_file(path)?
@@ -38,6 +67,7 @@ pub fn cmd_update(
         println!("Fetching latest firmware from GitHub...");
         let release = fetch_latest_release(FIRMWARE_RELEASES_REPO)?;
         println!("Latest release: {}", release.tag_name);
+        release_tag = Some(release.tag_name.clone());
         let asset = release
             .find_asset(is_firmware_asset)
             .ok_or_else(|| SoloError::FirmwareError("No firmware JSON in release".into()))?;
@@ -94,6 +124,40 @@ pub fn cmd_update(
     println!("Waiting for the key to restart...");
     let version = wait_for_normal_key(serial, timeout)?;
     println!("The key restarted with firmware {version}.");
+    check_restart_version(release_tag.as_deref(), &version)?;
     println!("Firmware update complete!");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+
+    const V415: FirmwareVersion = FirmwareVersion::new(4, 1, 5);
+
+    #[test]
+    fn matching_tag_passes() {
+        check_restart_version(Some("4.1.5"), &V415).unwrap();
+        check_restart_version(Some("v4.1.5"), &V415).unwrap();
+    }
+
+    #[test]
+    fn different_version_is_an_error_naming_both() {
+        let text = check_restart_version(Some("4.1.5"), &FirmwareVersion::new(4, 1, 4))
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains("4.1.4") && text.contains("4.1.5"), "{text}");
+        assert!(text.contains("was written"), "{text}");
+    }
+
+    #[test]
+    fn unparseable_tag_is_skipped() {
+        check_restart_version(Some("nightly"), &V415).unwrap();
+    }
+
+    #[test]
+    fn user_file_is_not_checked() {
+        check_restart_version(None, &V415).unwrap();
+    }
 }
