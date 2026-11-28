@@ -740,7 +740,12 @@ mod tests {
 
     #[test]
     fn test_validate_new_pin_zero_byte_rules() {
-        assert!(validate_new_pin("abc\0").is_err(), "ends in a zero byte");
+        // "abc\0" has 4 code points, so the zero-byte rule is the one that fires.
+        let err = validate_new_pin("abc\0").unwrap_err().to_string();
+        assert!(err.contains("zero byte"), "{err}");
+        // "\0\0\0" has 3 code points: the length rule is checked first.
+        let err = validate_new_pin("\0\0\0").unwrap_err().to_string();
+        assert!(err.contains("at least 4"), "{err}");
         assert!(validate_new_pin("abcd\0").is_err(), "ends in a zero byte");
         assert!(validate_new_pin("abcd\0\0").is_err(), "ends in two zero bytes");
         assert!(validate_new_pin("\0\0\0\0").is_err(), "only zero bytes");
