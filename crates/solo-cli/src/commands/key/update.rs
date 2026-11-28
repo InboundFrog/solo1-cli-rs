@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use super::common::is_bootloader;
 use super::ops::get_device_version;
 use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
@@ -61,7 +62,7 @@ fn normal_key_version(
     product: Option<&str>,
     query: impl FnOnce() -> Result<FirmwareVersion>,
 ) -> Result<FirmwareVersion> {
-    if product.is_some_and(|p| p.contains("Bootloader")) {
+    if is_bootloader(product) {
         return Err(SoloError::DeviceError("The key is still in the bootloader".into()));
     }
     query()

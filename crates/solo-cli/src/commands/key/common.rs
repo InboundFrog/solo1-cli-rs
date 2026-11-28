@@ -2,6 +2,16 @@ use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
 use zeroize::Zeroizing;
 
+/// Tell whether a key with this USB product name is in the bootloader.
+///
+/// The bootloader also answers the version query, with its own version, so the
+/// product name is the only way to tell. A missing product name counts as a
+/// normal key.
+#[must_use]
+pub fn is_bootloader(product: Option<&str>) -> bool {
+    product.is_some_and(|p| p.contains("Bootloader"))
+}
+
 /// Prompt for the device PIN without echoing it, rejecting an empty entry.
 ///
 /// Add retry logic, PIN caching or a minimum PIN length here. This is the one place to do it.
