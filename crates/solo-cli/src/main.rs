@@ -114,7 +114,7 @@ const fn json_unsupported(cmd: &KeyCommands) -> Option<&'static str> {
 
 fn refuse_json(cmd: &KeyCommands, json: bool) -> error::Result<()> {
     if json && let Some(name) = json_unsupported(cmd) {
-        return Err(error::SoloError::DeviceError(format!(
+        return Err(error::SoloError::Usage(format!(
             "`key {name}` has no JSON output, so `--json` is not accepted with it"
         )));
     }
@@ -382,6 +382,7 @@ mod tests {
     #[test]
     fn run_key_command_refuses_json_before_opening_a_device() {
         let err = run_key_command(None, KeyCommands::Wink, true, std::time::Duration::from_secs(1)).unwrap_err();
+        assert!(matches!(err, error::SoloError::Usage(_)), "{err}");
         assert!(err.to_string().contains("`key wink` has no JSON output"), "{err}");
     }
 
