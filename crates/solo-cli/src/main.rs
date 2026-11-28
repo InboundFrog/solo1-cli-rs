@@ -214,14 +214,14 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
         }
 
         ProgramCommands::Dfu { firmware } => {
-            // DFU uses libusb directly, not HID
-            program::cmd_program_dfu(&firmware)?;
+            // DFU uses libusb directly, not HID. `--serial` is the USB serial of the ST DFU device.
+            program::cmd_program_dfu(&firmware, serial)?;
         }
 
         // A device in ST DFU mode is not a HID device, so do not open one.
         ProgramCommands::Aux {
             command: AuxCommands::LeaveDfu,
-        } => aux::cmd_leave_dfu()?,
+        } => aux::cmd_leave_dfu(serial)?,
 
         ProgramCommands::Aux { command } => {
             let hid = solo1::open(serial, timeout)?;

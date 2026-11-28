@@ -41,16 +41,19 @@ pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
     Ok(())
 }
 
-/// Leave ST DFU mode. Finds the ST DFU device over USB (it is not a HID
-/// device), sets the boot options and detaches, as the reference tool does.
-/// The options only take effect after a power cycle.
+/// Leave ST DFU mode.
+///
+/// Finds the ST DFU device over USB (it is not a HID device), sets the boot
+/// options and detaches, as the reference tool does. The options only take
+/// effect after a power cycle. `serial` is the USB serial of the ST DFU device.
 ///
 /// # Errors
-/// Returns an error if no ST DFU device is found, or reading the option bytes
+/// Returns an error if no ST DFU device is chosen (none, no match for `serial`,
+/// or several without `serial`), or reading the option bytes
 /// or the DFU transfers fail.
-pub fn cmd_leave_dfu() -> Result<()> {
+pub fn cmd_leave_dfu(serial: Option<&str>) -> Result<()> {
     println!("Leaving ST DFU mode...");
-    DfuDevice::open()?.leave_dfu()?;
+    DfuDevice::open(serial)?.leave_dfu()?;
     println!("Please powercycle the device (pull out, plug in again)");
     Ok(())
 }
