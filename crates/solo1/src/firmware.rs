@@ -568,8 +568,9 @@ fn parse_attestation_key(raw: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     let is_text = body.iter().all(|b| b.is_ascii_graphic() || b.is_ascii_whitespace());
     if !is_text {
         return Err(Error::Firmware(
-            "Attestation key file is not plain ASCII text. Only hex is accepted: 64 hex \
-             digits. To convert a raw 32-byte key file, run: xxd -p -c 32 key.bin > key.hex"
+            "Attestation key file is not plain ASCII text. It must hold 64 hex digits as \
+             text. Raw 32-byte key files are not accepted. To convert one, run for example: \
+             xxd -p -c 32 key.bin > key.hex"
                 .into(),
         ));
     }
@@ -1571,7 +1572,7 @@ mod tests {
         for raw in &inputs {
             let err = key_err(raw);
             assert!(
-                err.contains("Only hex is accepted") && err.contains("xxd -p -c 32"),
+                err.contains("Raw 32-byte key files are not accepted") && err.contains("xxd -p -c 32"),
                 "len {}",
                 raw.len()
             );
@@ -1597,7 +1598,7 @@ mod tests {
 
         // A raw key that starts with the same three bytes is refused.
         let raw_key = [bom.as_slice(), &[0xffu8; 29]].concat();
-        assert!(key_err(&raw_key).contains("Only hex is accepted"));
+        assert!(key_err(&raw_key).contains("Raw 32-byte key files are not accepted"));
     }
 
     #[test]
@@ -1606,7 +1607,7 @@ mod tests {
             .into_iter()
             .chain("ab".repeat(32).bytes().flat_map(|b| [b, 0]))
             .collect();
-        assert!(key_err(&utf16).contains("Only hex is accepted"));
+        assert!(key_err(&utf16).contains("Raw 32-byte key files are not accepted"));
     }
 
     #[test]
@@ -1623,7 +1624,7 @@ mod tests {
         assert!(count.is_ascii());
 
         let err = parse_attestation_key(&[0xc3u8; 33]).unwrap_err();
-        assert!(err.to_string().contains("Only hex is accepted"));
+        assert!(err.to_string().contains("Raw 32-byte key files are not accepted"));
         for text in [format!("{err}"), format!("{err:?}")] {
             assert!(!text.contains("c3") && !text.contains("C3") && !text.contains("195"));
             assert!(text.is_ascii(), "message is not plain ASCII");
