@@ -19,9 +19,15 @@ fn main() {
     solo_cli::logger::init(cli.verbose);
 
     let result = run(cli);
-    if let Err(e) = result {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
+    match result {
+        Ok(()) => {}
+        // The reader of stdout has gone away. This ends the command quietly with
+        // exit code 0, as `key rng raw` and `monitor` already do.
+        Err(error::SoloError::IoError(e)) if e.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
     }
 }
 
