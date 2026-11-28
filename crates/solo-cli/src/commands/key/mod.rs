@@ -9,6 +9,7 @@ mod update;
 mod verify;
 
 pub use fido2::{cmd_challenge_response, cmd_make_credential};
+pub use ops::get_device_version;
 pub use ops::{
     cmd_disable_updates, cmd_key_version, cmd_key_version_solo2, cmd_keyboard, cmd_ping, cmd_reset, cmd_wink,
 };
