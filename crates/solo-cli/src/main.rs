@@ -6,16 +6,17 @@ use solo_cli::error;
 use solo_cli::output;
 
 fn main() {
+    let cli = Cli::parse();
+
+    solo_cli::logger::init(cli.verbose);
+
+    // After the logger is set up, so that this warning is not dropped.
     if let Err(e) = ctrlc::set_handler(|| {
         eprintln!("\nInterrupted.");
         std::process::exit(130);
     }) {
-        eprintln!("Warning: failed to set Ctrl-C handler: {e}");
+        log::warn!("failed to set Ctrl-C handler: {e}");
     }
-
-    let cli = Cli::parse();
-
-    solo_cli::logger::init(cli.verbose);
 
     let result = run(cli);
     if let Err(e) = result {
