@@ -74,7 +74,11 @@ pub fn cmd_key_version_solo2(hid: &impl HidDevice, json: bool) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
+/// Ask the device for its firmware version.
+///
+/// # Errors
+/// Returns an error if the query fails or the response is shorter than three bytes.
+pub fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion> {
     query_version(hid).map(|(version, _)| version)
 }
 

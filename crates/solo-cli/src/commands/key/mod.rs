@@ -11,6 +11,7 @@ mod verify;
 pub use fido2::{cmd_challenge_response, cmd_make_credential};
 pub use ops::{
     cmd_disable_updates, cmd_key_version, cmd_key_version_solo2, cmd_keyboard, cmd_ping, cmd_reset, cmd_wink,
+    get_device_version,
 };
 pub use pin::{cmd_change_pin, cmd_set_pin};
 pub use probe::{SIGN_FILE_RP_ID, cmd_probe, cmd_sign_file, with_suffix};

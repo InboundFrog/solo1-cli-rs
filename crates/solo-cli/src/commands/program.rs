@@ -1,14 +1,16 @@
 /// `program` subcommand: bootloader, DFU.
 use std::path::Path;
+use std::time::Duration;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 
+use crate::commands::restart::wait_for_normal_key;
 use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
 use solo1::bootloader;
 use solo1::dfu::DfuDevice;
-use solo1::firmware::{self, FirmwareJson};
+use solo1::firmware::{self, FirmwareJson, FirmwareVersion};
 
 /// Write `firmware` to the device starting at `base_addr` with a progress bar,
 /// then send `CMD_DONE` with `signature` so the bootloader verifies and reboots.
@@ -61,10 +63,29 @@ pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u
 /// Program via the Solo bootloader (firmware.json format).
 /// The device must already be in bootloader mode when this is called.
 ///
+/// After the write, the key restarts. This waits until it answers as a normal key again,
+/// for at most `timeout`, and prints its firmware version. `serial` selects the key to wait for.
+///
 /// # Errors
 /// Returns an error if the firmware JSON cannot be loaded or parsed, if
-/// selecting the signature fails, or if writing the firmware fails.
-pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Result<()> {
+/// selecting the signature fails, if writing the firmware fails, or if the key
+/// does not answer as a normal key again within `timeout` after the write.
+pub fn cmd_program_bootloader(
+    hid: impl HidDevice,
+    firmware_json: &Path,
+    serial: Option<&str>,
+    timeout: Duration,
+) -> Result<()> {
+    program_bootloader_then(hid, firmware_json, || wait_for_normal_key(serial, timeout))
+}
+
+/// Write the firmware, close the device, then run `wait` and print the version it returns.
+/// `wait` is not run if the write fails.
+fn program_bootloader_then(
+    hid: impl HidDevice,
+    firmware_json: &Path,
+    wait: impl FnOnce() -> Result<FirmwareVersion>,
+) -> Result<()> {
     log::debug!("Loading firmware JSON: {}", firmware_json.display());
     let fw = FirmwareJson::from_file(firmware_json)?;
     let (flash_start, firmware_bytes) = fw.firmware_binary()?;
@@ -77,10 +98,17 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
     // signature to use. The BootVersion command also clears the bootloader's
     // internal has_erased flag, so sending it after writes start would erase
     // the application again. The Python tool uses the same order.
-    let signature = select_signature(hid, &fw)?;
+    let signature = select_signature(&hid, &fw)?;
     log::debug!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
 
-    write_firmware(hid, flash_start, &firmware_bytes, &signature, "Finalizing firmware...")?;
+    write_firmware(&hid, flash_start, &firmware_bytes, &signature, "Finalizing firmware...")?;
+
+    // CMD_DONE only means the bootloader accepted the image. The key still has to restart.
+    // An open handle to the old device is of no use and may get in the way of the next open.
+    drop(hid);
+    println!("Waiting for the key to restart...");
+    let version = wait()?;
+    println!("The key restarted with firmware {version}.");
     println!("Done.");
     Ok(())
 }
@@ -119,4 +147,91 @@ pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
     pb.finish_with_message("Done");
     println!("DFU programming complete.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+    use super::*;
+    use solo_ctaphid::mock::MockDevice;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// A mock that records when it is dropped.
+    struct DropFlag {
+        inner: MockDevice,
+        dropped: Rc<Cell<bool>>,
+    }
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.dropped.set(true);
+        }
+    }
+
+    impl HidDevice for DropFlag {
+        fn send_recv(&self, cmd: u8, data: &[u8]) -> solo_ctaphid::Result<Vec<u8>> {
+            self.inner.send_recv(cmd, data)
+        }
+        fn send(&self, cmd: u8, data: &[u8]) -> solo_ctaphid::Result<()> {
+            self.inner.send(cmd, data)
+        }
+    }
+
+    /// Firmware file with 10 bytes: one write chunk.
+    fn firmware_file(dir: &tempfile::TempDir) -> std::path::PathBuf {
+        let json = solo1::firmware::create_firmware_json(&[0xAB; 10], &[0x01; 64]);
+        let path = dir.path().join("fw.json");
+        std::fs::write(&path, serde_json::to_string(&json).unwrap()).unwrap();
+        path
+    }
+
+    /// Replies for: bootloader version, one write, done. The first byte is the status.
+    fn good_replies() -> Vec<solo_ctaphid::Result<Vec<u8>>> {
+        vec![Ok(vec![0, 3, 0, 0]), Ok(vec![0]), Ok(vec![0])]
+    }
+
+    fn device(replies: Vec<solo_ctaphid::Result<Vec<u8>>>) -> (DropFlag, Rc<Cell<bool>>) {
+        let dropped = Rc::new(Cell::new(false));
+        let dev = DropFlag {
+            inner: MockDevice::new(replies),
+            dropped: Rc::clone(&dropped),
+        };
+        (dev, dropped)
+    }
+
+    #[test]
+    fn waits_after_write_with_device_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let (dev, dropped) = device(good_replies());
+        let mut waited = false;
+        program_bootloader_then(dev, &firmware_file(&dir), || {
+            waited = true;
+            assert!(dropped.get(), "the device must be closed before the wait");
+            Ok(FirmwareVersion::new(4, 1, 5))
+        })
+        .unwrap();
+        assert!(waited);
+    }
+
+    #[test]
+    fn wait_error_is_returned() {
+        let dir = tempfile::tempdir().unwrap();
+        let (dev, _) = device(good_replies());
+        let r = program_bootloader_then(dev, &firmware_file(&dir), || {
+            Err(SoloError::FirmwareError("did not restart".into()))
+        });
+        assert!(r.unwrap_err().to_string().contains("did not restart"));
+    }
+
+    #[test]
+    fn no_wait_when_write_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        // The write is answered with a bootloader error status.
+        let (dev, _) = device(vec![Ok(vec![0, 3, 0, 0]), Ok(vec![1])]);
+        let r = program_bootloader_then(dev, &firmware_file(&dir), || {
+            panic!("must not wait after a failed write")
+        });
+        assert!(r.is_err());
+    }
 }

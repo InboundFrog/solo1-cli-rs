@@ -274,7 +274,7 @@ pub struct ProgramArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum ProgramCommands {
-    /// Program via Solo bootloader
+    /// Program via Solo bootloader, then wait for the key to restart (up to --timeout) and show its version
     Bootloader {
         /// Path to firmware JSON file
         firmware: PathBuf,
