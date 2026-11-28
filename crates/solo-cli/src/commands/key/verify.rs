@@ -29,9 +29,10 @@ struct AttestationData {
 /// Key 0x03 of that map is `attStmt`, which must contain an `x5c` array
 /// whose first element is the leaf certificate as a byte string.
 ///
-/// Per `WebAuthn` §8.2 the packed attestation `alg` must be -7 (ES256); any
-/// other algorithm is an error because Solo keys only attest with ES256 and
-/// this code cannot verify anything else.
+/// In the packed format (`WebAuthn` §8.2), `alg` names the algorithm of the
+/// attestation key. The spec does not fix it to -7. This code accepts only -7
+/// (ES256) and returns an error for any other value or a missing `alg`, because Solo keys only
+/// attest with ES256 and this code cannot verify anything else.
 fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
     use ciborium::value::Value;
 

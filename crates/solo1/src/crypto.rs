@@ -133,8 +133,8 @@ pub enum AttestationResult {
 /// ## What this check does NOT prove
 ///
 /// - **No certificate chain validation.** The attestation certificate is not
-///   verified against a trusted root CA.  Chain validation is a FIDO requirement
-///   for full attestation verification (see CTAP2 §8.1 and `WebAuthn` §6.5.3).
+///   verified against a trusted root CA. In `WebAuthn` §7.1 "Registering a New Credential", step 21, a relying
+///   party checks that the trust path chains up to an acceptable root (see also §6.5.3 "Attestation Types").
 /// - **No validity date check.** An expired attestation certificate will still
 ///   match if its full DER bytes are identical to the known fingerprint.
 /// - **No revocation check.** There is no CRL or OCSP query.
