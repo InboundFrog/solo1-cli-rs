@@ -22,8 +22,12 @@ pub enum SoloError {
     #[error("CBOR deserialization error: {0}")]
     CborDeError(#[from] ciborium::de::Error<std::io::Error>),
 
-    #[error("Authenticator error (CTAP2 {code:#04x}): {message}")]
-    AuthenticatorError { code: u8, message: &'static str },
+    #[error("Authenticator error in {step} (CTAP2 {code:#04x}): {message}")]
+    AuthenticatorError {
+        step: &'static str,
+        code: u8,
+        message: &'static str,
+    },
 
     #[error("Malformed response from device: {0}")]
     MalformedResponse(String),
@@ -98,7 +102,9 @@ impl From<solo_ctap2::Error> for SoloError {
     fn from(e: solo_ctap2::Error) -> Self {
         match e {
             solo_ctap2::Error::Transport(t) => t.into(),
-            solo_ctap2::Error::Authenticator { code, message } => Self::AuthenticatorError { code, message },
+            solo_ctap2::Error::Authenticator { step, code, message } => {
+                Self::AuthenticatorError { step, code, message }
+            }
             solo_ctap2::Error::CborSer(e) => Self::CborSerError(e),
             solo_ctap2::Error::CborDe(e) => Self::CborDeError(e),
             solo_ctap2::Error::MalformedResponse(m) => Self::MalformedResponse(m),
@@ -146,10 +152,12 @@ mod tests {
     #[test]
     fn test_ctap2_errors_map_to_existing_variants() {
         let e = SoloError::from(solo_ctap2::Error::Authenticator {
+            step: "setPIN",
             code: 0x31,
             message: "PIN invalid",
         });
         assert!(matches!(e, SoloError::AuthenticatorError { code: 0x31, .. }));
+        assert!(e.to_string().contains("in setPIN"), "{e}");
 
         let e = SoloError::from(solo_ctap2::Error::Transport(solo_ctaphid::Error::Timeout));
         assert!(matches!(e, SoloError::Timeout));

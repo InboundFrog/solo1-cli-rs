@@ -146,7 +146,7 @@ pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
 /// answer 0x2F.
 fn send_reset(hid: &impl HidDevice) -> Result<()> {
     let response = hid.send_recv(CTAPHID_CBOR, &[0x07u8])?;
-    solo_ctap2::check_ctap_status(&response, "authenticatorReset")?;
+    solo_ctap2::check_ctap_status(&response, "reset")?;
     Ok(())
 }
 
@@ -262,6 +262,7 @@ mod tests {
         let device = MockDevice::new(vec![Ok(vec![0x30])]);
         let err = send_reset(&device).unwrap_err();
         assert!(matches!(err, SoloError::AuthenticatorError { code: 0x30, .. }), "{err}");
+        assert!(err.to_string().contains("in reset"), "{err}");
     }
 
     /// Status 0x00 means the key accepted the reset.
