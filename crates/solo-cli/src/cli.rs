@@ -264,8 +264,8 @@ pub enum CredentialCommands {
 /// Program subcommand with optional device selection.
 #[derive(Args, Debug)]
 pub struct ProgramArgs {
-    /// Serial number of device to use. For `dfu` and `aux leave-dfu` it is the USB serial of the
-    /// ST DFU device, and it is required when more than one ST DFU device is connected.
+    /// Serial number of device to use. For dfu and aux leave-dfu: the USB serial of the ST DFU device
+    /// (0483:df11), which may not be the serial that solo ls shows. Needed when more than one is connected.
     #[arg(long)]
     pub serial: Option<String>,
 
