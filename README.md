@@ -203,6 +203,10 @@ solo program aux reboot
 solo program aux bootloader-version
 ```
 
+For `dfu` and `aux leave-dfu`, `--serial` is the USB serial number of the ST DFU
+device (ids 0483:df11). With more than one such device connected, these two
+commands stop with an error unless you give `--serial`.
+
 ### Firmware utilities
 
 ```sh
