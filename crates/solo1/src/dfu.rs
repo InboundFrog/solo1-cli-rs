@@ -265,6 +265,24 @@ fn addr_to_block(address: u32) -> Result<u16> {
     u16::try_from(block).map_err(|_| Error::Protocol(format!("DFU address 0x{address:08X} is beyond the block range")))
 }
 
+/// The DFU block of page number `index` when the first page is `first_block`.
+fn page_block(first_block: u16, index: usize) -> Result<u16> {
+    u16::try_from(index)
+        .ok()
+        .and_then(|i| first_block.checked_add(i))
+        .ok_or_else(|| Error::Protocol("DFU block number overflow".into()))
+}
+
+/// Index of the first byte where `got` differs from `expected`. If `got` is a
+/// shorter copy of `expected`, this is the index where `got` ends.
+fn first_difference(expected: &[u8], got: &[u8]) -> Option<usize> {
+    expected
+        .iter()
+        .zip(got)
+        .position(|(a, b)| a != b)
+        .or_else(|| (got.len() < expected.len()).then_some(got.len()))
+}
+
 /// Set the boot options that leave-dfu needs: nBOOT0 on, nSWBOOT0 off.
 ///
 /// Only bits 26 and 27 of the first little-endian word can change. Byte 0
@@ -415,15 +433,42 @@ impl<T: Transport> Dfu<T> {
         }
 
         for (index, chunk) in firmware.chunks(chunk_size).enumerate() {
-            let block = u16::try_from(index)
-                .ok()
-                .and_then(|i| first_block.checked_add(i))
-                .ok_or_else(|| Error::Protocol("DFU block number overflow".into()))?;
+            let block = page_block(first_block, index)?;
             // Pad the last page with the erased-flash value.
             let mut page = chunk.to_vec();
             page.resize(chunk_size, 0xFF);
             self.write_page(block, &page)?;
             on_progress(index.saturating_add(1), total_chunks);
+        }
+        Ok(())
+    }
+
+    /// Read the flash back, page by page from `address`, and compare it with
+    /// `firmware`. Fails at the first byte that differs.
+    ///
+    /// The whole image is compared, also a last page that is only partly
+    /// filled. Only the bytes of the image are compared. The 0xFF padding that
+    /// `program` adds to the last page is not.
+    fn verify(&self, address: u32, firmware: &[u8]) -> Result<()> {
+        let first_block = addr_to_block(address)?;
+        let chunk_size =
+            usize::try_from(DFU_CHUNK_SIZE).map_err(|_| Error::Protocol("DFU chunk size overflow".into()))?;
+        for (index, chunk) in firmware.chunks(chunk_size).enumerate() {
+            let got = self.read_block(page_block(first_block, index)?, chunk_size)?;
+            if let Some(pos) = first_difference(chunk, &got) {
+                let bad_address = index
+                    .checked_mul(chunk_size)
+                    .and_then(|offset| offset.checked_add(pos))
+                    .and_then(|offset| u32::try_from(offset).ok())
+                    .and_then(|offset| address.checked_add(offset))
+                    .ok_or_else(|| Error::Protocol("DFU address overflow".into()))?;
+                let show = |b: Option<&u8>| b.map_or_else(|| "no data".to_string(), |b| format!("0x{b:02X}"));
+                return Err(Error::Device(format!(
+                    "Flash readback differs from the firmware at address 0x{bad_address:08X}: wrote {}, read {}",
+                    show(chunk.get(pos)),
+                    show(got.get(pos)),
+                )));
+            }
         }
         Ok(())
     }
@@ -436,12 +481,18 @@ impl<T: Transport> Dfu<T> {
         Ok(())
     }
 
+    /// Read up to `len` bytes from a DFU block. The device may send fewer.
+    fn read_block(&self, block: u16, len: usize) -> Result<Vec<u8>> {
+        self.ensure_state(&[DFU_STATE_IDLE, DFU_STATE_UPLOAD_IDLE], "reading memory")?;
+        let mut buf = vec![0u8; len];
+        let n = self.io.control_in(DFU_UPLOAD, block, &mut buf)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
     /// Read `OPTION_BYTES_LEN` bytes at the current address pointer.
     fn read_at_pointer(&self) -> Result<Vec<u8>> {
-        self.ensure_state(&[DFU_STATE_IDLE, DFU_STATE_UPLOAD_IDLE], "reading memory")?;
-        let mut buf = [0u8; OPTION_BYTES_LEN];
-        let n = self.io.control_in(DFU_UPLOAD, BLOCK_AT_POINTER, &mut buf)?;
-        Ok(buf.get(..n).unwrap_or_default().to_vec())
+        self.read_block(BLOCK_AT_POINTER, OPTION_BYTES_LEN)
     }
 
     /// Write 16 bytes at the current address pointer. The device may reset
@@ -547,6 +598,17 @@ impl DfuDevice {
         self.dfu.program(address, firmware, on_progress)
     }
 
+    /// Read the flash back from `address` and compare it with `firmware`. Call
+    /// it after `program` with the same address and firmware.
+    ///
+    /// # Errors
+    /// Returns an error naming the first address that differs, if a read
+    /// returns fewer bytes than the firmware has there, if the address is not
+    /// valid, a USB transfer fails, or the device is in the wrong state.
+    pub fn verify(&self, address: u32, firmware: &[u8]) -> Result<()> {
+        self.dfu.verify(address, firmware)
+    }
+
     /// Set the boot options and make the device leave ST DFU mode, as the
     /// reference `leave-dfu` does. The options only take effect after a power
     /// cycle of the key.
@@ -577,6 +639,142 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
+
+    /// Script for `verify`: per page, a state check and the page read.
+    fn verify_script(pages: &[Vec<u8>]) -> Vec<Result<Vec<u8>>> {
+        pages.iter().flat_map(|p| [st(DFU_STATE_IDLE), Ok(p.clone())]).collect()
+    }
+
+    /// 2058 bytes: one full page and a last page with 10 bytes.
+    fn two_page_image() -> Vec<u8> {
+        (0..2058u32).map(|i| (i % 251) as u8).collect()
+    }
+
+    /// What a device returns for `image`: full pages, the last one padded with 0xFF.
+    fn readback(image: &[u8]) -> Vec<Vec<u8>> {
+        image
+            .chunks(2048)
+            .map(|c| {
+                let mut p = c.to_vec();
+                p.resize(2048, 0xFF);
+                p
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_verify_passes_on_a_good_readback_and_reads_each_page() {
+        let image = two_page_image();
+        let fake = Fake::with_ins(verify_script(&readback(&image)));
+        let dfu = Dfu::new(fake);
+        dfu.verify(FLASH_BASE, &image).unwrap();
+        let reads: Vec<_> = dfu
+            .io
+            .log()
+            .into_iter()
+            .filter(|x| matches!(x, Xfer::In { request, .. } if *request == DFU_UPLOAD))
+            .collect();
+        let upload = |value| Xfer::In {
+            request: DFU_UPLOAD,
+            value,
+            len: 2048,
+        };
+        assert_eq!(reads, [upload(2), upload(3)]);
+    }
+
+    #[test]
+    fn test_verify_names_the_first_address_that_differs() {
+        let image = two_page_image();
+        let mut pages = readback(&image);
+        pages[1][3] ^= 0x01; // address FLASH_BASE + 2048 + 3
+        pages[0][5] ^= 0x01; // page 0 is read first, so this lower address is the one reported
+        let err = Dfu::new(Fake::with_ins(verify_script(&pages)))
+            .verify(FLASH_BASE, &image)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("0x08000005"), "{err}");
+
+        let mut pages = readback(&image);
+        pages[1][3] ^= 0x01;
+        let err = Dfu::new(Fake::with_ins(verify_script(&pages)))
+            .verify(FLASH_BASE, &image)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("0x08000803"), "{err}");
+    }
+
+    #[test]
+    fn test_verify_starts_at_the_given_address() {
+        let image = vec![0xAA; 16];
+        let mut page = readback(&image);
+        page[0][0] = 0x00;
+        let err = Dfu::new(Fake::with_ins(verify_script(&page)))
+            .verify(FLASH_BASE + 0x1000, &image)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("0x08001000"), "{err}");
+
+        // A good readback from this address reads block 4, not block 2.
+        let dfu = Dfu::new(Fake::with_ins(verify_script(&readback(&image))));
+        dfu.verify(FLASH_BASE + 0x1000, &image).unwrap();
+        assert!(dfu.io.log().contains(&Xfer::In {
+            request: DFU_UPLOAD,
+            value: 4,
+            len: 2048
+        }));
+    }
+
+    #[test]
+    fn test_verify_after_program_clears_download_idle_first() {
+        let image = vec![0xAA; 16];
+        let mut ins = vec![st(DFU_STATE_DOWNLOAD_IDLE), st(DFU_STATE_IDLE)];
+        ins.extend(readback(&image).into_iter().map(Ok));
+        let dfu = Dfu::new(Fake::with_ins(ins));
+        dfu.verify(FLASH_BASE, &image).unwrap();
+        assert_eq!(
+            dfu.io.log(),
+            vec![
+                get_status_xfer(),
+                clrstatus(),
+                clrstatus(),
+                get_status_xfer(),
+                Xfer::In {
+                    request: DFU_UPLOAD,
+                    value: 2,
+                    len: 2048
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_verify_ignores_the_padding_of_the_last_page() {
+        let image = two_page_image();
+        let mut pages = readback(&image);
+        pages[1][10] = 0x00; // first byte after the image
+        Dfu::new(Fake::with_ins(verify_script(&pages)))
+            .verify(FLASH_BASE, &image)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_verify_fails_on_a_short_read() {
+        let image = two_page_image();
+        let mut pages = readback(&image);
+        pages[1].truncate(4); // image needs 10 bytes here
+        let err = Dfu::new(Fake::with_ins(verify_script(&pages)))
+            .verify(FLASH_BASE, &image)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("0x08000804") && err.contains("no data"), "{err}");
+    }
+
+    #[test]
+    fn test_verify_rejects_bad_address_before_any_transfer() {
+        let dfu = Dfu::new(Fake::default());
+        assert!(dfu.verify(FLASH_BASE + 1, &[1]).is_err());
+        assert_eq!(dfu.io.log().len(), 0);
+    }
 
     type Cand = (u8, std::result::Result<String, &'static str>);
 
