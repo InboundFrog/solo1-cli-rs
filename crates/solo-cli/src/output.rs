@@ -18,6 +18,9 @@ pub struct CredentialEntry {
     pub rp_id: String,
     pub user_name: String,
     pub credential_id: String, // base64, matching the human display
+    /// PEM text. Absent if the key did not send the public key or it could not be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key_pem: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -148,11 +151,27 @@ mod tests {
                 rp_id: "example.com".into(),
                 user_name: "alice".into(),
                 credential_id: "abc123==".into(),
+                public_key_pem: None,
             }],
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["credentials"][0]["rp_id"], "example.com");
+        assert!(v["credentials"][0].get("public_key_pem").is_none());
+    }
+
+    #[test]
+    fn credential_entry_with_public_key_serializes_last() {
+        let e = CredentialEntry {
+            rp_id: "example.com".into(),
+            user_name: "alice".into(),
+            credential_id: "abc123==".into(),
+            public_key_pem: Some("PEM\n".into()),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["public_key_pem"], "PEM\n");
+        assert!(json.find("credential_id").unwrap() < json.find("public_key_pem").unwrap());
     }
 
     #[test]
