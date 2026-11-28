@@ -102,24 +102,44 @@ const fn json_unsupported(cmd: &KeyCommands) -> Option<&'static str> {
         KeyCommands::Credential {
             command: CredentialCommands::Rm { .. },
         } => Some("credential rm"),
-        KeyCommands::Rng { .. }
+        KeyCommands::Rng {
+            command: RngCommands::Hexbytes { .. },
+        }
+        | KeyCommands::Credential {
+            command: CredentialCommands::Info | CredentialCommands::Ls | CredentialCommands::Create { .. },
+        }
         | KeyCommands::ChallengeResponse { .. }
         | KeyCommands::Verify
         | KeyCommands::Version
         | KeyCommands::Ping { .. }
         | KeyCommands::Probe { .. }
-        | KeyCommands::SignFile { .. }
-        | KeyCommands::Credential { .. } => None,
+        | KeyCommands::SignFile { .. } => None,
     }
 }
 
 fn refuse_json(cmd: &KeyCommands, json: bool) -> error::Result<()> {
     if json && let Some(name) = json_unsupported(cmd) {
-        return Err(error::SoloError::DeviceError(format!(
+        return Err(error::SoloError::Usage(format!(
             "`key {name}` has no JSON output, so `--json` is not accepted with it"
         )));
     }
     Ok(())
+}
+
+fn sign_file_to_stdio(
+    hid: &impl solo_ctaphid::HidDevice,
+    credential_id: &str,
+    filename: &std::path::Path,
+    json: bool,
+) -> error::Result<()> {
+    key::cmd_sign_file(
+        hid,
+        credential_id,
+        filename,
+        json,
+        &mut std::io::stdout().lock(),
+        &mut std::io::stderr().lock(),
+    )
 }
 
 fn run_key_command(
@@ -207,14 +227,14 @@ fn run_key_command(
 
         KeyCommands::Probe { hash_type, filename } => {
             key.require(Model::Solo1, "key probe")?;
-            key::cmd_probe(hid, &hash_type, &filename, json)?;
+            key::cmd_probe(hid, &hash_type, &filename, json, &mut std::io::stdout().lock())?;
         }
 
         KeyCommands::SignFile {
             credential_id,
             filename,
         } => {
-            key::cmd_sign_file(hid, &credential_id, &filename, json)?;
+            sign_file_to_stdio(hid, &credential_id, &filename, json)?;
         }
 
         KeyCommands::Update { firmware } => {
@@ -375,6 +395,7 @@ mod tests {
             Some("credential rm")
         );
         assert_eq!(name(&["solo", "key", "version"]), None);
+        assert!(refuse_json(&KeyCommands::Wink, false).is_ok());
         assert_eq!(name(&["solo", "key", "rng", "hexbytes", "4"]), None);
         assert_eq!(name(&["solo", "key", "credential", "ls"]), None);
     }
@@ -383,6 +404,7 @@ mod tests {
     #[test]
     fn run_key_command_refuses_json_before_opening_a_device() {
         let err = run_key_command(None, KeyCommands::Wink, true, std::time::Duration::from_secs(1)).unwrap_err();
+        assert!(matches!(err, error::SoloError::Usage(_)), "{err}");
         assert!(err.to_string().contains("`key wink` has no JSON output"), "{err}");
     }
 

@@ -141,10 +141,19 @@ pub struct ProbeOutput {
 /// # Errors
 /// Returns an error if `value` cannot be serialized to JSON.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    println!(
+    write_json(&mut std::io::stdout().lock(), value)
+}
+
+/// Serialize `value` to pretty JSON and write it, with a newline, to `out`.
+///
+/// # Errors
+/// Returns an error if `value` cannot be serialized to JSON or if writing fails.
+pub fn write_json<T: Serialize>(out: &mut impl std::io::Write, value: &T) -> Result<()> {
+    writeln!(
+        out,
         "{}",
         serde_json::to_string_pretty(value).map_err(crate::error::SoloError::JsonError)?
-    );
+    )?;
     Ok(())
 }
 
