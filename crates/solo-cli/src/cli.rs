@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 /// Help text for every credential id argument. Keep it in one place so that the commands agree.
-const CREDENTIAL_ID_HELP: &str = "Credential ID (hex or base64)";
+const CREDENTIAL_ID_HELP: &str = "Credential ID, as hex or base64. A text of only hex digits with an even length is read as hex; anything else is read as base64 (standard or URL-safe, with or without padding)";
+
+/// Same rule for `credential rm`, where the id is an alternative to `--host` and `--user`.
+const CREDENTIAL_ID_RM_HELP: &str = "Credential ID, as hex or base64; alternative to --host/--user. A text of only hex digits with an even length is read as hex; anything else is read as base64 (standard or URL-safe, with or without padding)";
 
 /// The bytes of a credential id. A newtype, because clap reads a plain `Vec<u8>` as a list of values.
 #[derive(Clone, Debug)]
@@ -277,8 +280,7 @@ pub enum CredentialCommands {
 
     /// Remove a resident credential
     Rm {
-        /// Credential ID (hex or base64); alternative to --host/--user
-        #[arg(required_unless_present = "host", value_parser = parse_credential_id)]
+        #[arg(required_unless_present = "host", help = CREDENTIAL_ID_RM_HELP, value_parser = parse_credential_id)]
         credential_id: Option<CredentialId>,
         /// Relying party host (requires --user)
         #[arg(long, requires = "user")]
