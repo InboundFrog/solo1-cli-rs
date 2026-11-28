@@ -71,10 +71,10 @@ Global options:
 | `--timeout <SECS>` | Timeout in seconds for device responses (default: 30)        |
 
 The `--json` flag works on commands that print structured output: `version`, `genkey`,
-`ls` and these `key` subcommands: `rng hexbytes`, `challenge-response`, `verify`, `version`,
-`ping`, `probe`, `sign-file`, `credential info`, `credential ls` and `credential create`.
+`ls`, `verify-file` and these `key` subcommands: `rng hexbytes`, `challenge-response`, `verify`,
+`version`, `ping`, `probe`, `sign-file`, `credential info`, `credential ls` and `credential create`.
 `sign` always prints JSON. `mergehex`, `monitor` and `program` print no structured output.
-`sign`, `mergehex`, `monitor`, `program` and `verify-file` have no `--json` flag.
+`sign`, `mergehex`, `monitor` and `program` have no `--json` flag.
 The other `key` subcommands accept `--json` only to refuse it: they stop with an error before
 they open a device. These are `rng raw`, `rng feedkernel`, `wink`, `keyboard`, `reset`,
 `change-pin`, `set-pin`, `disable-updates`, `update` and `credential rm`.
@@ -167,7 +167,11 @@ names. The check passes only if all of these are true:
 
 If a check fails, the command says which one and exits with a non-zero code. If all pass, it prints
 that the signature is good, the rpId, whether the user-verified flag is set, and the signature
-counter.
+counter. With `--json` it prints one JSON object with `rp_id`, `user_verified` and `sign_count`.
+The exit code is the result, so there is no `valid` field. If a check fails, stdout is empty and the
+error goes to stderr. This differs from `key verify --json`, which prints a report with
+`signature_valid: false` and then fails. `verify-file` stops at the first failed check and has no
+facts to report.
 
 As a second way, you can run this OpenSSL command in bash or zsh. It checks only the signature, not
 the rpId or the flags:

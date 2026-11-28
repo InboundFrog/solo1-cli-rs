@@ -54,6 +54,10 @@ pub enum Commands {
 
         /// The file that was signed
         file: PathBuf,
+
+        /// Output results as JSON (for scripting)
+        #[arg(long)]
+        json: bool,
     },
 
     /// Sign a firmware HEX file and print JSON with firmware, signature and versions
