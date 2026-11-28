@@ -55,7 +55,7 @@ pub enum Commands {
         /// The file that was signed
         file: PathBuf,
 
-        /// Relying party host that `sign-file` was used with
+        /// Relying party host that `key sign-file` was used with
         #[arg(long, default_value = crate::commands::key::SIGN_FILE_RP_ID)]
         host: String,
 
@@ -204,7 +204,7 @@ pub enum KeyCommands {
         credential_id: String,
         /// File to sign
         filename: PathBuf,
-        /// Relying party host. The signature has the form of a web login for this host, so use a credential made only for file signing
+        /// Relying party host that the credential was made with. The signature has the form of a web login for this host, so use a credential made only for file signing
         #[arg(long, default_value = crate::commands::key::SIGN_FILE_RP_ID)]
         host: String,
     },

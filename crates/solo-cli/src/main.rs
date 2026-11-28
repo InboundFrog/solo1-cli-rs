@@ -376,6 +376,53 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sign_file_host_is_parsed_and_defaults_to_the_sign_file_rp_id() {
+        use clap::Parser;
+        let host = |extra: &[&str]| {
+            let mut args = vec!["solo", "key", "sign-file", "abcd", "f"];
+            args.extend_from_slice(extra);
+            let Commands::Key(k) = Cli::try_parse_from(args).unwrap().command else {
+                panic!("not a key command");
+            };
+            let KeyCommands::SignFile { host, .. } = k.command else {
+                panic!("not sign-file");
+            };
+            host
+        };
+        assert_eq!(host(&["--host", "example.com"]), "example.com");
+        assert_eq!(host(&[]), key::SIGN_FILE_RP_ID);
+    }
+
+    #[test]
+    fn verify_file_host_reaches_the_check() {
+        use clap::Parser;
+        use p256::ecdsa::{DerSignature, SigningKey, signature::Signer};
+        use p256::pkcs8::{EncodePublicKey, LineEnding};
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let k = SigningKey::from_slice(&[0x42; 32]).unwrap();
+        let file = dir.path().join("f");
+        std::fs::write(&file, b"hello\n").unwrap();
+        let mut auth = Sha256::digest(b"example.com").to_vec();
+        auth.push(0x01);
+        auth.extend_from_slice(&1_u32.to_be_bytes());
+        let sig: DerSignature = k.sign(&[auth.as_slice(), Sha256::digest(b"hello\n").as_slice()].concat());
+        std::fs::write(dir.path().join("f.authdata"), &auth).unwrap();
+        std::fs::write(dir.path().join("f.sig"), sig.as_bytes()).unwrap();
+        let pem = dir.path().join("pub.pem");
+        std::fs::write(&pem, k.verifying_key().to_public_key_pem(LineEnding::LF).unwrap()).unwrap();
+        let (pem, file) = (pem.to_str().unwrap(), file.to_str().unwrap());
+        let run_with = |extra: &[&str]| {
+            let mut args = vec!["solo", "verify-file", "--public-key", pem, file];
+            args.extend_from_slice(extra);
+            run(Cli::try_parse_from(args).unwrap())
+        };
+        run_with(&["--host", "example.com"]).unwrap();
+        let err = run_with(&[]).unwrap_err().to_string();
+        assert!(err.contains("not for the rpId solokeys.dev"), "{err}");
+    }
+
+    #[test]
     fn udp_flag_is_rejected() {
         use clap::Parser;
         assert!(Cli::try_parse_from(["solo", "key", "--udp", "wink"]).is_err());
