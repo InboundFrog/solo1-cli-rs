@@ -664,4 +664,47 @@ mod tests {
         let decoded = p256::PublicKey::from_public_key_pem(pem).unwrap();
         assert_eq!(decoded, pub_key);
     }
+
+    /// The credential id is printed first. When the file cannot be written, the
+    /// id is already on stdout, so a script still gets it.
+    #[test]
+    fn test_finish_make_credential_prints_id_before_writing_the_file() {
+        let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
+        let response = make_credential_response(&cose_bytes(&pub_key));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("missing-dir").join("pub.pem");
+        let mut out = Vec::new();
+
+        let err = finish_make_credential(&response, false, Some(&path), &mut out).unwrap_err();
+
+        assert!(matches!(err, SoloError::IoError(_)), "unexpected error: {err}");
+        assert_eq!(String::from_utf8(out).unwrap(), "abcd\n");
+    }
+
+    #[test]
+    fn test_finish_make_credential_output_text_and_json() {
+        let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
+        let response = make_credential_response(&cose_bytes(&pub_key));
+
+        let mut out = Vec::new();
+        finish_make_credential(&response, false, None, &mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "abcd\n");
+
+        let mut out = Vec::new();
+        finish_make_credential(&response, true, None, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["credential_id"], "abcd");
+        assert!(
+            v["public_key_pem"]
+                .as_str()
+                .unwrap()
+                .starts_with("-----BEGIN PUBLIC KEY-----")
+        );
+        // Pretty JSON with the id first, then the key.
+        assert!(
+            text.starts_with("{\n  \"credential_id\": \"abcd\",\n  \"public_key_pem\": "),
+            "{text}"
+        );
+    }
 }

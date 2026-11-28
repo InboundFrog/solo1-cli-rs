@@ -553,4 +553,55 @@ mod tests {
         assert!(keys.contains(&"type"), "descriptor must have 'type' field");
         assert!(keys.contains(&"id"), "descriptor must have 'id' field");
     }
+
+    /// A getInfo response: status 0, then a CBOR map.
+    fn get_info_response() -> Vec<u8> {
+        use ciborium::value::Value;
+        let int = |n: i64| Value::Integer(n.into());
+        let map = Value::Map(vec![
+            (int(1), Value::Array(vec![Value::Text("FIDO_2_0".into())])),
+            (int(3), Value::Bytes(vec![0xAB; 16])),
+            (int(4), Value::Map(vec![(Value::Text("rk".into()), Value::Bool(true))])),
+            (int(5), int(1200)),
+            (int(6), Value::Array(vec![int(1)])),
+        ]);
+        let mut response = vec![0u8];
+        ciborium::ser::into_writer(&map, &mut response).unwrap();
+        response
+    }
+
+    #[test]
+    fn credential_info_text() {
+        let device = solo_ctaphid::mock::MockDevice::new(vec![Ok(get_info_response())]);
+        let mut out = Vec::new();
+        super::cmd_credential_info(&device, false, &mut out).unwrap();
+        let expected = format!(
+            "CTAP2 authenticatorGetInfo\n{}\n\
+             Versions:                       FIDO_2_0\n\
+             AAGUID:                         {}\n\
+             Options:                        rk: true\n\
+             Max message size:               1200\n\
+             PIN/UV auth protocols:          1\n\
+             Remaining discoverable creds:   (not reported by device)\n",
+            "=".repeat(40),
+            "ab".repeat(16)
+        );
+        assert_eq!(String::from_utf8(out).unwrap(), expected);
+    }
+
+    #[test]
+    fn credential_info_json() {
+        let device = solo_ctaphid::mock::MockDevice::new(vec![Ok(get_info_response())]);
+        let mut out = Vec::new();
+        super::cmd_credential_info(&device, true, &mut out).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["versions"], serde_json::json!(["FIDO_2_0"]));
+        assert_eq!(v["extensions"], serde_json::json!([]));
+        assert_eq!(v["aaguid"], "ab".repeat(16));
+        assert_eq!(v["options"], serde_json::json!({"rk": true}));
+        assert_eq!(v["max_msg_size"], 1200);
+        assert_eq!(v["pin_uv_auth_protocols"], serde_json::json!([1]));
+        assert_eq!(v["remaining_discoverable_credentials"], serde_json::Value::Null);
+        assert_eq!(out.last(), Some(&b'\n'));
+    }
 }

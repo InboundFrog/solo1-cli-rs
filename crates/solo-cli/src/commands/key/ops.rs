@@ -321,4 +321,88 @@ mod tests {
         let err = cmd_key_version(&device, false, std::io::sink()).unwrap_err();
         assert!(matches!(err, SoloError::Timeout));
     }
+
+    // ── what the commands write ─────────────────────────────────────────────
+
+    /// A writer that always fails, like a closed stdout.
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// Text mode prints one line per ping: index, size and round-trip time.
+    #[test]
+    fn test_cmd_ping_text_lines() {
+        let data = vec![1u8, 2, 3, 4];
+        let device = MockDevice::new(vec![Ok(data.clone()), Ok(data.clone())]);
+        let mut out = Vec::new();
+        cmd_ping(&device, 2, &data, false, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        for (line, index) in lines.iter().zip(1..) {
+            let rest = line.strip_prefix(&format!("Ping {index}: 4 bytes, RTT = ")).unwrap();
+            let ms = rest.strip_suffix("ms").unwrap();
+            // Three digits after the point.
+            assert_eq!(ms.split_once('.').unwrap().1.len(), 3, "{line}");
+            assert!(ms.parse::<f64>().is_ok(), "{line}");
+        }
+    }
+
+    /// JSON mode prints one compact object per line, with the three fields in this order.
+    #[test]
+    fn test_cmd_ping_json_lines() {
+        let data = vec![1u8, 2, 3];
+        let device = MockDevice::new(vec![Ok(data.clone()), Ok(data.clone())]);
+        let mut out = Vec::new();
+        cmd_ping(&device, 2, &data, true, &mut out).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        for (line, index) in lines.iter().zip(1..) {
+            assert!(
+                line.starts_with(&format!("{{\"index\":{index},\"data_len\":3,\"duration_ms\":")),
+                "{line}"
+            );
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            assert!(v["duration_ms"].is_f64(), "{line}");
+        }
+    }
+
+    /// A failed write is a `SoloError::Stdout`, so `main` can end quietly on a closed stdout.
+    #[test]
+    fn test_cmd_ping_write_error_is_stdout_error() {
+        let device = MockDevice::new(vec![Ok(vec![9])]);
+        let err = cmd_ping(&device, 1, &[9], false, FailingWriter).unwrap_err();
+        assert!(matches!(err, SoloError::Stdout(_)), "unexpected error: {err}");
+        let device = MockDevice::new(vec![Ok(vec![9])]);
+        let err = cmd_ping(&device, 1, &[9], true, FailingWriter).unwrap_err();
+        assert!(matches!(err, SoloError::Stdout(_)), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn test_cmd_key_version_text_and_json() {
+        let device = MockDevice::new(vec![Ok(vec![2, 5, 3])]);
+        let mut out = Vec::new();
+        cmd_key_version(&device, false, &mut out).unwrap();
+        assert_eq!(String::from_utf8(out).unwrap(), "Firmware version: 2.5.3\n");
+
+        let device = MockDevice::new(vec![Ok(vec![2, 5, 3])]);
+        let mut out = Vec::new();
+        cmd_key_version(&device, true, &mut out).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "{\n  \"firmware_version\": \"2.5.3\"\n}\n"
+        );
+
+        let device = MockDevice::new(vec![Ok(vec![2, 5, 3])]);
+        let err = cmd_key_version(&device, true, FailingWriter).unwrap_err();
+        assert!(matches!(err, SoloError::Stdout(_)), "unexpected error: {err}");
+    }
 }
