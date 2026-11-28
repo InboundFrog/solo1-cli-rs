@@ -219,6 +219,10 @@ solo mergehex -o OUTPUT [--attestation-key FILE] [--attestation-cert FILE] INPUT
 solo monitor <PORT>
 ```
 
+If `genkey -o` or `mergehex --attestation-key` is killed or crashes while it writes the
+key, a file named `.solo-<pid>.tmp` may stay in the output directory. It has mode 0600 and
+holds the private key or part of it. Look for it with `ls -a` and remove it.
+
 ---
 
 ## Firmware update notes
