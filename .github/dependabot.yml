@@ -27,8 +27,8 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
-  # Watches rust-toolchain.toml only. The three `toolchain:` values in
-  # .github/workflows/ci.yml are not covered: change them by hand to match.
+  # rust-toolchain.toml is the only place with the Rust version. The CI jobs
+  # in .github/workflows/ci.yml read it, so this covers all pins.
   - package-ecosystem: rust-toolchain
     directories: ['/']
     schedule:
