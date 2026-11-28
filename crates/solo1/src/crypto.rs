@@ -163,29 +163,25 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
 // SPKI fingerprint constants
 // ---------------------------------------------------------------------------
 //
-// TODO(0003): The SPKI fingerprint constants below are placeholders.  They
-// cannot be populated without running the tool against real hardware and
-// extracting the attestation certificate DER bytes, then computing:
+// An SPKI fingerprint is `sha256_hex` of the DER bytes of the certificate's
+// `SubjectPublicKeyInfo` (see `extract_spki_fingerprint`). A value is added
+// here only when it is known. Nothing in the workspace uses these values yet:
+// `check_attestation_fingerprint` compares the full-DER fingerprint.
 //
-//   `sha256_hex(&cert.tbs_certificate.subject_public_key_info.to_der()?)`
-//
-// See docs/reviews/20260414_001/0003-attestation_chain_validation.md for
-// the full migration plan.  Until these constants are populated, SPKI-based
-// matching is NOT used for verification; the existing DER-fingerprint path
-// in `check_attestation_fingerprint` remains the authoritative check.
-//
-// NOT implemented (scope boundary):
-// - CRL or OCSP checking (requires network access)
-// - Full certificate chain validation (no root CA cert is stored in this repo)
-//
-// These are also documented in the issue referenced above.
+// See docs/reviews/20260414_001/0003-attestation_chain_validation.md (TODO(0003)).
 
-pub const SOLO_V3_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
-pub const SOMU_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
-pub const SOLO_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
+/// Solo Tap.
+///
+/// Not checked: no Solo Tap certificate is in the repository, so this value
+/// cannot be recomputed here.
 pub const SOLO_TAP_SPKI_FINGERPRINT: &str = "6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049";
-pub const SOLO_HACKER_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
-pub const SOLO_EMULATION_SPKI_FINGERPRINT: &str = ""; // TODO(0003): populate from hardware
+
+/// Solo Hacker: SPKI fingerprint of the default certificate
+/// `HACKER_ATTESTATION_CERT` in `firmware.rs`.
+///
+/// A test computes it from that certificate. A hacker build with its own `--attestation-cert` has a
+/// different value.
+pub const SOLO_HACKER_SPKI_FINGERPRINT: &str = "ac2fb933d680b1f427be5f197856c0ef827b8987d3b5d9546d8030ad8b8e8ac5";
 
 // ---------------------------------------------------------------------------
 // New certificate utility functions
@@ -550,6 +546,17 @@ mod tests {
         assert!(
             msg.contains("not yet valid") || msg.contains("Not yet valid"),
             "Error should mention not-yet-valid, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn hacker_spki_fingerprint_matches_hacker_cert() {
+        use crate::firmware::HACKER_ATTESTATION_CERT;
+        // The cert is the one behind SOLO_HACKER_FINGERPRINT.
+        assert_eq!(sha256_hex(HACKER_ATTESTATION_CERT), SOLO_HACKER_FINGERPRINT);
+        assert_eq!(
+            extract_spki_fingerprint(HACKER_ATTESTATION_CERT).expect("spki extract failed"),
+            SOLO_HACKER_SPKI_FINGERPRINT
         );
     }
 
