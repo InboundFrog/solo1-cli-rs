@@ -166,14 +166,12 @@ pub struct FileSignatureFacts {
 /// # Errors
 /// Returns `CryptoError` if the public key is not a P-256 PEM key, the authenticator data is too short
 /// or malformed, its rpIdHash is not that of the `sign-file` rpId, the user-present flag is not set,
-/// the signature is not DER, the signature does not verify, or `counter_above` is set and the
-/// signature counter is not greater than it. A counter of 0 fails every `counter_above`.
+/// the signature is not DER, or the signature does not verify.
 pub fn check_file_signature(
     public_key_pem: &str,
     signature_der: &[u8],
     auth_data: &[u8],
     file: &[u8],
-    counter_above: Option<u32>,
 ) -> Result<FileSignatureFacts> {
     let key = VerifyingKey::from_public_key_pem(public_key_pem)
         .map_err(|e| SoloError::CryptoError(format!("The public key is not a P-256 PEM public key: {e}")))?;
@@ -203,15 +201,6 @@ pub fn check_file_signature(
             "The signature does not match: wrong public key, or the file or the authenticator data was changed".into(),
         )
     })?;
-
-    if let Some(n) = counter_above
-        && parsed.sign_count <= n
-    {
-        return Err(SoloError::CryptoError(format!(
-            "The signature counter {} is not above {n}",
-            parsed.sign_count
-        )));
-    }
 
     Ok(FileSignatureFacts {
         user_verified: parsed.flags & FLAG_UV != 0,
@@ -246,8 +235,9 @@ fn verify_file_output(facts: &FileSignatureFacts) -> VerifyFileOutput {
 /// `signature` and `authdata` default to `<file>.sig` and `<file>.authdata`.
 ///
 /// # Errors
-/// Returns an error if an input file cannot be read, or if any check of
-/// `check_file_signature` fails.
+/// Returns an error if an input file cannot be read, if any check of
+/// `check_file_signature` fails, or if `counter_above` is set and the signature counter is not
+/// greater than it. A counter of 0 fails every `counter_above`.
 pub fn cmd_verify_file(
     public_key: &Path,
     signature: Option<&Path>,
@@ -268,8 +258,17 @@ pub fn cmd_verify_file(
         &read_input("signature file", &signature)?,
         &read_input("authenticator data file", &authdata)?,
         &read_input("input file", file)?,
-        counter_above,
     )?;
+
+    // The facts exist only after every check of the signature passed.
+    if let Some(n) = counter_above
+        && facts.sign_count <= n
+    {
+        return Err(SoloError::CryptoError(format!(
+            "The signature counter {} is not above {n}",
+            facts.sign_count
+        )));
+    }
 
     if json {
         return write_json(out, &verify_file_output(&facts));
@@ -403,7 +402,7 @@ mod verify_file_tests {
     #[test]
     fn good_signature_passes_and_reports_facts() {
         let (pem, sig, auth) = good();
-        let facts = check_file_signature(&pem, &sig, &auth, FILE, None).unwrap();
+        let facts = check_file_signature(&pem, &sig, &auth, FILE).unwrap();
         assert_eq!(
             facts,
             FileSignatureFacts {
@@ -414,52 +413,9 @@ mod verify_file_tests {
 
         let k = key();
         let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP | FLAG_UV, 0x0102_0304);
-        let facts = check_file_signature(&pem, &sign(&k, &auth, FILE), &auth, FILE, None).unwrap();
+        let facts = check_file_signature(&pem, &sign(&k, &auth, FILE), &auth, FILE).unwrap();
         assert!(facts.user_verified);
         assert_eq!(facts.sign_count, 0x0102_0304);
-    }
-
-    #[test]
-    fn counter_above_passes_only_for_a_greater_count() {
-        let (pem, sig, auth) = good(); // the count is 9
-        assert_eq!(
-            check_file_signature(&pem, &sig, &auth, FILE, Some(8))
-                .unwrap()
-                .sign_count,
-            9
-        );
-        assert_eq!(
-            check_file_signature(&pem, &sig, &auth, FILE, None).unwrap().sign_count,
-            9
-        );
-        for n in [9, 10, u32::MAX] {
-            let msg = err_text(check_file_signature(&pem, &sig, &auth, FILE, Some(n)));
-            assert_eq!(msg, format!("The signature counter 9 is not above {n}"));
-        }
-    }
-
-    #[test]
-    fn counter_above_fails_for_a_zero_count() {
-        let k = key();
-        let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 0);
-        let sig = sign(&k, &auth, FILE);
-        assert!(check_file_signature(&pem(&k), &sig, &auth, FILE, None).is_ok());
-        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE, Some(0)));
-        assert!(msg.contains("counter 0 is not above 0"), "{msg}");
-    }
-
-    #[test]
-    fn command_counter_above_fails_with_empty_output() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = write_case(dir.path(), FILE); // the count is 3
-        let pubkey = dir.path().join("pub.pem");
-        let mut out = Vec::new();
-        cmd_verify_file(&pubkey, None, None, &file, true, Some(2), &mut out).unwrap();
-        assert_eq!(out.first(), Some(&b'{'));
-        let mut out = Vec::new();
-        let err = cmd_verify_file(&pubkey, None, None, &file, true, Some(3), &mut out).unwrap_err();
-        assert!(err.to_string().contains("counter 3 is not above 3"));
-        assert_eq!(out, Vec::<u8>::new());
     }
 
     #[test]
@@ -467,14 +423,14 @@ mod verify_file_tests {
         let (pem, sig, auth) = good();
         let mut file = FILE.to_vec();
         file[0] ^= 1;
-        assert!(err_text(check_file_signature(&pem, &sig, &auth, &file, None)).contains("does not match"));
+        assert!(err_text(check_file_signature(&pem, &sig, &auth, &file)).contains("does not match"));
     }
 
     #[test]
     fn changed_authdata_fails() {
         let (pem, sig, mut auth) = good();
         auth[36] ^= 1; // the signature counter
-        assert!(err_text(check_file_signature(&pem, &sig, &auth, FILE, None)).contains("does not match"));
+        assert!(err_text(check_file_signature(&pem, &sig, &auth, FILE)).contains("does not match"));
     }
 
     #[test]
@@ -483,17 +439,17 @@ mod verify_file_tests {
         let mut auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 1);
         auth.extend_from_slice(&[0xA0]);
         let sig = sign(&k, &auth, FILE);
-        check_file_signature(&pem(&k), &sig, &auth, FILE, None).unwrap();
+        check_file_signature(&pem(&k), &sig, &auth, FILE).unwrap();
         // A signature over the 37-byte header only must not pass for the longer data.
         let short_sig = sign(&k, &auth[..37], FILE);
-        assert!(check_file_signature(&pem(&k), &short_sig, &auth, FILE, None).is_err());
+        assert!(check_file_signature(&pem(&k), &short_sig, &auth, FILE).is_err());
     }
 
     #[test]
     fn wrong_public_key_fails() {
         let (_, sig, auth) = good();
         let other = pem(&SigningKey::from_slice(&[0x43; 32]).unwrap());
-        assert!(err_text(check_file_signature(&other, &sig, &auth, FILE, None)).contains("does not match"));
+        assert!(err_text(check_file_signature(&other, &sig, &auth, FILE)).contains("does not match"));
     }
 
     #[test]
@@ -501,7 +457,7 @@ mod verify_file_tests {
         let k = key();
         let auth = auth_data("example.com", FLAG_UP, 1);
         let sig = sign(&k, &auth, FILE);
-        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE, None));
+        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE));
         assert!(msg.contains("rpIdHash"), "{msg}");
     }
 
@@ -510,7 +466,7 @@ mod verify_file_tests {
         let k = key();
         let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UV, 1);
         let sig = sign(&k, &auth, FILE);
-        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE, None));
+        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE));
         assert!(msg.contains("user-present"), "{msg}");
     }
 
@@ -518,7 +474,7 @@ mod verify_file_tests {
     fn short_authdata_fails() {
         let (pem, sig, auth) = good();
         for len in [0, 1, 32, 36] {
-            let msg = err_text(check_file_signature(&pem, &sig, &auth[..len], FILE, None));
+            let msg = err_text(check_file_signature(&pem, &sig, &auth[..len], FILE));
             assert!(msg.contains("shorter than 37"), "len {len}: {msg}");
             assert!(!msg.contains("device"), "len {len}: {msg}");
         }
@@ -528,7 +484,7 @@ mod verify_file_tests {
     fn cut_short_attested_data_fails_without_mentioning_a_device() {
         let (pem, sig, _) = good();
         let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP | 0x40, 1); // AT flag, but no attested data
-        let msg = err_text(check_file_signature(&pem, &sig, &auth, FILE, None));
+        let msg = err_text(check_file_signature(&pem, &sig, &auth, FILE));
         assert!(msg.contains("shorter than 37 bytes or is not valid"), "{msg}");
         assert!(!msg.contains("device"), "{msg}");
     }
@@ -547,7 +503,7 @@ mod verify_file_tests {
             &with_extra_byte,
             &zero_r,
         ] {
-            let msg = err_text(check_file_signature(&pem, bad, &auth, FILE, None));
+            let msg = err_text(check_file_signature(&pem, bad, &auth, FILE));
             assert!(msg.contains("not a valid DER ECDSA signature"), "{msg}");
         }
     }
@@ -560,11 +516,11 @@ mod verify_file_tests {
             "not pem",
             "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n",
         ] {
-            let msg = err_text(check_file_signature(bad, &sig, &auth, FILE, None));
+            let msg = err_text(check_file_signature(bad, &sig, &auth, FILE));
             assert!(msg.contains("P-256 PEM public key"), "{msg}");
         }
         // A good key body under the wrong PEM label.
-        assert!(check_file_signature(&pem.replace("PUBLIC KEY", "CERTIFICATE"), &sig, &auth, FILE, None).is_err());
+        assert!(check_file_signature(&pem.replace("PUBLIC KEY", "CERTIFICATE"), &sig, &auth, FILE).is_err());
     }
 
     /// A vector made with OpenSSL only (new P-256 key, `openssl dgst -sha256 -sign` over the
@@ -582,7 +538,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
     fn openssl_vector_passes_and_a_cut_file_fails() {
         let sig = hex::decode(VECTOR_SIG).unwrap();
         let auth = hex::decode(VECTOR_AUTH).unwrap();
-        let facts = check_file_signature(VECTOR_KEY, &sig, &auth, VECTOR_FILE, None).unwrap();
+        let facts = check_file_signature(VECTOR_KEY, &sig, &auth, VECTOR_FILE).unwrap();
         assert_eq!(
             facts,
             FileSignatureFacts {
@@ -591,7 +547,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
             }
         );
         let cut = &VECTOR_FILE[..VECTOR_FILE.len() - 1];
-        assert!(err_text(check_file_signature(VECTOR_KEY, &sig, &auth, cut, None)).contains("does not match"));
+        assert!(err_text(check_file_signature(VECTOR_KEY, &sig, &auth, cut)).contains("does not match"));
     }
 
     #[test]
@@ -602,7 +558,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
             .unwrap()
             .to_pkcs8_pem(LineEnding::LF)
             .unwrap();
-        let msg = err_text(check_file_signature(&private, &sig, &auth, FILE, None));
+        let msg = err_text(check_file_signature(&private, &sig, &auth, FILE));
         assert!(msg.contains("P-256 PEM public key"), "{msg}");
     }
 
@@ -711,6 +667,66 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
         .unwrap();
         assert_eq!(v["user_verified"], false);
         assert_eq!(v["sign_count"], 0);
+    }
+
+    #[test]
+    fn counter_above_passes_only_for_a_greater_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE); // the count is 3
+        let pubkey = dir.path().join("pub.pem");
+        let run = |n: Option<u32>, json: bool| {
+            let mut out = Vec::new();
+            let r = cmd_verify_file(&pubkey, None, None, &file, json, n, &mut out);
+            (r, out)
+        };
+        for n in [None, Some(0), Some(2)] {
+            let (r, out) = run(n, true);
+            r.unwrap();
+            assert_eq!(out.first(), Some(&b'{'));
+        }
+        for n in [3, 4, u32::MAX] {
+            let (r, out) = run(Some(n), true);
+            let msg = r.unwrap_err().to_string();
+            assert!(
+                msg.ends_with(&format!("The signature counter 3 is not above {n}")),
+                "{msg}"
+            );
+            assert_eq!(out, Vec::<u8>::new());
+        }
+    }
+
+    #[test]
+    fn counter_above_fails_for_a_zero_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE);
+        let k = key();
+        let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 0);
+        std::fs::write(dir.path().join("doc.txt.sig"), sign(&k, &auth, FILE)).unwrap();
+        std::fs::write(dir.path().join("doc.txt.authdata"), &auth).unwrap();
+        let pubkey = dir.path().join("pub.pem");
+        cmd_verify_file(&pubkey, None, None, &file, false, None, &mut Vec::new()).unwrap();
+        let err = cmd_verify_file(&pubkey, None, None, &file, false, Some(0), &mut Vec::new()).unwrap_err();
+        assert!(err.to_string().contains("counter 0 is not above 0"));
+    }
+
+    #[test]
+    fn bad_signature_still_gives_the_signature_error_with_counter_above() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE);
+        let mut auth = std::fs::read(dir.path().join("doc.txt.authdata")).unwrap();
+        auth[36] ^= 1; // the count becomes 2
+        std::fs::write(dir.path().join("doc.txt.authdata"), &auth).unwrap();
+        let err = cmd_verify_file(
+            &dir.path().join("pub.pem"),
+            None,
+            None,
+            &file,
+            false,
+            Some(1),
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
     }
 
     #[test]
