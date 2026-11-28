@@ -1,3 +1,5 @@
+//! Wait for the key to restart after a firmware write.
+
 use std::time::{Duration, Instant};
 
 use super::key::common::is_bootloader;
@@ -5,13 +7,10 @@ use super::key::get_device_version;
 use crate::error::{Result, SoloError};
 use solo1::firmware::FirmwareVersion;
 
-/// Wait after entering the bootloader, so the old firmware is gone before the first open.
-pub const RECONNECT_SETTLE: Duration = Duration::from_millis(1500);
-
-/// Pause between attempts to reconnect after entering the bootloader.
+/// Pause between attempts to reconnect to the key.
 pub const RECONNECT_INTERVAL: Duration = Duration::from_millis(500);
 
-/// I/O timeout for the version query in each attempt after the update.
+/// I/O timeout for the version query in each attempt after a firmware write.
 /// The init handshake in `open` has its own fixed 5 second limit.
 const RESTART_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(2);
 

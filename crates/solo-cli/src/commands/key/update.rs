@@ -1,9 +1,12 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::commands::restart::{RECONNECT_INTERVAL, RECONNECT_SETTLE, retry_open, wait_for_normal_key};
+use crate::commands::restart::{RECONNECT_INTERVAL, retry_open, wait_for_normal_key};
 use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
+
+/// Wait after entering the bootloader, so the old firmware is gone before the first open.
+const RECONNECT_SETTLE: Duration = Duration::from_millis(1500);
 
 /// Update the device firmware.
 ///
