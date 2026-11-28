@@ -5,6 +5,7 @@ mod ops;
 mod pin;
 mod probe;
 mod rng;
+pub mod tty;
 mod update;
 mod verify;
 

@@ -10,7 +10,7 @@ use zeroize::Zeroizing;
 /// Returns [`SoloError::IoError`] if the PIN prompt fails, or
 /// [`SoloError::ProtocolError`] if the entered PIN is empty.
 pub fn prompt_pin() -> Result<Zeroizing<String>> {
-    let pin = Zeroizing::new(rpassword::prompt_password("Enter PIN: ").map_err(SoloError::IoError)?);
+    let pin = super::tty::prompt_secret("Enter PIN: ")?;
     if pin.is_empty() {
         return Err(SoloError::ProtocolError("PIN is required".into()));
     }

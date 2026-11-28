@@ -7,6 +7,7 @@ use solo_cli::output;
 
 fn main() {
     if let Err(e) = ctrlc::set_handler(|| {
+        key::tty::restore_tty();
         eprintln!("\nInterrupted.");
         std::process::exit(130);
     }) {
