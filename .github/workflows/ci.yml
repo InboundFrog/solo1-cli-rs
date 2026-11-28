@@ -29,22 +29,28 @@ jobs:
 
   # Compile and lint only, so the non-Unix code (for example the plain-write
   # version of write_private_key) is built at least once. Nothing is run:
-  # nobody can test Windows by hand. fmt, tests, audit and MSRV run in `rust`.
+  # nobody can test Windows. Not in `needs` of CI OK, so a Windows failure
+  # does not block a merge. fmt, tests, audit and MSRV run in `rust`.
   rust-windows:
-    uses: InboundFrog/repo-tools/.github/workflows/rust.yml@11670fe8f6e9cddf7be79989e2da4ae48f399584 # v0.1.1
-    with:
-      working-directory: .
-      toolchain: "1.99"
-      runs-on: windows-latest
-      lint-command: cargo clippy --workspace --all-targets --locked -- -D warnings
-      test-command: skip
-      audit-command: skip
-      msrv-command: skip
+    name: Windows build (not tested)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: "1.99"
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo build --workspace --all-targets --locked
 
   ci-ok:
     name: CI OK
     if: always()
-    needs: [rust, rust-windows]
+    needs: [rust]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
