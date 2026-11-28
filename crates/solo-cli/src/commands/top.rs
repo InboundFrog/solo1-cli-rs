@@ -698,6 +698,42 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
         assert!(msg.contains("P-256 PEM public key"), "{msg}");
     }
 
+    /// A valid P-384 public key made once with OpenSSL (`secp384r1`). The private key was not kept.
+    const P384_PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----\n\
+MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEILnRpmmnDRf0IOdJUGOzEwiuuaSXsk70\n\
+eaI+zOgjIgn3sWv2oQXfKu4cJnVnfs9XNBFjhCOECci6vQISHhHyTsAB5V52fiVE\n\
+zw3vnWnmY4Vu4+iJ0sjG6DNAZL6Z2xut\n\
+-----END PUBLIC KEY-----\n";
+
+    #[test]
+    fn p384_public_key_is_refused() {
+        let (_, sig, auth) = good();
+        let msg = err_text(check_file_signature(
+            P384_PUBLIC_KEY,
+            &sig,
+            &auth,
+            &hash_of(FILE),
+            SIGN_FILE_RP_ID,
+        ));
+        assert!(msg.contains("not a P-256 PEM public key"), "{msg}");
+    }
+
+    #[test]
+    fn sec1_private_key_pem_is_refused_as_public_key() {
+        let (_, sig, auth) = good();
+        let secret = p256::SecretKey::from_slice(&[0x42; 32]).unwrap();
+        let sec1 = secret.to_sec1_pem(LineEnding::LF).unwrap();
+        assert!(sec1.contains("BEGIN EC PRIVATE KEY"));
+        let msg = err_text(check_file_signature(
+            &sec1,
+            &sig,
+            &auth,
+            &hash_of(FILE),
+            SIGN_FILE_RP_ID,
+        ));
+        assert!(msg.contains("P-256 PEM public key"), "{msg}");
+    }
+
     #[test]
     fn command_fails_for_missing_or_non_text_public_key() {
         let dir = tempfile::tempdir().unwrap();
