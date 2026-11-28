@@ -46,7 +46,7 @@ pub fn parse_credential_id(text: &str) -> Result<CredentialId, String> {
     let bytes = GeneralPurpose::new(&STANDARD, config)
         .decode(text)
         .or_else(|_| GeneralPurpose::new(&URL_SAFE, config).decode(text))
-        .map_err(|e| format!("the credential ID is neither valid hex nor valid base64: {e}"))?;
+        .map_err(|_| "the credential ID is neither valid hex nor valid base64".to_owned())?;
     Ok(CredentialId(bytes))
 }
 

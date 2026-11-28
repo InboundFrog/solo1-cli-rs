@@ -99,10 +99,9 @@ pub const SIGN_FILE_RP_ID: &str = "solokeys.dev";
 /// `credential create --public-key-out` saves that public key.
 ///
 /// # Errors
-/// Returns an error if the file cannot be
-/// read, if the getAssertion request fails, if the response is missing the
-/// authData or the signature (no file is written then), or if writing the
-/// `.sig` or `.authdata` file fails.
+/// Returns an error if the file cannot be read, if the getAssertion request fails, if the
+/// response is missing the authData or the signature (no file is written then), or if writing
+/// the `.sig` or `.authdata` file fails.
 pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &[u8], filename: &Path) -> Result<()> {
     use ciborium::value::Value;
 

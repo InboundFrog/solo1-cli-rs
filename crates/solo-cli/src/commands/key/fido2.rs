@@ -238,11 +238,9 @@ fn prepare_hmac_secret_input_with_scalar(
 ///   9. Print output as hex
 ///
 /// # Errors
-/// Returns an error if key agreement or
-/// the getAssertion request fails, if the response is malformed (missing or
-/// short authData, the extensions-data flag is unset, or the hmac-secret
-/// output is missing or too short), or if decrypting the hmac-secret output
-/// fails.
+/// Returns an error if key agreement or the getAssertion request fails, if the response is
+/// malformed (missing or short authData, the extensions-data flag is unset, or the hmac-secret
+/// output is missing or too short), or if decrypting the hmac-secret output fails.
 pub fn cmd_challenge_response(
     hid: &impl HidDevice,
     credential_id: &[u8],

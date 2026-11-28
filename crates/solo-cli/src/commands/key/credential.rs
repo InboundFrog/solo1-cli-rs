@@ -416,16 +416,15 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 /// Remove a credential.
 ///
 /// Takes either a `credential_id` (already decoded to bytes) or a `host`+`user` pair. With
-/// `host` and `user`, the function lists the credentials to find the
-/// matching credential ID. Exactly one match is required.
+/// `host` and `user`, the function lists the credentials to find the matching credential ID.
+/// Exactly one match is required.
 ///
 /// Implements CTAP2 authenticatorCredentialManagement (0x0A) deleteCredential (subcommand 0x06).
 ///
 /// # Errors
 /// Returns an error if no PIN is set on the device, if acquiring a PIN token
-/// fails, if neither `credential_id`
-/// nor a `host`+`user` pair is supplied, if no credential matches or more than
-/// one matches, if reading the confirmation prompt fails, or if the
+/// fails, if neither `credential_id` nor a `host`+`user` pair is supplied, if no credential
+/// matches or more than one matches, if reading the confirmation prompt fails, or if the
 /// deleteCredential command is rejected by the device.
 pub fn cmd_credential_rm(
     hid: &impl HidDevice,
