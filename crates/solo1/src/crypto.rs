@@ -390,6 +390,9 @@ mod tests {
         assert!(websafe_b64_decode("TQ=A").is_err());
         assert!(websafe_b64_decode("T===").is_err());
         assert!(websafe_b64_decode("=").is_err());
+        // Non-zero trailing bits.
+        assert!(websafe_b64_decode("TR").is_err());
+        assert!(websafe_b64_decode("TR==").is_err());
     }
 
     #[test]

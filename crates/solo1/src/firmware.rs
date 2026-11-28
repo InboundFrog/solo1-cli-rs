@@ -1006,6 +1006,20 @@ mod tests {
     }
 
     #[test]
+    fn test_firmware_json_parse_padded() {
+        let json = r#"{
+            "firmware": "SGVsbG8=",
+            "signature": "d29ybGQ=",
+            "versions": {">2.5.3": {"signature": "TQ=="}}
+        }"#;
+        let fw: FirmwareJson = serde_json::from_str(json).unwrap();
+        assert_eq!(fw.firmware_bytes().unwrap(), b"Hello");
+        assert_eq!(fw.signature_bytes().unwrap(), b"world");
+        let sig = fw.signature_for_version(&FirmwareVersion::new(4, 0, 0)).unwrap();
+        assert_eq!(sig, b"M");
+    }
+
+    #[test]
     fn test_firmware_json_version_selection() {
         let json = r#"{
             "firmware": "SGVsbG8",
