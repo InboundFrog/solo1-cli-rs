@@ -87,10 +87,12 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 
 /// Program via ST DFU (firmware.hex format).
 ///
+/// `serial` is the USB serial of the ST DFU device.
+///
 /// # Errors
-/// Returns an error if the HEX file cannot be parsed, if the DFU device cannot
-/// be opened, or if DFU programming fails.
-pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
+/// Returns an error if the HEX file cannot be parsed, if no single DFU device
+/// can be chosen or opened, or if DFU programming fails.
+pub fn cmd_program_dfu(firmware_hex: &Path, serial: Option<&str>) -> Result<()> {
     use solo1::firmware::parse_hex_file;
 
     println!("Parsing firmware HEX file: {}", firmware_hex.display());
@@ -102,7 +104,7 @@ pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
     );
 
     println!("Opening ST DFU device (VID=0x0483, PID=0xDF11)...");
-    let dfu = DfuDevice::open()?;
+    let dfu = DfuDevice::open(serial)?;
 
     println!("Programming {} bytes via DFU...", firmware_bytes.len());
     let pb = ProgressBar::new(0);

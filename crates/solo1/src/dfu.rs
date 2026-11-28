@@ -121,26 +121,83 @@ fn poll_sleep(poll_timeout_ms: u32) -> Duration {
     Duration::from_millis(u64::from(poll_timeout_ms)).min(DFU_MAX_POLL_SLEEP)
 }
 
-/// Open the DFU device via libusb.
+/// Choose one device from `candidates`, a list of (device, USB serial number).
+///
+/// With `serial`, only a device with that serial number is chosen. Without it,
+/// there must be exactly one device. A device whose serial could not be read
+/// has `None` and never matches a `serial`.
+///
+/// # Errors
+/// Returns an error if the list is empty, if no device has the requested
+/// serial number, if several devices have it, or if there are several devices
+/// and no `serial`.
+fn select_device<T>(candidates: Vec<(T, Option<String>)>, serial: Option<&str>) -> Result<T> {
+    let listed = || {
+        candidates
+            .iter()
+            .map(|(_, s)| s.as_deref().unwrap_or("unknown serial"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let count = candidates.len();
+    if let Some(wanted) = serial {
+        let msg = if count == 0 {
+            "No ST DFU device found (0483:df11)".to_string()
+        } else {
+            format!("No ST DFU device with serial {wanted} (found: {})", listed())
+        };
+        let mut matching = candidates.into_iter().filter(|(_, s)| s.as_deref() == Some(wanted));
+        return match (matching.next(), matching.next()) {
+            (Some((device, _)), None) => Ok(device),
+            (Some(_), Some(_)) => Err(Error::Device(format!(
+                "More than one ST DFU device has the serial {wanted}"
+            ))),
+            (None, _) => Err(Error::Device(msg)),
+        };
+    }
+    match count {
+        0 => Err(Error::Device("No ST DFU device found (0483:df11)".into())),
+        1 => candidates
+            .into_iter()
+            .next()
+            .map(|(device, _)| device)
+            .ok_or_else(|| Error::Device("No ST DFU device found (0483:df11)".into())),
+        _ => Err(Error::Device(format!(
+            "{count} ST DFU devices found ({}). Use --serial <serial> to choose one.",
+            listed()
+        ))),
+    }
+}
+
+/// Open the ST DFU device via libusb. Every USB device with the ids of the ST
+/// ROM bootloader (0483:df11) is a candidate, not only a Solo key. See
+/// `select_device` for how one is chosen.
+///
+/// The serial number of each candidate is read by opening it. A candidate that
+/// cannot be opened or read has no serial number.
 ///
 /// # Errors
 /// Returns an error if the libusb context cannot be created, the device list
-/// cannot be read, opening the device fails, or no ST DFU device (PID 0xDF11)
-/// is present. Devices whose descriptor cannot be read are skipped.
-pub fn open_dfu_device() -> Result<DeviceHandle<Context>> {
+/// cannot be read, no device is chosen (none, no match for `serial`, or
+/// several without `serial`), or opening the chosen device fails. Devices
+/// whose descriptor cannot be read are skipped.
+pub fn open_dfu_device(serial: Option<&str>) -> Result<DeviceHandle<Context>> {
     let context = Context::new()?;
-    let devices = context.devices()?;
-    for device in devices.iter() {
+    let mut candidates = Vec::new();
+    for device in context.devices()?.iter() {
         // A device we cannot read is not ours. Skip it and keep scanning.
         let Ok(desc) = device.device_descriptor() else {
             continue;
         };
         if desc.vendor_id() == SOLO_VID && desc.product_id() == SOLO_DFU_PID {
-            let handle = device.open()?;
-            return Ok(handle);
+            let usb_serial = device
+                .open()
+                .ok()
+                .and_then(|h| h.read_serial_number_string_ascii(&desc).ok());
+            candidates.push((device, usb_serial));
         }
     }
-    Err(Error::Device("No ST DFU device found (PID 0xDF11)".into()))
+    Ok(select_device(candidates, serial)?.open()?)
 }
 
 /// The USB control transfers the DFU logic needs. The real implementation
@@ -457,14 +514,17 @@ pub struct DfuDevice {
 
 impl DfuDevice {
     /// Open the ST DFU device, claim its interface and select the alternate
-    /// setting used for flash. Clears a leftover error state.
+    /// setting used for flash. Clears a leftover error state. With `serial`,
+    /// only the device with that USB serial number is used. Without it, there
+    /// must be exactly one ST DFU device.
     ///
     /// # Errors
-    /// Returns an error if no ST DFU device is found, the device cannot be
+    /// Returns an error if no ST DFU device is chosen (none found, no match
+    /// for `serial`, or several found without `serial`), the device cannot be
     /// opened, the DFU interface cannot be claimed, the alternate setting
     /// cannot be selected, or the status cannot be read.
-    pub fn open() -> Result<Self> {
-        let handle = open_dfu_device()?;
+    pub fn open(serial: Option<&str>) -> Result<Self> {
+        let handle = open_dfu_device(serial)?;
         handle.claim_interface(DFU_INTERFACE).map_err(Error::Usb)?;
         handle
             .set_alternate_setting(DFU_INTERFACE, DFU_ALT)
@@ -518,6 +578,52 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
+
+    #[test]
+    fn test_select_device_by_count_without_serial() {
+        let none: Vec<(u8, Option<String>)> = vec![];
+        assert!(
+            select_device(none, None)
+                .unwrap_err()
+                .to_string()
+                .contains("No ST DFU device found")
+        );
+        assert_eq!(select_device(vec![(7, Some("A".into()))], None).unwrap(), 7);
+        // One device whose serial cannot be read is still the only one.
+        assert_eq!(select_device(vec![(7, None)], None).unwrap(), 7);
+        let two = vec![(1, Some("A".into())), (2, None)];
+        let msg = select_device(two, None).unwrap_err().to_string();
+        assert!(msg.contains("2 ST DFU devices") && msg.contains("--serial"), "{msg}");
+        assert!(msg.contains('A') && msg.contains("unknown serial"), "{msg}");
+    }
+
+    #[test]
+    fn test_select_device_with_serial() {
+        let two = vec![(1, Some("A".into())), (2, Some("B".into()))];
+        assert_eq!(select_device(two, Some("B")).unwrap(), 2);
+        assert_eq!(select_device(vec![(1, Some("A".into()))], Some("A")).unwrap(), 1);
+        // No match: an error, also when there is only one device.
+        let msg = select_device(vec![(1, Some("A".into()))], Some("B"))
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("serial B") && msg.contains('A'), "{msg}");
+        assert!(select_device(vec![(1, None)], Some("A")).is_err());
+        let none: Vec<(u8, Option<String>)> = vec![];
+        assert!(
+            select_device(none, Some("A"))
+                .unwrap_err()
+                .to_string()
+                .contains("No ST DFU device found")
+        );
+        // The same serial twice is not unique.
+        let dup = vec![(1, Some("A".into())), (2, Some("A".into()))];
+        assert!(
+            select_device(dup, Some("A"))
+                .unwrap_err()
+                .to_string()
+                .contains("More than one")
+        );
+    }
 
     #[test]
     fn test_dfu_status_parse() {
