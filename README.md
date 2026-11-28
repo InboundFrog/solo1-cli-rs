@@ -234,9 +234,15 @@ write a file that holds a private key. On Linux and macOS these files are writte
 - `solo` does not set or remove ACLs. ACLs that the directory passes on to new files can still
   give other users access. Not checked: how each system treats them. Look at the new file with
   `ls -l` (and `ls -le` on macOS or `getfacl` on Linux).
-- On other systems, none of this is done: the file is written with a plain write.
+- On Windows (and any other system that is not Unix), none of this is done: the file is written
+  with a plain write.
 
-Without `--attestation-key`, `mergehex` writes its output as a plain file.
+Without `--attestation-key` (and `--attestation-cert`), `mergehex` puts the default Solo Hacker
+attestation key in the output. That key is public, so the output is written as a plain file: a
+symbolic link is followed and an existing file keeps its mode.
+
+With `--json`, `genkey` writes no file, even with `-o`: the private key is in the JSON on
+standard output.
 
 ---
 
