@@ -14,7 +14,7 @@ fn run_with_closed_stdout(args: &[&str]) {
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(stderr, "", "stderr must stay empty");
-    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(out.status.code(), Some(141));
 }
 
 #[test]

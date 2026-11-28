@@ -5,7 +5,7 @@
 macro_rules! outln {
     ($($arg:tt)*) => {{
         use ::std::io::Write as _;
-        writeln!(::std::io::stdout().lock(), $($arg)*)?
+        writeln!(::std::io::stdout().lock(), $($arg)*).map_err($crate::error::SoloError::Stdout)?
     }};
 }
 
@@ -14,7 +14,7 @@ macro_rules! outln {
 macro_rules! out {
     ($($arg:tt)*) => {{
         use ::std::io::Write as _;
-        write!(::std::io::stdout().lock(), $($arg)*)?
+        write!(::std::io::stdout().lock(), $($arg)*).map_err($crate::error::SoloError::Stdout)?
     }};
 }
 
