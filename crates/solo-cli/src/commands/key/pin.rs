@@ -51,7 +51,7 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let change_pin_response = solo_ctap2::ctap2_call(hid, 0x06, &change_pin_cbor)?;
     solo_ctap2::check_ctap_status(&change_pin_response, "changePin")?;
 
-    println!("PIN changed successfully.");
+    outln!("PIN changed successfully.");
     Ok(())
 }
 
@@ -96,6 +96,6 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let set_pin_response = solo_ctap2::ctap2_call(hid, 0x06, &set_pin_cbor)?;
     solo_ctap2::check_ctap_status(&set_pin_response, "setPin")?;
 
-    println!("PIN set successfully.");
+    outln!("PIN set successfully.");
     Ok(())
 }

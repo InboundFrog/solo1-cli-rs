@@ -205,16 +205,16 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
         return outcome;
     }
 
-    println!("Attestation certificate SHA-256: {fingerprint}");
-    println!("Attestation certificate SPKI:    {spki_fingerprint}");
+    outln!("Attestation certificate SHA-256: {fingerprint}");
+    outln!("Attestation certificate SPKI:    {spki_fingerprint}");
     if cert_expired {
-        println!(
+        outln!(
             "WARNING: Attestation certificate has expired. \
              The device may still be genuine but the certificate is no longer valid."
         );
     }
     if !signature_valid {
-        println!(
+        outln!(
             "FAILED: Attestation signature is invalid. The device did not prove \
              possession of the attestation key matching its certificate; \
              it may be counterfeit."
@@ -223,13 +223,13 @@ pub fn cmd_verify(hid: &impl HidDevice, json: bool) -> Result<()> {
     }
     match result {
         AttestationResult::GenuineConsumer(name) => {
-            println!("OK: Genuine SoloKeys device: {name}");
+            outln!("OK: Genuine SoloKeys device: {name}");
         }
         AttestationResult::DeveloperDevice(name) => {
-            println!("WARNING: Developer/non-production device: {name}. Not a genuine consumer key.");
+            outln!("WARNING: Developer/non-production device: {name}. Not a genuine consumer key.");
         }
         AttestationResult::Unknown => {
-            println!("FAILED: Could not verify device authenticity. Certificate fingerprint not recognised.");
+            outln!("FAILED: Could not verify device authenticity. Certificate fingerprint not recognised.");
         }
     }
 

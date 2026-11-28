@@ -107,7 +107,7 @@ pub struct PingOutput {
 /// # Errors
 /// Returns an error if `value` cannot be serialized to JSON.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    println!(
+    outln!(
         "{}",
         serde_json::to_string_pretty(value).map_err(crate::error::SoloError::JsonError)?
     );

@@ -24,7 +24,7 @@ pub fn cmd_version(json: bool) -> Result<()> {
         };
         return print_json(&out);
     }
-    println!("solo1-cli-rs {}", env!("CARGO_PKG_VERSION"));
+    outln!("solo1-cli-rs {}", env!("CARGO_PKG_VERSION"));
     Ok(())
 }
 
@@ -50,7 +50,7 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
         write_private_key(out_path, &priv_pem)?;
         eprintln!("Private key written to {}", out_path.display());
     } else {
-        print!("{priv_pem}");
+        out!("{priv_pem}");
     }
 
     eprintln!("Public key:\n{pub_pem}");
@@ -146,7 +146,7 @@ pub fn cmd_sign(key_path: &Path, firmware_hex: &Path) -> Result<()> {
     let sig_v2 = sign_firmware(&signing_key, &bytes_v2)?;
 
     let fw_json = create_firmware_json_versioned(firmware_hex, &sig_v1, &sig_v2)?;
-    println!("{}", fw_json.to_json()?);
+    outln!("{}", fw_json.to_json()?);
     Ok(())
 }
 
@@ -242,10 +242,10 @@ pub fn cmd_verify_file(
         &read_input("input file", file)?,
     )?;
 
-    println!("The signature is good.");
-    println!("rpId: {SIGN_FILE_RP_ID}");
-    println!("User verified: {}", if facts.user_verified { "yes" } else { "no" });
-    println!("Signature counter: {}", facts.sign_count);
+    outln!("The signature is good.");
+    outln!("rpId: {SIGN_FILE_RP_ID}");
+    outln!("User verified: {}", if facts.user_verified { "yes" } else { "no" });
+    outln!("Signature counter: {}", facts.sign_count);
     Ok(())
 }
 
@@ -270,7 +270,7 @@ pub fn cmd_mergehex(
     } else {
         std::fs::write(output, text)?;
     }
-    println!("Merged {} files into {}", inputs.len(), output.display());
+    outln!("Merged {} files into {}", inputs.len(), output.display());
     Ok(())
 }
 
@@ -301,11 +301,11 @@ pub fn cmd_ls(json: bool) -> Result<()> {
     }
 
     if devices.is_empty() {
-        println!("No Solo devices found.");
+        outln!("No Solo devices found.");
     } else {
-        println!("Found {} Solo device(s):", devices.len());
+        outln!("Found {} Solo device(s):", devices.len());
         for (model, dev) in &devices {
-            println!(
+            outln!(
                 "  Model: {}  Path: {}  Serial: {}  Product: {}",
                 model,
                 dev.path,

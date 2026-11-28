@@ -48,7 +48,7 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
 
     let response = hid.send_recv(CMD_PROBE, &cbor_bytes)?;
     let result_hex = hex::encode(&response);
-    println!("{result_hex}");
+    outln!("{result_hex}");
 
     if hash_type_str == "Ed25519" {
         // The first 64 bytes are the signature (128 hex characters). The rest is the content.
@@ -56,11 +56,11 @@ pub fn cmd_probe(hid: &impl HidDevice, hash_type: &str, filename: &Path) -> Resu
             let content = response
                 .get(64..)
                 .ok_or_else(|| SoloError::ProtocolError("Probe response too short".into()))?;
-            println!("content: {content:?}");
+            outln!("content: {content:?}");
             let sig_hex = result_hex
                 .get(..128.min(result_hex.len()))
                 .unwrap_or(result_hex.as_str());
-            println!("signature: {sig_hex}");
+            outln!("signature: {sig_hex}");
         }
     }
 
@@ -113,8 +113,8 @@ pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path)
     let data = std::fs::read(filename)?;
     let file_hash: Vec<u8> = Sha256::digest(&data).to_vec();
 
-    println!("{}  {}", hex::encode(&file_hash), filename.display());
-    println!("Please press the button on your Solo key");
+    outln!("{}  {}", hex::encode(&file_hash), filename.display());
+    outln!("Please press the button on your Solo key");
 
     // Build the CTAP2 getAssertion CBOR request map:
     //   0x01: rpId  (must be the same rp that made the credential)
@@ -171,16 +171,16 @@ fn check_ga_response(ga_response: &[u8], filename: &Path) -> Result<()> {
 
     // Save raw signature to {filename}.sig
     let sig_path = with_suffix(filename, ".sig");
-    println!("Saving signature to {}", sig_path.display());
+    outln!("Saving signature to {}", sig_path.display());
     std::fs::write(&sig_path, &signature)?;
 
     // Save raw authData to {filename}.authdata
     let authdata_path = with_suffix(filename, ".authdata");
-    println!("Saving authenticator data to {}", authdata_path.display());
+    outln!("Saving authenticator data to {}", authdata_path.display());
     std::fs::write(&authdata_path, auth_data)?;
 
     // Print hex signature to stdout
-    println!("{}", hex::encode(&signature));
+    outln!("{}", hex::encode(&signature));
 
     Ok(())
 }

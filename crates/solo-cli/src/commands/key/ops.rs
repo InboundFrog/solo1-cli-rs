@@ -21,7 +21,7 @@ pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
             firmware_version: version.to_string(),
         });
     }
-    println!("Firmware version: {version}");
+    outln!("Firmware version: {version}");
     Ok(())
 }
 
@@ -39,7 +39,7 @@ pub fn cmd_key_version_solo2(hid: &impl HidDevice, json: bool) -> Result<()> {
             firmware_version: version.to_string(),
         });
     }
-    println!("Firmware version: {version}");
+    outln!("Firmware version: {version}");
     Ok(())
 }
 
@@ -62,7 +62,7 @@ pub(super) fn get_device_version(hid: &impl HidDevice) -> Result<FirmwareVersion
 /// timeout).
 pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
     hid.send_recv(CTAPHID_WINK, &[])?;
-    println!("Winked!");
+    outln!("Winked!");
     Ok(())
 }
 
@@ -88,7 +88,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
 
         if json {
             // One compact object per line (JSON Lines), printed as each ping answers.
-            println!(
+            outln!(
                 "{}",
                 serde_json::to_string(&PingOutput {
                     index,
@@ -97,7 +97,7 @@ pub fn cmd_ping(hid: &impl HidDevice, count: u32, data: &[u8], json: bool) -> Re
                 })?
             );
         } else {
-            println!(
+            outln!(
                 "Ping {}: {} bytes, RTT = {:.3}ms",
                 index,
                 data.len(),
@@ -118,7 +118,7 @@ pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
         return Err(SoloError::ProtocolError("Keyboard data too long (max 64 bytes)".into()));
     }
     hid.send_recv(CMD_KEYBOARD, data)?;
-    println!("Keyboard sequence programmed ({} bytes)", data.len());
+    outln!("Keyboard sequence programmed ({} bytes)", data.len());
     Ok(())
 }
 
@@ -129,12 +129,12 @@ pub fn cmd_keyboard(hid: &impl HidDevice, data: &[u8]) -> Result<()> {
 /// command fails (device/transport error or timeout).
 pub fn cmd_reset(hid: &impl HidDevice) -> Result<()> {
     if !common::confirm("Warning: Your credentials will be lost!!! Type 'yes' to confirm:")? {
-        println!("Aborted.");
+        outln!("Aborted.");
         return Ok(());
     }
-    println!("Press the button to confirm -- again, your credentials will be lost!!!");
+    outln!("Press the button to confirm -- again, your credentials will be lost!!!");
     send_reset(hid)?;
-    println!("....aaaand they're gone");
+    outln!("....aaaand they're gone");
     Ok(())
 }
 
@@ -161,11 +161,11 @@ pub fn cmd_disable_updates(hid: &impl HidDevice) -> Result<()> {
     if !common::confirm(
         "WARNING: This will permanently disable firmware updates on this device!\nThis action cannot be undone. Type 'yes' to confirm:",
     )? {
-        println!("Aborted.");
+        outln!("Aborted.");
         return Ok(());
     }
     bootloader_cmd(hid, CMD_DISABLE_BOOTLOADER, 0, &[])?;
-    println!("Firmware updates have been permanently disabled.");
+    outln!("Firmware updates have been permanently disabled.");
     Ok(())
 }
 

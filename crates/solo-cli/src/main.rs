@@ -3,6 +3,7 @@ use solo_cli::cli::{AuxCommands, Cli, Commands, CredentialCommands, KeyCommands,
 use solo_cli::commands::{aux, key, program, top};
 use solo_cli::device::{Key, Model};
 use solo_cli::error;
+use solo_cli::outln;
 use solo_cli::output;
 
 fn main() {
@@ -100,7 +101,7 @@ fn run_key_command(
                 if json {
                     output::print_json(&output::RngOutput { bytes: hex })?;
                 } else {
-                    println!("{hex}");
+                    outln!("{hex}");
                 }
             }
             RngCommands::Raw => {
@@ -240,8 +241,8 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
 }
 
 fn run_monitor(port: &str) -> error::Result<()> {
-    println!("Monitoring serial port {port} at 115200 baud...");
-    println!("Press Ctrl+C to stop.");
+    outln!("Monitoring serial port {port} at 115200 baud...");
+    outln!("Press Ctrl+C to stop.");
 
     let port = serialport::new(port, 115_200)
         .timeout(std::time::Duration::from_millis(100))

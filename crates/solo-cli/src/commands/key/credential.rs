@@ -89,38 +89,38 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
         });
     }
 
-    println!("CTAP2 authenticatorGetInfo");
-    println!("{}", "=".repeat(40));
-    println!("Versions:                       {}", versions.join(", "));
+    outln!("CTAP2 authenticatorGetInfo");
+    outln!("{}", "=".repeat(40));
+    outln!("Versions:                       {}", versions.join(", "));
     if !extensions.is_empty() {
-        println!("Extensions:                     {}", extensions.join(", "));
+        outln!("Extensions:                     {}", extensions.join(", "));
     }
-    println!("AAGUID:                         {aaguid}");
+    outln!("AAGUID:                         {aaguid}");
     if !options.is_empty() {
         let mut opt_strs: Vec<String> = options.iter().map(|(k, v)| format!("{k}: {v}")).collect();
         opt_strs.sort();
-        println!("Options:                        {}", opt_strs.join(", "));
+        outln!("Options:                        {}", opt_strs.join(", "));
     }
     if let Some(size) = max_msg_size {
-        println!("Max message size:               {size}");
+        outln!("Max message size:               {size}");
     }
     if !pin_uv_auth_protocols.is_empty() {
         let proto_strs: Vec<String> = pin_uv_auth_protocols
             .iter()
             .map(std::string::ToString::to_string)
             .collect();
-        println!("PIN/UV auth protocols:          {}", proto_strs.join(", "));
+        outln!("PIN/UV auth protocols:          {}", proto_strs.join(", "));
     }
     if let Some(c) = max_credential_count_in_list {
-        println!("Max credential count in list:   {c}");
+        outln!("Max credential count in list:   {c}");
     }
     if let Some(l) = max_credential_id_length {
-        println!("Max credential ID length:       {l}");
+        outln!("Max credential ID length:       {l}");
     }
     if let Some(r) = remaining_discoverable_credentials {
-        println!("Remaining discoverable creds:   {r}");
+        outln!("Remaining discoverable creds:   {r}");
     } else {
-        println!("Remaining discoverable creds:   (not reported by device)");
+        outln!("Remaining discoverable creds:   (not reported by device)");
     }
 
     Ok(())
@@ -347,7 +347,7 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
         if json {
             return print_json(&CredentialListOutput { credentials: vec![] });
         }
-        println!("No resident credentials on this device.");
+        outln!("No resident credentials on this device.");
         return Ok(());
     }
 
@@ -368,10 +368,10 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
         return print_json(&CredentialListOutput { credentials: entries });
     }
 
-    println!("{:<32} {:<24} Credential ID (base64)", "Relying Party", "Username");
-    println!("{}", "-".repeat(90));
+    outln!("{:<32} {:<24} Credential ID (base64)", "Relying Party", "Username");
+    outln!("{}", "-".repeat(90));
     for entry in &entries {
-        println!("{:<32} {:<24} {}", entry.rp_id, entry.user_name, entry.credential_id);
+        outln!("{:<32} {:<24} {}", entry.rp_id, entry.user_name, entry.credential_id);
     }
 
     Ok(())
@@ -446,7 +446,7 @@ pub fn cmd_credential_rm(
 
     // Confirmation prompt
     if !common::confirm(&format!("Delete credential {display_label}?\nType 'yes' to confirm:"))? {
-        println!("Aborted.");
+        outln!("Aborted.");
         return Ok(());
     }
 
@@ -483,7 +483,7 @@ pub fn cmd_credential_rm(
     let del_resp = ctap2_call(hid, 0x0A, &del_cbor)?;
     check_ctap_status(&del_resp, "deleteCredential")?;
 
-    println!("Credential deleted.");
+    outln!("Credential deleted.");
     Ok(())
 }
 

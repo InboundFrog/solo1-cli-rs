@@ -34,7 +34,7 @@ pub fn prompt_and_get_pin_token(hid: &impl HidDevice) -> Result<Vec<u8>> {
 /// # Errors
 /// Returns an error if reading a line from standard input fails.
 pub fn confirm(prompt: &str) -> Result<bool> {
-    println!("{prompt}");
+    outln!("{prompt}");
     let mut input = String::new();
     std::io::stdin().read_line(&mut input).map_err(SoloError::IoError)?;
     Ok(is_confirmed(&input))
