@@ -126,10 +126,15 @@ solo key credential create --host <HOST> --user <USER> [--prompt <TEXT>] [--publ
 
 `credential create` prints the credential ID. With `--public-key-out <FILE>`, it also writes the
 public key of the new credential to FILE as PEM text. With `--json`, the JSON object has the extra
-field `public_key_pem`. `solo` does not give the key of a credential that already exists, so save it
-when you create the credential. You need it to check the signatures of `sign-file`. If the key
+field `public_key_pem`. You need the key to check the signatures of `sign-file`. If the key
 cannot be read, the error text holds the credential ID. If the file cannot be written, the error
 text holds the PEM text.
+
+`credential ls` does not print public keys in text mode. With `--json`, each entry has the field
+`public_key_pem` (PEM text) when the key sends the public key of the credential. If the key sends
+none, or sends one that cannot be read, the field is left out. A key that cannot be read also gives
+a warning on stderr. To save the key of an existing credential, run `credential ls` with `--json` and
+write the field to a file.
 
 #### Sign a file and check the signature
 
@@ -142,7 +147,7 @@ the input file, and overwrites them if they exist:
 - `FILE.authdata`: the authenticator data that was signed.
 
 To check the signature, you need the file, `FILE.sig`, `FILE.authdata` and the public key of the
-credential. Get the public key with `credential create --public-key-out pub.pem`.
+credential. Get the public key with `credential create --public-key-out pub.pem`, or from `credential ls --json`.
 
 The simple way is `solo verify-file`. It needs no device:
 
