@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::commands::restart::{RECONNECT_INTERVAL, retry_open, wait_for_normal_key};
 use crate::error::{Result, SoloError};
 use solo_ctaphid::HidDevice;
-use solo1::firmware::FirmwareVersion;
+use solo1::firmware::{FirmwareJson, FirmwareVersion};
 
 /// Wait after entering the bootloader, so the old firmware is gone before the first open.
 const RECONNECT_SETTLE: Duration = Duration::from_millis(1500);
@@ -53,11 +53,8 @@ pub fn cmd_update(
     serial: Option<&str>,
     timeout: Duration,
 ) -> Result<()> {
-    use crate::commands::program::{select_signature, write_firmware};
     use crate::github::{download_url, fetch_latest_release};
-    use solo1::crypto::sha256_hex;
-    use solo1::firmware::{FIRMWARE_RELEASES_REPO, FirmwareJson, is_firmware_asset};
-    use solo1::protocol::CMD_ENTER_BOOT;
+    use solo1::firmware::{FIRMWARE_RELEASES_REPO, is_firmware_asset};
 
     let mut release_tag = None;
     let fw_json = if let Some(path) = firmware_file {
@@ -79,6 +76,37 @@ pub fn cmd_update(
         serde_json::from_str(&json_str)?
     };
 
+    run_update(
+        hid,
+        &fw_json,
+        release_tag.as_deref(),
+        RECONNECT_SETTLE,
+        timeout,
+        || solo1::open(serial, timeout),
+        || wait_for_normal_key(serial, timeout),
+    )
+}
+
+/// The steps of the update after the firmware is loaded.
+///
+/// `open` opens the key in bootloader mode and `wait` waits for the restart. They are
+/// arguments so that a test can pass fake devices. `settle` is the pause before the first `open`.
+///
+/// # Errors
+/// The errors of [`cmd_update`] from the bootloader step on.
+fn run_update<B: HidDevice, E: std::fmt::Display + Into<SoloError>>(
+    hid: &impl HidDevice,
+    fw_json: &FirmwareJson,
+    release_tag: Option<&str>,
+    settle: Duration,
+    timeout: Duration,
+    open: impl FnMut() -> std::result::Result<B, E>,
+    wait: impl FnOnce() -> Result<FirmwareVersion>,
+) -> Result<()> {
+    use crate::commands::program::{select_signature, write_firmware};
+    use solo1::crypto::sha256_hex;
+    use solo1::protocol::CMD_ENTER_BOOT;
+
     let (flash_start, firmware_bytes) = fw_json.firmware_binary()?;
     println!("Firmware size: {} bytes", firmware_bytes.len());
     println!("Flash start:   0x{flash_start:08X}");
@@ -92,16 +120,14 @@ pub fn cmd_update(
     // Reconnect in bootloader mode. The device needs time to re-enumerate; the old firmware
     // has the same VID/PID, so wait before the first open.
     println!("Reconnecting...");
-    std::thread::sleep(RECONNECT_SETTLE);
-    let bl_hid = retry_open(
-        RECONNECT_INTERVAL,
-        timeout,
-        || solo1::open(serial, timeout),
-        |msg, level| log::log!(level, "Could not reconnect yet: {msg}. Trying again..."),
-    )?;
+    std::thread::sleep(settle);
+    let bl_hid = retry_open(RECONNECT_INTERVAL, timeout, open, |msg, level| {
+        log::log!(level, "Could not reconnect yet: {msg}. Trying again...");
+    })
+    .map_err(Into::into)?;
 
     // Query bootloader version to select the correct signature.
-    let signature = select_signature(&bl_hid, &fw_json)?;
+    let signature = select_signature(&bl_hid, fw_json)?;
     log::debug!(
         "Using signature ({} bytes): {}",
         signature.len(),
@@ -122,9 +148,9 @@ pub fn cmd_update(
     // get in the way of the next open on some systems.
     drop(bl_hid);
     println!("Waiting for the key to restart...");
-    let version = wait_for_normal_key(serial, timeout)?;
+    let version = wait()?;
     println!("The key restarted with firmware {version}.");
-    check_restart_version(release_tag.as_deref(), &version)?;
+    check_restart_version(release_tag, &version)?;
     println!("Firmware update complete!");
     Ok(())
 }
