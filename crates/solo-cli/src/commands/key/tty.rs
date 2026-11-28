@@ -114,18 +114,19 @@ mod unix {
         )]
         use super::*;
         use libc::{ECHONL, ICANON};
+        use std::os::fd::{FromRawFd, OwnedFd};
 
-        #[test]
-        fn without_echo_clears_only_echo() {
-            let mut t: termios = unsafe { std::mem::zeroed() };
-            t.c_lflag = ECHO | ECHONL | ICANON;
-            let q = without_echo(t);
-            assert_eq!(q.c_lflag, ECHONL | ICANON);
+        /// The tests that use `EchoOff::on` share the `SAVED` static, so they run one at a time.
+        static SERIAL: Mutex<()> = Mutex::new(());
+
+        fn serial() -> std::sync::MutexGuard<'static, ()> {
+            SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
         }
 
-        #[test]
-        fn echo_off_changes_a_pty_and_returns_the_old_state() {
+        /// Both ends of a new pty. `OwnedFd` closes them also when an assert fails.
+        fn pty() -> (OwnedFd, OwnedFd) {
             let (mut master, mut slave) = (0, 0);
+            // SAFETY: both fd pointers are valid for writes; the name and termios pointers may be null.
             let rc = unsafe {
                 libc::openpty(
                     &raw mut master,
@@ -136,26 +137,98 @@ mod unix {
                 )
             };
             assert_eq!(rc, 0);
-            let flags = |fd| {
-                let mut t = MaybeUninit::<termios>::uninit();
-                assert_eq!(unsafe { tcgetattr(fd, t.as_mut_ptr()) }, 0);
-                unsafe { t.assume_init() }.c_lflag
-            };
-            let before = flags(slave);
+            // SAFETY: `openpty` returned two new fds that nothing else owns.
+            unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) }
+        }
+
+        fn flags(fd: &OwnedFd) -> libc::tcflag_t {
+            let mut t = MaybeUninit::<termios>::uninit();
+            // SAFETY: `t` is valid for writes; `tcgetattr` fills it when it returns 0.
+            assert_eq!(unsafe { tcgetattr(fd.as_raw_fd(), t.as_mut_ptr()) }, 0);
+            // SAFETY: `tcgetattr` returned 0, so `t` is initialised.
+            unsafe { t.assume_init() }.c_lflag
+        }
+
+        fn set_flags(fd: &OwnedFd, lflag: libc::tcflag_t) {
+            let mut t = MaybeUninit::<termios>::uninit();
+            // SAFETY: as in `flags`.
+            assert_eq!(unsafe { tcgetattr(fd.as_raw_fd(), t.as_mut_ptr()) }, 0);
+            // SAFETY: `tcgetattr` returned 0, so `t` is initialised.
+            let mut t = unsafe { t.assume_init() };
+            t.c_lflag = lflag;
+            // SAFETY: `t` is a valid termios.
+            assert_eq!(unsafe { tcsetattr(fd.as_raw_fd(), TCSANOW, &raw const t) }, 0);
+        }
+
+        fn guard_on(slave: &OwnedFd) -> EchoOff {
+            EchoOff::on(File::from(slave.try_clone().unwrap())).unwrap()
+        }
+
+        #[test]
+        fn without_echo_clears_only_echo() {
+            // SAFETY: `termios` is plain integers and arrays; all-zero is a valid value.
+            let mut t: termios = unsafe { std::mem::zeroed() };
+            t.c_lflag = ECHO | ECHONL | ICANON;
+            let q = without_echo(t);
+            assert_eq!(q.c_lflag, ECHONL | ICANON);
+        }
+
+        #[test]
+        fn echo_off_changes_a_pty_and_returns_the_old_state() {
+            let (_master, slave) = pty();
+            let before = flags(&slave);
             assert_ne!(before & ECHO, 0, "pty starts with echo on");
-            let orig = echo_off(slave).unwrap();
+            let orig = echo_off(slave.as_raw_fd()).unwrap();
             assert_eq!(orig.c_lflag, before);
-            assert_eq!(flags(slave), before & !ECHO);
-            unsafe {
-                libc::close(master);
-                libc::close(slave);
-            }
+            assert_eq!(flags(&slave), before & !ECHO);
         }
 
         #[test]
         fn echo_off_on_a_non_terminal_returns_none() {
             let f = File::open("/dev/null").unwrap();
             assert!(echo_off(f.as_raw_fd()).is_none());
+        }
+
+        #[test]
+        fn guard_turns_echo_off_and_drop_restores_the_original_flags() {
+            let _s = serial();
+            let (_master, slave) = pty();
+            let before = flags(&slave);
+            let guard = guard_on(&slave);
+            assert_eq!(flags(&slave), before & !ECHO);
+            drop(guard);
+            assert_eq!(flags(&slave), before);
+        }
+
+        #[test]
+        fn restore_with_a_live_guard_puts_the_flags_back_and_drop_does_not_restore_again() {
+            let _s = serial();
+            let (_master, slave) = pty();
+            let before = flags(&slave);
+            let guard = guard_on(&slave);
+            restore();
+            assert_eq!(flags(&slave), before);
+            // A second restore would put `before` back over this.
+            let other = before & !ICANON;
+            set_flags(&slave, other);
+            drop(guard);
+            assert_eq!(flags(&slave), other);
+        }
+
+        #[test]
+        fn restore_without_a_guard_does_nothing() {
+            let _s = serial();
+            restore();
+        }
+
+        #[test]
+        fn with_guard_holds_echo_off_while_the_closure_runs() {
+            let _s = serial();
+            let (_master, slave) = pty();
+            let before = flags(&slave);
+            let seen = with_guard(Some(guard_on(&slave)), || flags(&slave));
+            assert_eq!(seen, before & !ECHO, "echo must be off inside the closure");
+            assert_eq!(flags(&slave), before, "and back on after it");
         }
     }
 }
