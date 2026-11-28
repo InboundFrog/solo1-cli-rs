@@ -452,6 +452,10 @@ const IMAGE_PAGE_LEN: usize = 256;
 /// limit, files far apart cost 538 bytes for each byte they hold.
 const MAX_IMAGE_PAGES: usize = 4 * 1024;
 
+/// Pages of a [`FlashImage`] that a full Solo 1 flash takes (1024).
+const FLASH_IMAGE_PAGES: u32 = FLASH_PAGES * FLASH_PAGE_SIZE / 256;
+const _: () = assert!(256 == IMAGE_PAGE_LEN);
+
 /// A sparse flash image: bytes at 32-bit addresses.
 ///
 /// The address space is cut into pages of 256 addresses. A page is created
@@ -491,8 +495,7 @@ impl FlashImage {
         let new_pages = (addr >> 8..=last >> 8).filter(|p| !self.pages.contains_key(p)).count();
         if self.pages.len().saturating_add(new_pages) > MAX_IMAGE_PAGES {
             return Err(Error::Firmware(format!(
-                "HEX input is too sparse: the merged image would need more than {MAX_IMAGE_PAGES} pages of {IMAGE_PAGE_LEN} addresses (a Solo 1 flash image needs {})",
-                FLASH_PAGES * FLASH_PAGE_SIZE / 256
+                "merged image is too large: it would need more than {MAX_IMAGE_PAGES} pages of {IMAGE_PAGE_LEN} addresses (a Solo 1 flash image fits in {FLASH_IMAGE_PAGES})"
             )));
         }
         let mut a = addr;
@@ -643,7 +646,8 @@ fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
 /// `attestation_cert` is provided, an attestation key or certificate file
 /// cannot be read or is invalid (malformed hex key, or a certificate shorter
 /// than 100 bytes), an input HEX file cannot be read or parsed, an address
-/// overflows 32 bits, or the output file cannot be written.
+/// overflows 32 bits, the merged image would need more than [`MAX_IMAGE_PAGES`]
+/// pages, or the output file cannot be written.
 pub fn merge_hex_files(
     inputs: &[&Path],
     output: &Path,
@@ -1291,8 +1295,8 @@ mod tests {
 
     #[test]
     fn test_merge_many_files_total_limit_and_normal_merge() {
-        let dir = std::env::temp_dir().join(format!("solo1-merge-limit-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         let write_hex = |name: &str, addr: u32| {
             let p = dir.join(name);
             std::fs::write(&p, hex_text(&[(addr, vec![1, 2, 3])]).unwrap()).unwrap();
@@ -1308,8 +1312,7 @@ mod tests {
             .collect();
         let refs: Vec<&Path> = many.iter().map(std::path::PathBuf::as_path).collect();
         let err = merge_hex_text(&refs, None, None).unwrap_err().to_string();
-        assert!(err.contains("too sparse") && err.contains("4096"), "{err}");
-        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(err.contains("too large") && err.contains("4096"), "{err}");
     }
 
     #[test]
