@@ -125,6 +125,22 @@ fn refuse_json(cmd: &KeyCommands, json: bool) -> error::Result<()> {
     Ok(())
 }
 
+fn sign_file_to_stdio(
+    hid: &impl solo_ctaphid::HidDevice,
+    credential_id: &str,
+    filename: &std::path::Path,
+    json: bool,
+) -> error::Result<()> {
+    key::cmd_sign_file(
+        hid,
+        credential_id,
+        filename,
+        json,
+        &mut std::io::stdout().lock(),
+        &mut std::io::stderr().lock(),
+    )
+}
+
 fn run_key_command(
     serial: Option<&str>,
     cmd: KeyCommands,
@@ -210,14 +226,14 @@ fn run_key_command(
 
         KeyCommands::Probe { hash_type, filename } => {
             key.require(Model::Solo1, "key probe")?;
-            key::cmd_probe(hid, &hash_type, &filename, json)?;
+            key::cmd_probe(hid, &hash_type, &filename, json, &mut std::io::stdout().lock())?;
         }
 
         KeyCommands::SignFile {
             credential_id,
             filename,
         } => {
-            key::cmd_sign_file(hid, &credential_id, &filename, json)?;
+            sign_file_to_stdio(hid, &credential_id, &filename, json)?;
         }
 
         KeyCommands::Update { firmware } => {
