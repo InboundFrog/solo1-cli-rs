@@ -135,7 +135,7 @@ fn run_key_command(
         }
 
         KeyCommands::Ping { count, data, hex } => {
-            let ping_data = key::ping_payload(data.as_deref(), hex.as_deref())?;
+            let ping_data = key::ping_payload(data.as_deref(), hex.as_deref());
             key::cmd_ping(hid, count, &ping_data, json)?;
         }
 
@@ -314,6 +314,19 @@ mod tests {
         assert!(Cli::try_parse_from(["solo", "key", "ping", "--data", "a", "--hex", "aa"]).is_err());
         assert!(Cli::try_parse_from(["solo", "key", "ping", "--data", "a"]).is_ok());
         assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "aa"]).is_ok());
+    }
+
+    #[test]
+    fn ping_invalid_hex_is_rejected_by_clap() {
+        use clap::Parser;
+        for bad in ["abc", "zz"] {
+            let e = Cli::try_parse_from(["solo", "key", "ping", "--hex", bad]).unwrap_err();
+            assert_eq!(e.kind(), clap::error::ErrorKind::ValueValidation);
+            assert!(e.to_string().contains("--hex"), "{e}");
+        }
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "AbCd"]).is_ok());
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "0xab"]).is_err());
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "ab cd"]).is_err());
     }
 
     #[test]

@@ -155,13 +155,13 @@ pub enum KeyCommands {
         #[arg(long, default_value = "1")]
         count: u32,
 
-        /// Ping data, sent as the text bytes (default: the 4 bytes de ad be ef)
-        #[arg(long, conflicts_with = "hex")]
+        /// Ping data as text, sent as its UTF-8 bytes. Default without --data or --hex: the 4 bytes de ad be ef
+        #[arg(long, value_name = "TEXT", conflicts_with = "hex")]
         data: Option<String>,
 
         /// Ping data as a hex string, sent as the decoded bytes
-        #[arg(long)]
-        hex: Option<String>,
+        #[arg(long, value_name = "HEX", value_parser = parse_hex)]
+        hex: Option<::std::vec::Vec<u8>>,
     },
 
     /// Program keyboard sequence (max 64 bytes)
@@ -316,4 +316,9 @@ pub enum AuxCommands {
 
     /// Get bootloader version
     BootloaderVersion,
+}
+
+/// Decode a hex string. It lets clap report invalid hex before a device is opened.
+fn parse_hex(s: &str) -> Result<Vec<u8>, hex::FromHexError> {
+    hex::decode(s)
 }
