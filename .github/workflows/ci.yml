@@ -27,6 +27,19 @@ jobs:
       # hidapi / libudev-sys link against these.
       apt-packages: libudev-dev libusb-1.0-0-dev pkg-config
 
+  # The same checks on macOS. The reusable workflow takes a `runs-on` input,
+  # installs apt packages on Linux only (hidapi needs none on macOS), and its
+  # rt-run step shell is written for bash 3.2 and BSD tools. audit and MSRV are
+  # skipped: they already run in `rust`, and audit always runs on Linux.
+  rust-macos:
+    uses: InboundFrog/repo-tools/.github/workflows/rust.yml@11670fe8f6e9cddf7be79989e2da4ae48f399584 # v0.1.1
+    with:
+      working-directory: .
+      toolchain: "1.99"
+      runs-on: macos-latest
+      audit-command: skip
+      msrv-command: skip
+
   # Compile and lint only, so the non-Unix code (for example the plain-write
   # version of write_private_key) is built at least once. Nothing is run:
   # nobody can test Windows. Not in `needs` of CI OK, so a Windows failure
@@ -50,7 +63,7 @@ jobs:
   ci-ok:
     name: CI OK
     if: always()
-    needs: [rust]
+    needs: [rust, rust-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
