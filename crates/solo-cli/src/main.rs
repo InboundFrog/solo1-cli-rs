@@ -378,6 +378,7 @@ mod tests {
             Some("credential rm")
         );
         assert_eq!(name(&["solo", "key", "version"]), None);
+        assert!(refuse_json(&KeyCommands::Wink, false).is_ok());
         assert_eq!(name(&["solo", "key", "rng", "hexbytes", "4"]), None);
         assert_eq!(name(&["solo", "key", "credential", "ls"]), None);
     }
