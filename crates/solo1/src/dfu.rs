@@ -437,12 +437,18 @@ impl<T: Transport> Dfu<T> {
         Ok(())
     }
 
+    /// Read up to `len` bytes from a DFU block. The device may send fewer.
+    fn read_block(&self, block: u16, len: usize) -> Result<Vec<u8>> {
+        self.ensure_state(&[DFU_STATE_IDLE, DFU_STATE_UPLOAD_IDLE], "reading memory")?;
+        let mut buf = vec![0u8; len];
+        let n = self.io.control_in(DFU_UPLOAD, block, &mut buf)?;
+        buf.truncate(n);
+        Ok(buf)
+    }
+
     /// Read `OPTION_BYTES_LEN` bytes at the current address pointer.
     fn read_at_pointer(&self) -> Result<Vec<u8>> {
-        self.ensure_state(&[DFU_STATE_IDLE, DFU_STATE_UPLOAD_IDLE], "reading memory")?;
-        let mut buf = [0u8; OPTION_BYTES_LEN];
-        let n = self.io.control_in(DFU_UPLOAD, BLOCK_AT_POINTER, &mut buf)?;
-        Ok(buf.get(..n).unwrap_or_default().to_vec())
+        self.read_block(BLOCK_AT_POINTER, OPTION_BYTES_LEN)
     }
 
     /// Write 16 bytes at the current address pointer. The device may reset
