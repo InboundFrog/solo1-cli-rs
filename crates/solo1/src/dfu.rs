@@ -18,7 +18,7 @@ pub const DFU_UPLOAD: u8 = 0x02;
 pub const DFU_GETSTATUS: u8 = 0x03;
 pub const DFU_CLRSTATUS: u8 = 0x04;
 
-// DFU states used by the code.
+// DFU states used by the code and its tests.
 //
 // All DFU 1.1 device states (`bState` in the `DFU_GETSTATUS` reply), kept as a
 // record of the protocol:
