@@ -23,7 +23,7 @@ jobs:
     uses: InboundFrog/repo-tools/.github/workflows/rust.yml@11670fe8f6e9cddf7be79989e2da4ae48f399584 # v0.1.1
     with:
       working-directory: .
-      toolchain: "1.99"
+      toolchain: "1.100"
       # hidapi / libudev-sys link against these.
       apt-packages: libudev-dev libusb-1.0-0-dev pkg-config
 
@@ -35,7 +35,7 @@ jobs:
     uses: InboundFrog/repo-tools/.github/workflows/rust.yml@11670fe8f6e9cddf7be79989e2da4ae48f399584 # v0.1.1
     with:
       working-directory: .
-      toolchain: "1.99"
+      toolchain: "1.100"
       runs-on: macos-latest
       audit-command: skip
       msrv-command: skip
@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
-          toolchain: "1.99"
+          toolchain: "1.100"
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo build --workspace --all-targets --locked
