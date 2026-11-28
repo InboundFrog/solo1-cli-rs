@@ -27,9 +27,7 @@ const WARN_AFTER: Duration = Duration::from_secs(5);
 /// Each failed attempt that will be tried again is passed to `report` as text,
 /// with `Level::Debug` for the first `WARN_AFTER` and `Level::Warn` after that.
 /// A message is passed at warn level only once, however often it comes back.
-/// The error from the last attempt is not reported, and neither is the attempt
-/// before it when it is the last one that can still run. The last error is
-/// returned and the caller shows it.
+/// The error from the last attempt is not reported. It is returned.
 ///
 /// # Errors
 /// Returns the error of the last attempt when the time is up.
@@ -56,18 +54,17 @@ fn retry_with_clock<T, E: std::fmt::Display>(
     loop {
         match open() {
             Ok(v) => return Ok(v),
-            Err(e) if elapsed() >= total => return Err(e),
             Err(e) => {
-                // After the next sleep the time is up, so the next try is the last.
-                // Its error is the one the caller shows, so this one stays quiet.
-                if elapsed().saturating_add(interval) < total {
-                    let message = e.to_string();
-                    if elapsed() < WARN_AFTER {
-                        report(&message, log::Level::Debug);
-                    } else if !warned.contains(&message) {
-                        report(&message, log::Level::Warn);
-                        warned.push(message);
-                    }
+                let now = elapsed();
+                if now >= total {
+                    return Err(e);
+                }
+                let message = e.to_string();
+                if now < WARN_AFTER {
+                    report(&message, log::Level::Debug);
+                } else if !warned.contains(&message) {
+                    report(&message, log::Level::Warn);
+                    warned.push(message);
                 }
                 sleep(interval);
             }
@@ -207,12 +204,15 @@ mod tests {
 
     /// Run `retry_with_clock` on a fake clock. Each sleep is one second.
     /// `errors` is the error of each try; the run ends when they are used up.
-    fn run(total_secs: u64, errors: &[&'static str]) -> (Vec<(String, log::Level)>, i32) {
+    fn run(
+        total_secs: u64,
+        errors: &[&'static str],
+    ) -> (Vec<(String, log::Level)>, i32, std::result::Result<(), &'static str>) {
         let now = Cell::new(Duration::ZERO);
         let mut errors = errors.iter();
         let mut reports = Vec::new();
         let mut calls = 0;
-        let _ = retry_with_clock(
+        let result = retry_with_clock(
             || now.get(),
             |d| now.set(now.get().saturating_add(d)),
             Duration::from_secs(1),
@@ -223,21 +223,21 @@ mod tests {
             },
             |m, l| reports.push((m.to_owned(), l)),
         );
-        (reports, calls)
+        (reports, calls, result)
     }
 
     #[test]
     fn failed_tries_are_debug_until_warn_after() {
         // Tries at 0..=4 s are quiet. The tries at 5 s and later are loud.
         let errors = ["e0", "e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"];
-        let (reports, _) = run(100, &errors);
+        let (reports, ..) = run(100, &errors);
         let levels: Vec<_> = reports.iter().map(|r| r.1).collect();
         assert_eq!(levels, [Debug, Debug, Debug, Debug, Debug, Warn, Warn, Warn, Warn]);
     }
 
     #[test]
     fn a_good_run_within_warn_after_prints_no_warning() {
-        let (reports, calls) = run(100, &["down", "down", "down"]);
+        let (reports, calls, _) = run(100, &["down", "down", "down"]);
         assert_eq!(calls, 4);
         assert!(reports.iter().all(|r| r.1 == Debug), "{reports:?}");
     }
@@ -248,19 +248,26 @@ mod tests {
             .into_iter()
             .chain(["A", "B", "A", "B", "A", "B", "C"])
             .collect::<Vec<_>>();
-        let (reports, _) = run(100, &errors);
+        let (reports, ..) = run(100, &errors);
         let warns: Vec<_> = reports.iter().filter(|r| r.1 == Warn).map(|r| r.0.as_str()).collect();
         assert_eq!(warns, ["A", "B", "C"]);
     }
 
     #[test]
-    fn the_try_before_the_last_is_not_reported() {
-        // Tries run at 0 s, 1 s, 2 s and 3 s. The try at 3 s is the last and is
-        // returned. The try at 2 s is followed by the last one, so it is not reported.
-        let (reports, calls) = run(3, &["a", "b", "c", "d", "e"]);
+    fn the_last_error_is_returned_and_not_reported() {
+        // Tries run at 0 s, 1 s, 2 s and 3 s. The try at 3 s is the last.
+        let (reports, calls, result) = run(3, &["a", "b", "c", "d", "e"]);
         assert_eq!(calls, 4);
+        assert_eq!(result, Err("d"));
         let texts: Vec<_> = reports.iter().map(|r| r.0.as_str()).collect();
-        assert_eq!(texts, ["a", "b"]);
+        assert_eq!(texts, ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn success_after_failures_returns_ok() {
+        let (_, calls, result) = run(100, &["a", "b"]);
+        assert_eq!(calls, 3);
+        assert_eq!(result, Ok(()));
     }
 
     #[test]
