@@ -86,7 +86,10 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 /// the drive cache too. Not checked: whether every file system accepts that
 /// call on a directory. The new key is in a new file, so a handle that another
 /// program opened on the old file cannot read it. A symbolic link or any other
-/// kind of existing path gives an error and is left untouched.
+/// kind of existing path gives an error and is left untouched. If the program
+/// is killed, or the machine stops, after the create and before the rename, the
+/// temporary file stays and holds the key (or part of it); the README tells the
+/// user to remove it.
 #[cfg(unix)]
 fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;

@@ -219,6 +219,13 @@ solo mergehex -o OUTPUT [--attestation-key FILE] [--attestation-cert FILE] INPUT
 solo monitor <PORT>
 ```
 
+On Linux and macOS, `genkey -o` and `mergehex --attestation-key` first write the key to a
+hidden file `.solo-<pid>.tmp` in the output directory and then rename it. If the command is
+killed, or the machine stops, before the rename, that file stays. It holds the private key
+or part of it (mode 0600). List it with `ls -a <output directory>` and remove it when no
+other `solo` command is running. Until you remove it, a later run that gets the same
+process id fails with "File exists".
+
 ---
 
 ## Firmware update notes
