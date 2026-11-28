@@ -31,30 +31,54 @@ jobs:
   # second user who must not read the key.
   key-file-users:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Install system packages
         run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libudev-dev libusb-1.0-0-dev pkg-config
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           toolchain: "1.99"
+          # Keep this false: the root step below writes root-owned files into
+          # target/, and a cache that saves them would break later runs.
           cache: false
-      - name: Build
+      - name: Build as the normal user
         run: |
-          cargo test -p solo-cli --locked --no-run
+          cargo test -p solo-cli --locked --lib --no-run
           cargo build -p solo-cli --locked
       - name: write_private_key tests as root
-        # Already built above, so root writes nothing into target/.
-        run: sudo env "PATH=$PATH" "HOME=$HOME" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" cargo test -p solo-cli --locked write_private_key
+        shell: bash
+        # sudo -E keeps the CARGO_* variables from setup-rust-toolchain, so
+        # root uses the same profile as the build above (not checked until CI
+        # runs: that root compiles nothing).
+        run: |
+          set -o pipefail
+          sudo -E env "PATH=$PATH" "HOME=$HOME" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" cargo test -p solo-cli --locked --lib write_private_key | tee root-test.log
+          # A filter that matches nothing also passes: require all 14 tests.
+          n=$(sed -n 's/^test result: ok\. \([0-9][0-9]*\) passed.*/\1/p' root-test.log)
+          if [ "$n" != 14 ]; then
+            echo "expected 14 write_private_key tests, ran: ${n:-none}" >&2
+            exit 1
+          fi
       - name: Another user cannot read a key from genkey
+        shell: bash
         run: |
           sudo useradd -M solo_other
           dir=$(mktemp -d)
           chmod 755 "$dir"
           target/debug/solo genkey -o "$dir/key.pem"
           test "$(stat -c %a "$dir/key.pem")" = 600
-          if sudo -u solo_other cat "$dir/key.pem"; then
+          # The other user can see the file, so a failed cat is a permission error.
+          sudo -u solo_other test -e "$dir/key.pem"
+          if out=$(sudo -u solo_other cat "$dir/key.pem" 2>&1); then
             echo "another user could read the key" >&2
+            exit 1
+          fi
+          echo "$out"
+          if ! grep -q "Permission denied" <<<"$out"; then
+            echo "cat failed for another reason" >&2
             exit 1
           fi
 
