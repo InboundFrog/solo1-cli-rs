@@ -44,6 +44,11 @@ pub enum SoloError {
     #[error("I/O error: {0}")]
     IoError(#[from] std::io::Error),
 
+    /// A failed write to stdout. Kept apart from `IoError` so that `main` can end
+    /// quietly on a closed stdout and still report a broken pipe from other I/O.
+    #[error("I/O error: {0}")]
+    Stdout(std::io::Error),
+
     #[error("JSON error: {0}")]
     JsonError(#[from] serde_json::Error),
 

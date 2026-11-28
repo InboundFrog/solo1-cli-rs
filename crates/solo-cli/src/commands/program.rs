@@ -39,7 +39,7 @@ pub fn write_firmware(
     })?;
     pb.finish_with_message("written");
 
-    println!("{finalize_msg}");
+    outln!("{finalize_msg}");
     bootloader::finish_firmware(hid, signature)?;
     Ok(())
 }
@@ -51,9 +51,10 @@ pub fn write_firmware(
 /// constraint, or a signature that is not valid websafe base64).
 pub fn select_signature(hid: &impl HidDevice, fw: &FirmwareJson) -> Result<Vec<u8>> {
     let version = firmware::read_bootloader_version(hid);
-    match &version {
-        Some(v) => println!("Bootloader version: {v}"),
-        None => println!("Could not read bootloader version; using default signature."),
+    if let Some(v) = &version {
+        outln!("Bootloader version: {v}");
+    } else {
+        outln!("Could not read bootloader version; using default signature.");
     }
     Ok(fw.signature_for_bootloader(version.as_ref())?)
 }
@@ -69,8 +70,8 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
     let fw = FirmwareJson::from_file(firmware_json)?;
     let (flash_start, firmware_bytes) = fw.firmware_binary()?;
 
-    println!("Firmware size: {} bytes", firmware_bytes.len());
-    println!("Flash start:   0x{flash_start:08X}");
+    outln!("Firmware size: {} bytes", firmware_bytes.len());
+    outln!("Flash start:   0x{flash_start:08X}");
     log::debug!("Firmware SHA256: {}", hex::encode(Sha256::digest(&firmware_bytes)));
 
     // Read the bootloader version before writing. The version decides which
@@ -81,7 +82,7 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
     log::debug!("Signature ({} bytes): {}", signature.len(), hex::encode(&signature));
 
     write_firmware(hid, flash_start, &firmware_bytes, &signature, "Finalizing firmware...")?;
-    println!("Done.");
+    outln!("Done.");
     Ok(())
 }
 
@@ -93,18 +94,18 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
     use solo1::firmware::parse_hex_file;
 
-    println!("Parsing firmware HEX file: {}", firmware_hex.display());
+    outln!("Parsing firmware HEX file: {}", firmware_hex.display());
     let (base_addr, firmware_bytes) = parse_hex_file(firmware_hex)?;
-    println!(
+    outln!(
         "Base address: 0x{:08X}, size: {} bytes",
         base_addr,
         firmware_bytes.len()
     );
 
-    println!("Opening ST DFU device (VID=0x0483, PID=0xDF11)...");
+    outln!("Opening ST DFU device (VID=0x0483, PID=0xDF11)...");
     let dfu = DfuDevice::open()?;
 
-    println!("Programming {} bytes via DFU...", firmware_bytes.len());
+    outln!("Programming {} bytes via DFU...", firmware_bytes.len());
     let pb = ProgressBar::new(0);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -117,6 +118,6 @@ pub fn cmd_program_dfu(firmware_hex: &Path) -> Result<()> {
         pb.set_position(u64::try_from(done).unwrap_or(u64::MAX));
     })?;
     pb.finish_with_message("Done");
-    println!("DFU programming complete.");
+    outln!("DFU programming complete.");
     Ok(())
 }

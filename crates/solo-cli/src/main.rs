@@ -3,6 +3,7 @@ use solo_cli::cli::{AuxCommands, Cli, Commands, CredentialCommands, KeyCommands,
 use solo_cli::commands::{aux, key, program, top};
 use solo_cli::device::{Key, Model};
 use solo_cli::error;
+use solo_cli::outln;
 use solo_cli::output;
 
 fn main() {
@@ -17,10 +18,29 @@ fn main() {
 
     solo_cli::logger::init(cli.verbose);
 
-    let result = run(cli);
-    if let Err(e) = result {
-        eprintln!("Error: {e}");
-        std::process::exit(1);
+    let code = finish(run(cli));
+    if code != 0 {
+        std::process::exit(code);
+    }
+}
+
+/// Exit code of a command that stopped because stdout was closed: 128 plus
+/// SIGPIPE (13), which is what a shell shows for a process killed by SIGPIPE.
+/// It is not 0, because the command may have stopped before it finished its work.
+const EXIT_STDOUT_CLOSED: i32 = 141;
+
+/// Prints the error, if any, and returns the exit code.
+///
+/// A broken pipe on stdout ends quietly. A `BrokenPipe` from any other I/O is an
+/// ordinary error.
+fn finish(result: error::Result<()>) -> i32 {
+    match result {
+        Ok(()) => 0,
+        Err(error::SoloError::Stdout(e)) if e.kind() == std::io::ErrorKind::BrokenPipe => EXIT_STDOUT_CLOSED,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            1
+        }
     }
 }
 
@@ -100,7 +120,7 @@ fn run_key_command(
                 if json {
                     output::print_json(&output::RngOutput { bytes: hex })?;
                 } else {
-                    println!("{hex}");
+                    outln!("{hex}");
                 }
             }
             RngCommands::Raw => {
@@ -240,8 +260,8 @@ fn run_program_command(serial: Option<&str>, cmd: ProgramCommands, timeout: std:
 }
 
 fn run_monitor(port: &str) -> error::Result<()> {
-    println!("Monitoring serial port {port} at 115200 baud...");
-    println!("Press Ctrl+C to stop.");
+    outln!("Monitoring serial port {port} at 115200 baud...");
+    outln!("Press Ctrl+C to stop.");
 
     let port = serialport::new(port, 115_200)
         .timeout(std::time::Duration::from_millis(100))
@@ -295,6 +315,25 @@ mod tests {
         clippy::cast_possible_truncation
     )]
     use super::*;
+
+    #[test]
+    fn closed_stdout_ends_quietly_with_141() {
+        let e = error::SoloError::Stdout(std::io::ErrorKind::BrokenPipe.into());
+        assert_eq!(finish(Err(e)), 141);
+    }
+
+    #[test]
+    fn broken_pipe_from_other_io_is_an_error() {
+        let e = error::SoloError::IoError(std::io::ErrorKind::BrokenPipe.into());
+        assert_eq!(finish(Err(e)), 1);
+    }
+
+    #[test]
+    fn other_stdout_error_is_an_error() {
+        let e = error::SoloError::Stdout(std::io::ErrorKind::StorageFull.into());
+        assert_eq!(finish(Err(e)), 1);
+        assert_eq!(finish(Ok(())), 0);
+    }
 
     #[test]
     fn udp_flag_is_rejected() {

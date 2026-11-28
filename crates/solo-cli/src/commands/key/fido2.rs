@@ -145,7 +145,7 @@ fn finish_make_credential(response: &[u8], json: bool, public_key_out: Option<&P
     if json {
         print_json(&output)?;
     } else {
-        println!("{}", output.credential_id);
+        outln!("{}", output.credential_id);
     }
 
     if let (Some(path), Some(pem)) = (public_key_out, output.public_key_pem) {
@@ -336,7 +336,7 @@ pub fn cmd_challenge_response(
             hmac_output: hmac_output_hex,
         });
     }
-    println!("{hmac_output_hex}");
+    outln!("{hmac_output_hex}");
 
     Ok(())
 }

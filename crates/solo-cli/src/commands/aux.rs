@@ -14,7 +14,7 @@ use solo1::protocol::{CMD_ENTER_BOOT, CMD_ENTER_ST_BOOT, CMD_REBOOT, CMD_VERSION
 /// ignored because the device reboots without replying.
 pub fn cmd_enter_bootloader(hid: &impl HidDevice) -> Result<()> {
     let _ = hid.send(CMD_ENTER_BOOT, &[]);
-    println!("Entering bootloader mode...");
+    outln!("Entering bootloader mode...");
     Ok(())
 }
 
@@ -25,7 +25,7 @@ pub fn cmd_enter_bootloader(hid: &impl HidDevice) -> Result<()> {
 /// intentionally ignored because the device reboots without replying.
 pub fn cmd_leave_bootloader(hid: &impl HidDevice) -> Result<()> {
     let _ = bootloader_cmd(hid, CMD_REBOOT, 0, &[]);
-    println!("Booting to firmware...");
+    outln!("Booting to firmware...");
     Ok(())
 }
 
@@ -37,7 +37,7 @@ pub fn cmd_leave_bootloader(hid: &impl HidDevice) -> Result<()> {
 /// ignored because the device reboots without replying.
 pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
     let _ = hid.send(CMD_ENTER_ST_BOOT, &[]);
-    println!("Entering ST DFU mode...");
+    outln!("Entering ST DFU mode...");
     Ok(())
 }
 
@@ -49,9 +49,9 @@ pub fn cmd_enter_dfu(hid: &impl HidDevice) -> Result<()> {
 /// Returns an error if no ST DFU device is found, or reading the option bytes
 /// or the DFU transfers fail.
 pub fn cmd_leave_dfu() -> Result<()> {
-    println!("Leaving ST DFU mode...");
+    outln!("Leaving ST DFU mode...");
     DfuDevice::open()?.leave_dfu()?;
-    println!("Please powercycle the device (pull out, plug in again)");
+    outln!("Please powercycle the device (pull out, plug in again)");
     Ok(())
 }
 
@@ -61,7 +61,7 @@ pub fn cmd_leave_dfu() -> Result<()> {
 /// Returns an error if the reboot command cannot be sent to the device.
 pub fn cmd_reboot(hid: &impl HidDevice) -> Result<()> {
     bootloader_cmd(hid, CMD_REBOOT, 0, &[])?;
-    println!("Rebooting device...");
+    outln!("Rebooting device...");
     Ok(())
 }
 
@@ -73,7 +73,7 @@ pub fn cmd_reboot(hid: &impl HidDevice) -> Result<()> {
 pub fn cmd_bootloader_version(hid: &impl HidDevice) -> Result<()> {
     let response = bootloader_cmd(hid, CMD_VERSION, 0, &[])?;
     let version_str = format_bootloader_version(&response);
-    println!("Bootloader version: {version_str}");
+    outln!("Bootloader version: {version_str}");
     Ok(())
 }
 

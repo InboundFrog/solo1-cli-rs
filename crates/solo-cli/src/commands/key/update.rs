@@ -116,17 +116,17 @@ pub fn cmd_update(
     use solo1::protocol::CMD_ENTER_BOOT;
 
     let fw_json = if let Some(path) = firmware_file {
-        println!("Loading firmware from {}", path.display());
+        outln!("Loading firmware from {}", path.display());
         FirmwareJson::from_file(path)?
     } else {
-        println!("Fetching latest firmware from GitHub...");
+        outln!("Fetching latest firmware from GitHub...");
         let release = fetch_latest_release(FIRMWARE_RELEASES_REPO)?;
-        println!("Latest release: {}", release.tag_name);
+        outln!("Latest release: {}", release.tag_name);
         let asset = release
             .find_asset(is_firmware_asset)
             .ok_or_else(|| SoloError::FirmwareError("No firmware JSON in release".into()))?;
         asset.check_size()?;
-        println!("Downloading: {}", asset.name);
+        outln!("Downloading: {}", asset.name);
         let bytes = download_url(&asset.browser_download_url)?;
         let json_str = String::from_utf8(bytes)
             .map_err(|e| SoloError::FirmwareError(format!("Firmware JSON UTF-8 error: {e}")))?;
@@ -134,18 +134,18 @@ pub fn cmd_update(
     };
 
     let (flash_start, firmware_bytes) = fw_json.firmware_binary()?;
-    println!("Firmware size: {} bytes", firmware_bytes.len());
-    println!("Flash start:   0x{flash_start:08X}");
-    println!("Firmware SHA-256: {}", sha256_hex(&firmware_bytes));
+    outln!("Firmware size: {} bytes", firmware_bytes.len());
+    outln!("Flash start:   0x{flash_start:08X}");
+    outln!("Firmware SHA-256: {}", sha256_hex(&firmware_bytes));
 
     // Enter bootloader mode. CMD_ENTER_BOOT (0x51) is a direct firmware vendor command —
     // not wrapped in CMD_BOOT. Device reboots immediately so no response is expected.
-    println!("Entering bootloader mode...");
+    outln!("Entering bootloader mode...");
     let _ = hid.send(CMD_ENTER_BOOT, &[]);
 
     // Reconnect in bootloader mode. The device needs time to re-enumerate; the old firmware
     // has the same VID/PID, so wait before the first open.
-    println!("Reconnecting...");
+    outln!("Reconnecting...");
     std::thread::sleep(RECONNECT_SETTLE);
     let bl_hid = retry_open(
         RECONNECT_INTERVAL,
@@ -175,13 +175,13 @@ pub fn cmd_update(
     // The key is about to restart. An open handle to the old device is of no use and may
     // get in the way of the next open on some systems.
     drop(bl_hid);
-    println!("Waiting for the key to restart...");
+    outln!("Waiting for the key to restart...");
     let version = wait_for_restart(RECONNECT_INTERVAL, timeout, || {
         let key = solo1::open(serial, RESTART_ATTEMPT_TIMEOUT)?;
         normal_key_version(key.info().product.as_deref(), || get_device_version(&key))
     })?;
-    println!("The key restarted with firmware {version}.");
-    println!("Firmware update complete!");
+    outln!("The key restarted with firmware {version}.");
+    outln!("Firmware update complete!");
     Ok(())
 }
 
