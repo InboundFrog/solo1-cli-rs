@@ -42,10 +42,10 @@ Only `solo-cli` uses the terminal or the network.
 
 ### Supported systems
 
-Linux and macOS are supported. CI builds and tests the code on Linux only; it does not run on
-macOS. Windows and other systems are not supported: CI builds the code on Windows to find build
-errors, but runs nothing there. On Windows, a file with a private key is written with a plain
-write, without the protections in "Files with a private key" below.
+Linux and macOS are supported. CI builds and tests the code on both. Windows and other systems
+are not supported: CI builds the code on Windows to find build errors, but runs nothing there. On
+Windows, a file with a private key is written with a plain write, without the protections in
+"Files with a private key" below.
 
 ### Supported devices
 
