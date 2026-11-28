@@ -95,7 +95,7 @@ solo ls [--json]                        # List connected Solo devices
 ### Key commands (`solo key [--serial <SN>]`)
 
 ```sh
-solo key version                           # Get firmware version (bootloader version in bootloader mode)
+solo key version                           # Get firmware version and locked flag, if the key sends it (bootloader version in bootloader mode)
 solo key wink                              # Blink LED
 solo key ping [--count N] [--data DATA]    # Ping and measure RTT (DATA: hex or plain text, default deadbeef; N default 1)
 solo key rng hexbytes <N>                  # Print N random bytes as hex
