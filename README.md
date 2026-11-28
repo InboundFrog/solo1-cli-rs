@@ -40,6 +40,13 @@ The binary is `target/release/solo`. Its old name was `solo1`.
 The device crates build on `solo-ctaphid`. They also use `solo-ctap2` where they need CTAP2.
 Only `solo-cli` uses the terminal or the network.
 
+### Supported systems
+
+Only Linux and macOS are supported and tested. The code is not tested on Windows or any other
+system. The CI compiles it for Windows, but does not run it. Some things work differently on
+other systems: a file with a private key is written with a plain write, without the protections
+in "Files with a private key" below.
+
 ### Supported devices
 
 `solo ls` and every `solo key` command find both Solo 1 and Solo 2 keys.
@@ -234,7 +241,9 @@ write a file that holds a private key. On Linux and macOS these files are writte
 - `solo` does not set or remove ACLs. ACLs that the directory passes on to new files can still
   give other users access. Not checked: how each system treats them. Look at the new file with
   `ls -l` (and `ls -le` on macOS or `getfacl` on Linux).
-- On other systems, none of this is done: the file is written with a plain write.
+- On other systems, none of this is done: the file is written with a plain write. It follows a
+  symbolic link, writes into an existing file, and sets no access rights. Only Linux and macOS are
+  supported and tested.
 
 Without `--attestation-key`, `mergehex` writes its output as a plain file.
 
