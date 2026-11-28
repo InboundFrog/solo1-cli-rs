@@ -399,10 +399,17 @@ mod tests {
         assert_eq!(name(&["solo", "key", "credential", "ls"]), None);
     }
 
-    /// The check runs before `Key::open`, so this needs no device.
+    /// The check runs before `Key::open`. The serial matches no key, so if the check
+    /// broke, the test would fail with "No device with serial" and touch no real key.
     #[test]
     fn run_key_command_refuses_json_before_opening_a_device() {
-        let err = run_key_command(None, KeyCommands::Wink, true, std::time::Duration::from_secs(1)).unwrap_err();
+        let err = run_key_command(
+            Some("no-such-serial"),
+            KeyCommands::Wink,
+            true,
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap_err();
         assert!(matches!(err, error::SoloError::Usage(_)), "{err}");
         assert!(err.to_string().contains("`key wink` has no JSON output"), "{err}");
     }
