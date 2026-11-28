@@ -57,10 +57,19 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Write a file that holds a private key to a new file at `path`.
+/// Write a file that holds a private key to `path`.
 ///
 /// Used for the key from `genkey` and for the merged HEX from `mergehex` when
-/// it holds a user's attestation key.
+/// it holds a user's attestation key. On Unix the write is private and
+/// atomic (see `write_private_key_inner`); on other systems it is a plain
+/// write. Every error names `path` and keeps the `ErrorKind` of the original
+/// error.
+fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
+    write_private_key_inner(path, contents)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", path.display())))
+}
+
+/// Unix version of `write_private_key`.
 ///
 /// The key is written to a temporary file in the same directory, with mode
 /// 0o600 (or less if the umask removes bits). The file is synced and then
@@ -69,13 +78,6 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
 /// handle that another program opened on the old file cannot read it. A
 /// symbolic link or any other kind of existing path gives an error and is left
 /// untouched.
-///
-/// Every error names `path` and keeps the `ErrorKind` of the original error.
-fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
-    write_private_key_inner(path, contents)
-        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", path.display())))
-}
-
 #[cfg(unix)]
 fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
