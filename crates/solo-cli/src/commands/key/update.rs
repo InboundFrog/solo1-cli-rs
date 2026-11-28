@@ -159,6 +159,9 @@ fn run_update<B: HidDevice, E: std::fmt::Display + Into<SoloError>>(
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use solo_ctaphid::mock::MockDevice;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     const V415: FirmwareVersion = FirmwareVersion::new(4, 1, 5);
 
@@ -185,5 +188,128 @@ mod tests {
     #[test]
     fn user_file_is_not_checked() {
         check_restart_version(None, &V415).unwrap();
+    }
+
+    type Log = Rc<RefCell<Vec<&'static str>>>;
+
+    /// A mock that writes the step of every call, and of its drop, into a shared log.
+    struct Recorder {
+        inner: MockDevice,
+        log: Log,
+        log_drop: bool,
+    }
+
+    impl Drop for Recorder {
+        fn drop(&mut self) {
+            if self.log_drop {
+                self.log.borrow_mut().push("close");
+            }
+        }
+    }
+
+    impl HidDevice for Recorder {
+        fn send_recv(&self, cmd: u8, data: &[u8]) -> solo_ctaphid::Result<Vec<u8>> {
+            // The first byte of a bootloader packet is the bootloader command.
+            let step = match (cmd, data.first()) {
+                (solo1::protocol::CMD_BOOT, Some(&solo1::protocol::CMD_VERSION)) => "version",
+                (solo1::protocol::CMD_BOOT, Some(&solo1::protocol::CMD_WRITE)) => "write",
+                (solo1::protocol::CMD_BOOT, Some(&solo1::protocol::CMD_DONE)) => "done",
+                _ => "other",
+            };
+            self.log.borrow_mut().push(step);
+            self.inner.send_recv(cmd, data)
+        }
+        fn send(&self, cmd: u8, data: &[u8]) -> solo_ctaphid::Result<()> {
+            if cmd == solo1::protocol::CMD_ENTER_BOOT {
+                self.log.borrow_mut().push("enter_boot");
+            }
+            self.inner.send(cmd, data)
+        }
+    }
+
+    fn recorder(log: &Log, replies: Vec<solo_ctaphid::Result<Vec<u8>>>, log_drop: bool) -> Recorder {
+        Recorder {
+            inner: MockDevice::new(replies),
+            log: Rc::clone(log),
+            log_drop,
+        }
+    }
+
+    /// Replies for: bootloader version, one write, done. The first byte is the status.
+    fn good_replies() -> Vec<solo_ctaphid::Result<Vec<u8>>> {
+        vec![Ok(vec![0, 3, 0, 0]), Ok(vec![0]), Ok(vec![0])]
+    }
+
+    /// Run the flow with a 10 byte firmware (one write chunk) and no pause.
+    fn run(
+        log: &Log,
+        tag: Option<&str>,
+        open_ok: bool,
+        replies: Vec<solo_ctaphid::Result<Vec<u8>>>,
+        restarted: FirmwareVersion,
+    ) -> Result<()> {
+        let fw = solo1::firmware::create_firmware_json(&[0xAB; 10], &[0x01; 64]);
+        let old_key = recorder(log, vec![], false);
+        let mut bl = Some(recorder(log, replies, true));
+        let open_log = Rc::clone(log);
+        let wait_log = Rc::clone(log);
+        run_update(
+            &old_key,
+            &fw,
+            tag,
+            Duration::ZERO,
+            Duration::ZERO,
+            move || {
+                open_log.borrow_mut().push("open");
+                match bl.take() {
+                    Some(dev) if open_ok => Ok(dev),
+                    _ => Err(SoloError::DeviceError("no key".into())),
+                }
+            },
+            move || {
+                wait_log.borrow_mut().push("wait");
+                Ok(restarted)
+            },
+        )
+    }
+
+    #[test]
+    fn steps_run_in_order_and_the_key_is_closed_before_the_wait() {
+        let log = Log::default();
+        run(&log, Some("4.1.5"), true, good_replies(), V415).unwrap();
+        assert_eq!(
+            *log.borrow(),
+            ["enter_boot", "open", "version", "write", "done", "close", "wait"]
+        );
+    }
+
+    #[test]
+    fn restart_version_is_checked_after_the_wait() {
+        let log = Log::default();
+        let text = run(&log, Some("4.1.5"), true, good_replies(), FirmwareVersion::new(4, 1, 4))
+            .unwrap_err()
+            .to_string();
+        assert!(text.contains("4.1.4") && text.contains("4.1.5"), "{text}");
+        assert_eq!(log.borrow().last(), Some(&"wait"));
+    }
+
+    #[test]
+    fn no_write_and_no_wait_when_the_key_does_not_open() {
+        let log = Log::default();
+        let err = run(&log, None, false, good_replies(), V415).unwrap_err();
+        assert!(err.to_string().contains("no key"), "{err}");
+        assert_eq!(log.borrow().first_chunk(), Some(&["enter_boot", "open"]));
+        for step in ["version", "write", "done", "wait"] {
+            assert!(!log.borrow().contains(&step), "{step} ran: {:?}", log.borrow());
+        }
+    }
+
+    #[test]
+    fn no_wait_when_the_write_fails() {
+        let log = Log::default();
+        // The write is answered with a bootloader error status.
+        let replies = vec![Ok(vec![0, 3, 0, 0]), Ok(vec![1])];
+        run(&log, None, true, replies, V415).unwrap_err();
+        assert!(!log.borrow().contains(&"wait"), "{:?}", log.borrow());
     }
 }
