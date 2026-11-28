@@ -337,3 +337,49 @@ fn test_genkey_writes_bare_file_name_in_current_dir() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(dir.path().join("bare.pem").is_file());
 }
+
+#[cfg(unix)]
+fn run_genkey_json(dir: &std::path::Path, args: &[&str]) -> (std::process::Output, serde_json::Value) {
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_solo"))
+        .arg("genkey")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let v = serde_json::from_slice(&out.stdout).unwrap();
+    (out, v)
+}
+
+/// `--json --output` writes the key to the file (mode 0600) and keeps it out of the JSON.
+#[cfg(unix)]
+#[test]
+fn test_genkey_json_output_writes_file_and_not_private_key() {
+    use p256::pkcs8::{DecodePrivateKey, DecodePublicKey};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (out, v) = run_genkey_json(dir.path(), &["--json", "-o", "k.pem"]);
+    let path = dir.path().join("k.pem");
+    let pem = std::fs::read_to_string(&path).unwrap();
+    assert!(pem.contains("PRIVATE KEY"));
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(v.get("private_key").is_none());
+    assert_eq!(v["private_key_path"], "k.pem");
+    assert!(v["public_key"].as_str().unwrap().contains("PUBLIC KEY"));
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("PRIVATE KEY"));
+    // The key in the file matches the public key in the JSON.
+    let sk = p256::SecretKey::from_pkcs8_pem(&pem).unwrap();
+    let pk = p256::PublicKey::from_public_key_pem(v["public_key"].as_str().unwrap()).unwrap();
+    assert_eq!(sk.public_key(), pk);
+}
+
+/// `--json` without `--output` still puts the private key in the JSON and writes no file.
+#[cfg(unix)]
+#[test]
+fn test_genkey_json_without_output_keeps_private_key_in_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, v) = run_genkey_json(dir.path(), &["--json"]);
+    assert!(v["private_key"].as_str().unwrap().contains("PRIVATE KEY"));
+    assert!(v.get("private_key_path").is_none());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}

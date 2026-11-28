@@ -31,6 +31,11 @@ pub fn cmd_version(json: bool) -> Result<()> {
 /// Generate an ECDSA P-256 keypair.
 /// Writes the private key to `output` (or stdout) and prints the public key.
 ///
+/// With `json` the output is one JSON object with `public_key`. Without
+/// `output` it also has `private_key`. With `output` the private key goes to
+/// the file only (as without `json`), the JSON has no `private_key`, and it
+/// has `private_key_path` instead.
+///
 /// # Errors
 /// Returns an error if keypair generation fails, writing the private key file
 /// fails, or JSON serialization fails.
@@ -39,9 +44,19 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
 
     if json {
         use crate::output::{GenKeyOutput, print_json};
-        let out = GenKeyOutput {
-            private_key: priv_pem,
-            public_key: pub_pem,
+        let out = if let Some(out_path) = output {
+            write_private_key(out_path, &priv_pem)?;
+            GenKeyOutput {
+                private_key: None,
+                public_key: pub_pem,
+                private_key_path: Some(out_path.display().to_string()),
+            }
+        } else {
+            GenKeyOutput {
+                private_key: Some(priv_pem),
+                public_key: pub_pem,
+                private_key_path: None,
+            }
         };
         return print_json(&out);
     }

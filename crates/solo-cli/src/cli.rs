@@ -33,7 +33,7 @@ pub enum Commands {
         #[arg(long, short = 'o')]
         output: Option<PathBuf>,
 
-        /// Output results as JSON (for scripting)
+        /// Output results as JSON (for scripting). With --output the private key is written to the file only
         #[arg(long)]
         json: bool,
     },

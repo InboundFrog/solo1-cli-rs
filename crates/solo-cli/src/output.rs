@@ -73,8 +73,13 @@ pub struct CliVersionOutput {
 
 #[derive(Serialize)]
 pub struct GenKeyOutput {
-    pub private_key: String,
+    /// Left out when the private key went to a file (`--output`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_key: Option<String>,
     pub public_key: String,
+    /// The file the private key was written to. Left out without `--output`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_key_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -271,12 +276,27 @@ mod tests {
     #[test]
     fn gen_key_output_serializes() {
         let out = GenKeyOutput {
-            private_key: "-----BEGIN PRIVATE KEY-----...".into(),
+            private_key: Some("-----BEGIN PRIVATE KEY-----...".into()),
             public_key: "-----BEGIN PUBLIC KEY-----...".into(),
+            private_key_path: None,
         };
         let json = serde_json::to_string(&out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(v["private_key"], "-----BEGIN PRIVATE KEY-----...");
         assert_eq!(v["public_key"], "-----BEGIN PUBLIC KEY-----...");
+        assert!(v.get("private_key_path").is_none());
+    }
+
+    #[test]
+    fn gen_key_output_with_path_has_no_private_key() {
+        let out = GenKeyOutput {
+            private_key: None,
+            public_key: "-----BEGIN PUBLIC KEY-----...".into(),
+            private_key_path: Some("k.pem".into()),
+        };
+        let json = serde_json::to_string(&out).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(v.get("private_key").is_none());
+        assert_eq!(v["private_key_path"], "k.pem");
     }
 }
