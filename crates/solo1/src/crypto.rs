@@ -171,6 +171,9 @@ pub fn check_attestation_fingerprint(cert_der: &[u8]) -> AttestationResult {
 // See docs/reviews/20260414_001/0003-attestation_chain_validation.md (TODO(0003)).
 
 pub const SOLO_TAP_SPKI_FINGERPRINT: &str = "6b50560fef4c768b6e9a7a7749415a7c01d39842be3e4f7b8e859ba2a4be7049";
+/// Solo Hacker: SPKI fingerprint of `HACKER_ATTESTATION_CERT` in `firmware.rs`.
+/// A test computes it from that certificate.
+pub const SOLO_HACKER_SPKI_FINGERPRINT: &str = "ac2fb933d680b1f427be5f197856c0ef827b8987d3b5d9546d8030ad8b8e8ac5";
 
 // ---------------------------------------------------------------------------
 // New certificate utility functions
@@ -535,6 +538,17 @@ mod tests {
         assert!(
             msg.contains("not yet valid") || msg.contains("Not yet valid"),
             "Error should mention not-yet-valid, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn hacker_spki_fingerprint_matches_hacker_cert() {
+        use crate::firmware::HACKER_ATTESTATION_CERT;
+        // The cert is the one behind SOLO_HACKER_FINGERPRINT.
+        assert_eq!(sha256_hex(HACKER_ATTESTATION_CERT), SOLO_HACKER_FINGERPRINT);
+        assert_eq!(
+            extract_spki_fingerprint(HACKER_ATTESTATION_CERT).expect("spki extract failed"),
+            SOLO_HACKER_SPKI_FINGERPRINT
         );
     }
 
