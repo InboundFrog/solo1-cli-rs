@@ -713,6 +713,38 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("0x08001000"), "{err}");
+
+        // A good readback from this address reads block 4, not block 2.
+        let dfu = Dfu::new(Fake::with_ins(verify_script(&readback(&image))));
+        dfu.verify(FLASH_BASE + 0x1000, &image).unwrap();
+        assert!(dfu.io.log().contains(&Xfer::In {
+            request: DFU_UPLOAD,
+            value: 4,
+            len: 2048
+        }));
+    }
+
+    #[test]
+    fn test_verify_after_program_clears_download_idle_first() {
+        let image = vec![0xAA; 16];
+        let mut ins = vec![st(DFU_STATE_DOWNLOAD_IDLE), st(DFU_STATE_IDLE)];
+        ins.extend(readback(&image).into_iter().map(Ok));
+        let dfu = Dfu::new(Fake::with_ins(ins));
+        dfu.verify(FLASH_BASE, &image).unwrap();
+        assert_eq!(
+            dfu.io.log(),
+            vec![
+                get_status_xfer(),
+                clrstatus(),
+                clrstatus(),
+                get_status_xfer(),
+                Xfer::In {
+                    request: DFU_UPLOAD,
+                    value: 2,
+                    len: 2048
+                },
+            ]
+        );
     }
 
     #[test]
