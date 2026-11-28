@@ -306,8 +306,12 @@ fn require_cose_int(pairs: &[(Value, Value)], key: i64, name: &str, expected: i6
     if matches!(found, Value::Integer(i) if i64::try_from(*i) == Ok(expected)) {
         return Ok(());
     }
+    let shown = match found {
+        Value::Integer(i) => i128::from(*i).to_string(),
+        other => format!("{other:?}"),
+    };
     Err(Error::MalformedResponse(format!(
-        "Credential public key has {name} ({key}) = {found:?}, expected {expected}"
+        "Credential public key has {name} ({key}) = {shown}, expected {expected}"
     )))
 }
 
@@ -321,7 +325,8 @@ fn require_cose_int(pairs: &[(Value, Value)], key: i64, name: &str, expected: i6
 /// # Errors
 /// Returns [`Error::MalformedResponse`] if the first CBOR value is missing, is not a
 /// map, `kty` (1) is not 2 (EC2), `alg` (3) is not -7 (ES256) or `crv` (-1) is not 1
-/// (P-256) (also when one of them is missing), or the key length is wrong. A missing coordinate gives [`Error::Protocol`].
+/// (P-256) (also when one of them is missing), or the key length is wrong.
+/// A missing coordinate gives [`Error::Protocol`].
 /// [`Error::Crypto`] is returned if the PEM encoding fails.
 pub fn cose_key_pem_from_trailing(trailing: &[u8]) -> Result<String> {
     use p256::pkcs8::{EncodePublicKey, LineEnding};
