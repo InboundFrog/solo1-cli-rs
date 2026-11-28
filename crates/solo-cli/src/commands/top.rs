@@ -71,8 +71,11 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 
 /// Unix version of `write_private_key`.
 ///
-/// The key is written to a temporary file in the same directory, with mode
-/// 0o600 (or less if the umask removes bits). The file is synced and then
+/// The key is written to a temporary file in the same directory (so the
+/// rename is atomic), named `.solo-<pid>.tmp`. The name does not hold the
+/// output name, so a long output name cannot make it too long. The process id
+/// keeps two programs apart; one process writes one key at a time. The file
+/// has mode 0o600 (or less if the umask removes bits). The file is synced and then
 /// renamed over `path`. If any step fails, the temporary file is removed and
 /// an old file at `path` is left as it was. The new key is in a new file, so a
 /// handle that another program opened on the old file cannot read it. A
@@ -95,13 +98,13 @@ fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
         Err(e) => return Err(e),
     }
 
-    let name = path
-        .file_name()
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidInput, "output path has no file name"))?;
-    let mut temp_name = std::ffi::OsString::from(".");
-    temp_name.push(name);
-    temp_name.push(format!(".{}.tmp", std::process::id()));
-    let temp = path.with_file_name(temp_name);
+    if path.file_name().is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "output path has no file name",
+        ));
+    }
+    let temp = path.with_file_name(format!(".solo-{}.tmp", std::process::id()));
 
     // If this fails, the name is not ours, so nothing is removed.
     let mut file = std::fs::OpenOptions::new()
@@ -742,7 +745,7 @@ mod tests {
     fn test_write_private_key_does_not_touch_foreign_temp_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("signing-key.pem");
-        let temp = dir.path().join(format!(".signing-key.pem.{}.tmp", std::process::id()));
+        let temp = dir.path().join(format!(".solo-{}.tmp", std::process::id()));
         std::fs::write(&path, "old").unwrap();
         std::fs::write(&temp, "foreign").unwrap();
 
@@ -751,6 +754,17 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
         assert_eq!(std::fs::read_to_string(&temp).unwrap(), "foreign");
+    }
+
+    /// An output name of 250 bytes is allowed by the file system, so it must work.
+    #[test]
+    fn test_write_private_key_accepts_250_byte_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("k".repeat(250));
+
+        write_private_key(&path, KEY_PEM).unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), KEY_PEM);
     }
 
     /// After a good write only the key file is in the directory.
