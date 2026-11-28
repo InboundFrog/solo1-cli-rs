@@ -261,10 +261,7 @@ mod tests {
             Duration::ZERO,
             move || {
                 open_log.borrow_mut().push("open");
-                match bl.take() {
-                    Some(dev) => Ok(dev),
-                    None => Err(SoloError::DeviceError("no key".into())),
-                }
+                bl.take().ok_or_else(|| SoloError::DeviceError("no key".into()))
             },
             move || {
                 wait_log.borrow_mut().push("wait");
