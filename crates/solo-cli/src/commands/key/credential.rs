@@ -21,7 +21,7 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     let cbor_get_info = vec![0x04u8];
     let response = hid.send_recv(CTAPHID_CBOR, &cbor_get_info)?;
 
-    let pairs = parse_cbor_map_response(&response, "authenticatorGetInfo")?;
+    let pairs = parse_cbor_map_response(&response, "getInfo")?;
 
     let versions: Vec<String> = if let Some(Value::Array(v)) = find_int_key(&pairs, 0x01) {
         extract_cbor_text_responses(v)

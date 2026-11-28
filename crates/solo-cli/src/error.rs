@@ -152,12 +152,12 @@ mod tests {
     #[test]
     fn test_ctap2_errors_map_to_existing_variants() {
         let e = SoloError::from(solo_ctap2::Error::Authenticator {
-            step: "setPin",
+            step: "setPIN",
             code: 0x31,
             message: "PIN invalid",
         });
         assert!(matches!(e, SoloError::AuthenticatorError { code: 0x31, .. }));
-        assert!(e.to_string().contains("in setPin"), "{e}");
+        assert!(e.to_string().contains("in setPIN"), "{e}");
 
         let e = SoloError::from(solo_ctap2::Error::Transport(solo_ctaphid::Error::Timeout));
         assert!(matches!(e, SoloError::Timeout));

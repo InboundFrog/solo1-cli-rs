@@ -7,7 +7,7 @@ pub enum Error {
     Transport(#[from] solo_ctaphid::Error),
 
     /// The key answered a step with a non-zero CTAP2 status. `step` is the name the caller gave
-    /// to [`check_ctap_status`](crate::check_ctap_status), for example `"setPin"`.
+    /// to [`check_ctap_status`](crate::check_ctap_status), for example `"setPIN"`.
     #[error("Authenticator error in {step} (CTAP2 {code:#04x}): {message}")]
     Authenticator {
         step: &'static str,
