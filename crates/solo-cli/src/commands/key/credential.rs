@@ -415,7 +415,7 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 
 /// Remove a credential.
 ///
-/// Takes either a base64 `credential_id` or a `host`+`user` pair. With
+/// Takes either a `credential_id` (already decoded to bytes) or a `host`+`user` pair. With
 /// `host` and `user`, the function lists the credentials to find the
 /// matching credential ID. Exactly one match is required.
 ///
@@ -423,13 +423,13 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if no PIN is set on the device, if acquiring a PIN token
-/// fails, if `credential_id` is not valid base64, if neither `credential_id`
+/// fails, if neither `credential_id`
 /// nor a `host`+`user` pair is supplied, if no credential matches or more than
 /// one matches, if reading the confirmation prompt fails, or if the
 /// deleteCredential command is rejected by the device.
 pub fn cmd_credential_rm(
     hid: &impl HidDevice,
-    credential_id: Option<&str>,
+    credential_id: Option<&[u8]>,
     host: Option<&str>,
     user: Option<&str>,
 ) -> Result<()> {
@@ -448,10 +448,8 @@ pub fn cmd_credential_rm(
 
     // ── Resolve credential ID bytes ──────────────────────────────────────
     let (cred_id_bytes, display_label): (Vec<u8>, String) = if let Some(id) = credential_id {
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(id)
-            .map_err(|e| SoloError::ProtocolError(format!("Invalid base64 credential ID: {e}")))?;
-        (bytes, id.to_string())
+        // The label is the base64 form, the same text that `credential ls` prints.
+        (id.to_vec(), base64::engine::general_purpose::STANDARD.encode(id))
     } else {
         let host = host.ok_or_else(|| SoloError::ProtocolError("host required when credential_id is absent".into()))?;
         let user = user.ok_or_else(|| SoloError::ProtocolError("user required when credential_id is absent".into()))?;

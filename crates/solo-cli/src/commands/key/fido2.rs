@@ -238,14 +238,14 @@ fn prepare_hmac_secret_input_with_scalar(
 ///   9. Print output as hex
 ///
 /// # Errors
-/// Returns an error if `credential_id` is not valid hex, if key agreement or
+/// Returns an error if key agreement or
 /// the getAssertion request fails, if the response is malformed (missing or
 /// short authData, the extensions-data flag is unset, or the hmac-secret
 /// output is missing or too short), or if decrypting the hmac-secret output
 /// fails.
 pub fn cmd_challenge_response(
     hid: &impl HidDevice,
-    credential_id: &str,
+    credential_id: &[u8],
     challenge: &str,
     host: &str,
     json: bool,
@@ -253,8 +253,7 @@ pub fn cmd_challenge_response(
     use ciborium::value::Value;
     use sha2::Digest as _;
 
-    // Decode the hex credential ID.
-    let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
+    let cred_id_bytes = credential_id.to_vec();
 
     // ── Steps 1–6: getKeyAgreement → prepare hmac-secret extension input ─────
     let dev_pub_key = solo_ctap2::get_key_agreement(hid)?;

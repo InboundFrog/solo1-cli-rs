@@ -3,6 +3,50 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
+/// Help text for every credential id argument. Keep it in one place so that the commands agree.
+const CREDENTIAL_ID_HELP: &str = "Credential ID (hex or base64)";
+
+/// The bytes of a credential id. A newtype, because clap reads a plain `Vec<u8>` as a list of values.
+#[derive(Clone, Debug)]
+pub struct CredentialId(pub Vec<u8>);
+
+impl std::ops::Deref for CredentialId {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+/// Read a credential id from the command line.
+///
+/// A text of only hex digits (0-9, a-f, A-F) with an even length is read as hex. Anything else is read
+/// as base64: standard or URL-safe alphabet, with or without padding. The two forms overlap: a base64
+/// text that happens to be made of hex digits only, with an even length, is read as hex.
+///
+/// # Errors
+/// Returns a message that names both forms if the text is empty or is neither hex nor base64.
+pub fn parse_credential_id(text: &str) -> Result<CredentialId, String> {
+    use base64::Engine as _;
+    use base64::alphabet::{STANDARD, URL_SAFE};
+    use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
+
+    if text.is_empty() {
+        return Err("the credential ID is empty; give it as hex or base64".into());
+    }
+    if text.len().is_multiple_of(2) && text.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return hex::decode(text)
+            .map(CredentialId)
+            .map_err(|e| format!("invalid hex credential ID: {e}"));
+    }
+    let config = GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent);
+    let bytes = GeneralPurpose::new(&STANDARD, config)
+        .decode(text)
+        .or_else(|_| GeneralPurpose::new(&URL_SAFE, config).decode(text))
+        .map_err(|e| format!("the credential ID is neither valid hex nor valid base64: {e}"))?;
+    Ok(CredentialId(bytes))
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "solo", about = "CLI tool for SoloKeys hardware security keys", version)]
 pub struct Cli {
@@ -131,8 +175,8 @@ pub enum KeyCommands {
 
     /// HMAC-secret challenge-response
     ChallengeResponse {
-        /// Credential ID (hex string from make-credential output)
-        credential_id: String,
+        #[arg(help = CREDENTIAL_ID_HELP, value_parser = parse_credential_id)]
+        credential_id: CredentialId,
         /// Challenge/secret string to hash
         challenge: String,
         /// Relying party host
@@ -188,8 +232,8 @@ pub enum KeyCommands {
 
     /// Sign a file with a resident credential
     SignFile {
-        /// Credential ID (hex-encoded)
-        credential_id: String,
+        #[arg(help = CREDENTIAL_ID_HELP, value_parser = parse_credential_id)]
+        credential_id: CredentialId,
         /// File to sign
         filename: PathBuf,
     },
@@ -233,9 +277,9 @@ pub enum CredentialCommands {
 
     /// Remove a resident credential
     Rm {
-        /// Credential ID (base64); alternative to --host/--user
-        #[arg(required_unless_present = "host")]
-        credential_id: Option<String>,
+        /// Credential ID (hex or base64); alternative to --host/--user
+        #[arg(required_unless_present = "host", value_parser = parse_credential_id)]
+        credential_id: Option<CredentialId>,
         /// Relying party host (requires --user)
         #[arg(long, requires = "user")]
         host: Option<String>,
@@ -312,4 +356,129 @@ pub enum AuxCommands {
 
     /// Get bootloader version
     BootloaderVersion,
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::indexing_slicing,
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::as_conversions,
+        clippy::cast_possible_truncation
+    )]
+    use super::{Cli, Commands, CredentialCommands, KeyCommands, parse_credential_id};
+    use clap::Parser as _;
+
+    /// Bytes that give `+`, `/`, `-` and `_` in the base64 forms: 0xfb 0xff 0xbf 0xfe.
+    const BYTES: [u8; 4] = [0xfb, 0xff, 0xbf, 0xfe];
+
+    #[test]
+    fn hex_is_read_as_hex() {
+        assert_eq!(parse_credential_id("fbffbffe").unwrap().0, BYTES);
+    }
+
+    #[test]
+    fn hex_in_mixed_case_is_read_as_hex() {
+        assert_eq!(parse_credential_id("FbFfBfFe").unwrap().0, BYTES);
+    }
+
+    #[test]
+    fn standard_base64_with_padding() {
+        // 5 bytes, so the standard form has one `=`.
+        assert_eq!(
+            parse_credential_id("+/+//vo=").unwrap().0,
+            [0xfb, 0xff, 0xbf, 0xfe, 0xfa]
+        );
+    }
+
+    #[test]
+    fn standard_base64_without_padding() {
+        assert_eq!(
+            parse_credential_id("+/+//vo").unwrap().0,
+            [0xfb, 0xff, 0xbf, 0xfe, 0xfa]
+        );
+    }
+
+    #[test]
+    fn url_safe_base64_with_and_without_padding() {
+        let want = [0xfb, 0xff, 0xbf, 0xfe, 0xfa];
+        assert_eq!(parse_credential_id("-_-__vo=").unwrap().0, want);
+        assert_eq!(parse_credential_id("-_-__vo").unwrap().0, want);
+    }
+
+    #[test]
+    fn firmware_sized_id_from_credential_ls_is_read_as_base64() {
+        // The 70-byte id used in the credential tests, in the form `credential ls` prints.
+        let b64 = "6T35dsdagAWH0ly+ogGh/TUM8cq3GbuYX9JAuUsDrRVTsRrEkdnTcSxj97jWz634bQV9CZ04Ikbb6ch/Ez7RZ4gbaA8AAA==";
+        assert_eq!(parse_credential_id(b64).unwrap().0.len(), 70);
+    }
+
+    /// The two forms overlap. "abcd" is valid hex (2 bytes) and valid base64 (3 bytes). It is read as hex.
+    #[test]
+    fn text_that_is_both_hex_and_base64_is_read_as_hex() {
+        assert_eq!(parse_credential_id("abcd").unwrap().0, [0xab, 0xcd]);
+    }
+
+    /// An odd number of hex digits cannot be hex, so it is read as base64 ("abc" gives two bytes).
+    #[test]
+    fn odd_length_hex_digits_are_read_as_base64() {
+        assert_eq!(parse_credential_id("abc").unwrap().0, [0x69, 0xb7]);
+    }
+
+    #[test]
+    fn empty_is_an_error() {
+        let e = parse_credential_id("").unwrap_err();
+        assert!(e.contains("empty"), "{e}");
+    }
+
+    #[test]
+    fn padding_only_is_an_error() {
+        assert!(parse_credential_id("====").is_err());
+    }
+
+    #[test]
+    fn invalid_text_names_both_forms() {
+        let e = parse_credential_id("not a credential id!").unwrap_err();
+        assert!(e.contains("hex") && e.contains("base64"), "{e}");
+    }
+
+    #[test]
+    fn mixed_alphabets_are_an_error() {
+        assert!(parse_credential_id("+_+//vo=").is_err());
+    }
+
+    #[test]
+    fn all_three_commands_take_both_forms() {
+        for text in ["fbffbffe", "+/+//g=="] {
+            let key = |args: &[&str]| match Cli::try_parse_from(args).unwrap().command {
+                Commands::Key(k) => k.command,
+                other => panic!("{other:?}"),
+            };
+            let KeyCommands::ChallengeResponse { credential_id, .. } =
+                key(&["solo", "key", "challenge-response", text, "c"])
+            else {
+                panic!()
+            };
+            assert_eq!(credential_id.0.len(), 4, "{text}");
+            let KeyCommands::SignFile { credential_id, .. } = key(&["solo", "key", "sign-file", text, "f"]) else {
+                panic!()
+            };
+            assert_eq!(credential_id.0.len(), 4, "{text}");
+            let KeyCommands::Credential {
+                command: CredentialCommands::Rm { credential_id, .. },
+            } = key(&["solo", "key", "credential", "rm", text])
+            else {
+                panic!()
+            };
+            assert_eq!(credential_id.unwrap().0.len(), 4, "{text}");
+        }
+    }
+
+    #[test]
+    fn bad_credential_id_is_rejected_by_clap() {
+        assert!(Cli::try_parse_from(["solo", "key", "sign-file", "!!", "f"]).is_err());
+    }
 }
