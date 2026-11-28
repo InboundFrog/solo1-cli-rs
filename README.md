@@ -71,9 +71,14 @@ Global options:
 | `--timeout <SECS>` | Timeout in seconds for device responses (default: 30)        |
 
 The `--json` flag works on commands that print structured output: `version`, `genkey`,
-`ls` and all `key` subcommands. `sign` always prints JSON. `mergehex`, `monitor` and
-`program` print no structured output. `sign`, `mergehex`, `monitor`, `program` and
-`verify-file` have no `--json` flag.
+`ls` and these `key` subcommands: `rng hexbytes`, `challenge-response`, `verify`, `version`,
+`ping`, `probe`, `sign-file`, `credential info`, `credential ls` and `credential create`.
+`sign` always prints JSON. `mergehex`, `monitor` and `program` print no structured output.
+`sign`, `mergehex`, `monitor`, `program` and `verify-file` have no `--json` flag.
+The other `key` subcommands accept `--json` only to refuse it: they stop with an error before
+they open a device. These are `rng raw`, `rng feedkernel`, `wink`, `keyboard`, `reset`,
+`change-pin`, `set-pin`, `disable-updates`, `update` and `credential rm`.
+With `--json`, `key sign-file` prints its progress lines to stderr, so stdout holds only the JSON object.
 `key ping` prints one JSON object per line (one line for each ping).
 
 ---
