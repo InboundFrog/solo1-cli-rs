@@ -82,12 +82,54 @@ fn run(cli: Cli) -> error::Result<()> {
     Ok(())
 }
 
+/// The name of a `key` subcommand that has no JSON output, or `None` if `--json` works with it.
+const fn json_unsupported(cmd: &KeyCommands) -> Option<&'static str> {
+    match cmd {
+        KeyCommands::Rng {
+            command: RngCommands::Raw,
+        } => Some("rng raw"),
+        KeyCommands::Rng {
+            command: RngCommands::Feedkernel,
+        } => Some("rng feedkernel"),
+        KeyCommands::Wink => Some("wink"),
+        KeyCommands::Keyboard { .. } => Some("keyboard"),
+        KeyCommands::Reset => Some("reset"),
+        KeyCommands::ChangePin => Some("change-pin"),
+        KeyCommands::SetPin => Some("set-pin"),
+        KeyCommands::DisableUpdates => Some("disable-updates"),
+        KeyCommands::Update { .. } => Some("update"),
+        KeyCommands::Credential {
+            command: CredentialCommands::Rm { .. },
+        } => Some("credential rm"),
+        KeyCommands::Rng { .. }
+        | KeyCommands::ChallengeResponse { .. }
+        | KeyCommands::Verify
+        | KeyCommands::Version
+        | KeyCommands::Ping { .. }
+        | KeyCommands::Probe { .. }
+        | KeyCommands::SignFile { .. }
+        | KeyCommands::Credential { .. } => None,
+    }
+}
+
+fn refuse_json(cmd: &KeyCommands, json: bool) -> error::Result<()> {
+    if json && let Some(name) = json_unsupported(cmd) {
+        return Err(error::SoloError::DeviceError(format!(
+            "`key {name}` has no JSON output, so `--json` is not accepted with it"
+        )));
+    }
+    Ok(())
+}
+
 fn run_key_command(
     serial: Option<&str>,
     cmd: KeyCommands,
     json: bool,
     timeout: std::time::Duration,
 ) -> error::Result<()> {
+    // Refuse `--json` first: no device is opened and nothing is sent to a key.
+    refuse_json(&cmd, json)?;
+
     // Every key subcommand talks to a device, so open it once here.
     // Vendor commands depend on the model (Solo 1 and Solo 2 reuse codes), so
     // those arms check the model first. CTAPHID and CTAP2 commands work on any model.
@@ -307,6 +349,40 @@ mod tests {
     fn genkey_entropy_option_is_rejected() {
         use clap::Parser;
         assert!(Cli::try_parse_from(["solo", "genkey", "--entropy", "x"]).is_err());
+    }
+
+    #[test]
+    fn json_is_refused_for_key_commands_without_json_output() {
+        use clap::Parser;
+        let name = |args: &[&str]| {
+            let Commands::Key(k) = Cli::try_parse_from(args).unwrap().command else {
+                panic!("not a key command");
+            };
+            json_unsupported(&k.command)
+        };
+        assert_eq!(name(&["solo", "key", "--json", "wink"]), Some("wink"));
+        assert_eq!(name(&["solo", "key", "reset", "--json"]), Some("reset"));
+        assert_eq!(name(&["solo", "key", "set-pin"]), Some("set-pin"));
+        assert_eq!(name(&["solo", "key", "change-pin"]), Some("change-pin"));
+        assert_eq!(name(&["solo", "key", "keyboard", "x"]), Some("keyboard"));
+        assert_eq!(name(&["solo", "key", "update"]), Some("update"));
+        assert_eq!(name(&["solo", "key", "disable-updates"]), Some("disable-updates"));
+        assert_eq!(name(&["solo", "key", "rng", "raw"]), Some("rng raw"));
+        assert_eq!(name(&["solo", "key", "rng", "feedkernel"]), Some("rng feedkernel"));
+        assert_eq!(
+            name(&["solo", "key", "credential", "rm", "--host", "h", "--user", "u"]),
+            Some("credential rm")
+        );
+        assert_eq!(name(&["solo", "key", "version"]), None);
+        assert_eq!(name(&["solo", "key", "rng", "hexbytes", "4"]), None);
+        assert_eq!(name(&["solo", "key", "credential", "ls"]), None);
+    }
+
+    /// The check runs before `Key::open`, so this needs no device.
+    #[test]
+    fn run_key_command_refuses_json_before_opening_a_device() {
+        let err = run_key_command(None, KeyCommands::Wink, true, std::time::Duration::from_secs(1)).unwrap_err();
+        assert!(err.to_string().contains("`key wink` has no JSON output"), "{err}");
     }
 
     #[test]
