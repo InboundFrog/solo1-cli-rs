@@ -555,46 +555,37 @@ fn patch_attestation(image: &mut FlashImage, attest_addr: u32, key: &[u8], cert:
 
 /// Returns the 32 attestation key bytes from the contents of a key file.
 ///
-/// The format is chosen from the content, never from the file length:
-/// 1. One UTF-8 byte order mark at the start is ignored when deciding if the
-///    file is text. If every other byte is printable ASCII or white space,
-///    the file is text.
-/// 2. A text file must hold exactly 64 hex digits. White space anywhere in it
-///    is ignored. Anything else (such as a `0x` prefix) is an error.
-/// 3. Any other file is binary and must be exactly 32 bytes, which are the
-///    key. The byte order mark is not removed here.
+/// Only the hex form is accepted: text with exactly 64 hex digits. White
+/// space anywhere in it is ignored, and one UTF-8 byte order mark at the start
+/// is ignored. Anything else (such as a `0x` prefix) is an error.
 ///
-/// A limit remains: a 32-byte file with any byte that is not printable ASCII
-/// or white space is taken as a raw key, because a raw key can be any 32
-/// bytes and cannot be told apart from such a file.
+/// Raw 32-byte key files are not accepted. A raw key can be any 32 bytes, so a
+/// wrong file of that length could not be told apart from a key.
 ///
 /// Error messages never quote the file, because it holds a secret key.
 fn parse_attestation_key(raw: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     let body = raw.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(raw);
     let is_text = body.iter().all(|b| b.is_ascii_graphic() || b.is_ascii_whitespace());
     if !is_text {
-        if raw.len() != 32 {
-            return Err(Error::Firmware(format!(
-                "Attestation key file is not plain ASCII text, so it is read as a raw key \
-                 and must be exactly 32 bytes, got {}",
-                raw.len()
-            )));
-        }
-        return Ok(Zeroizing::new(raw.to_vec()));
+        return Err(Error::Firmware(
+            "Attestation key file is not plain ASCII text. Only hex is accepted: 64 hex \
+             digits. To convert a raw 32-byte key file, run: xxd -p -c 32 key.bin > key.hex"
+                .into(),
+        ));
     }
     // Fixed capacity: a growing Vec would leave smaller, unwiped copies behind.
     let mut digits: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::with_capacity(body.len()));
     digits.extend(body.iter().copied().filter(|b| !b.is_ascii_whitespace()));
     if !digits.iter().all(u8::is_ascii_hexdigit) {
         return Err(Error::Firmware(
-            "Attestation key file is text, so it must hold exactly 64 hex digits, \
+            "Attestation key file must hold exactly 64 hex digits, \
              but it has a character that is not a hex digit"
                 .into(),
         ));
     }
     if digits.len() != 64 {
         return Err(Error::Firmware(format!(
-            "Attestation key file is text, so it must hold exactly 64 hex digits, got {}",
+            "Attestation key file must hold exactly 64 hex digits, got {}",
             digits.len()
         )));
     }
@@ -666,7 +657,7 @@ pub fn merge_hex_text(
         ));
     }
 
-    // Read attestation key bytes (32 raw bytes, or 64 hex digits as text)
+    // Read attestation key bytes (64 hex digits as text)
     let key_bytes: Zeroizing<Vec<u8>> = if let Some(key_path) = attestation_key {
         parse_attestation_key(&Zeroizing::new(std::fs::read(key_path)?))?
     } else {
@@ -1533,14 +1524,10 @@ mod tests {
     fn test_parse_attestation_key_formats() {
         let key = [0xabu8; 32];
         let hex_key = "ab".repeat(32);
-        let mut one_unprintable = [b'a'; 32];
-        one_unprintable[0] = 0;
         let spaced = "ab ".repeat(32);
         let xxd = format!("{}\n{}\n", "ab".repeat(30), "ab".repeat(2));
         let ok = |raw: &[u8]| parse_attestation_key(raw).unwrap().to_vec();
 
-        assert_eq!(ok(&key), key);
-        assert_eq!(ok(&one_unprintable), one_unprintable);
         assert_eq!(ok(hex_key.as_bytes()), key);
         assert_eq!(ok(format!("{hex_key}\n").as_bytes()), key);
         assert_eq!(ok(format!("{hex_key}\r\n").as_bytes()), key);
@@ -1573,15 +1560,26 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_attestation_key_rejects_bad_binary_lengths() {
+    fn test_parse_attestation_key_rejects_raw_binary_files() {
+        let mut one_unprintable = [b'a'; 32];
+        one_unprintable[0] = 0;
+        let mut inputs: Vec<Vec<u8>> = vec![[0xabu8; 32].to_vec(), one_unprintable.to_vec()];
         for len in [31, 33, 64, 65] {
-            assert!(parse_attestation_key(&vec![0xffu8; len]).is_err(), "len {len}");
-            assert!(parse_attestation_key(&vec![0x01u8; len]).is_err(), "len {len}");
+            inputs.push(vec![0xffu8; len]);
+            inputs.push(vec![0x01u8; len]);
+        }
+        for raw in &inputs {
+            let err = key_err(raw);
+            assert!(
+                err.contains("Only hex is accepted") && err.contains("xxd -p -c 32"),
+                "len {}",
+                raw.len()
+            );
         }
     }
 
     #[test]
-    fn test_parse_attestation_key_bom_only_applies_to_text() {
+    fn test_parse_attestation_key_ignores_one_bom() {
         let key = [0xabu8; 32];
         let hex_key = "ab".repeat(32);
         let bom = b"\xEF\xBB\xBF";
@@ -1594,18 +1592,12 @@ mod tests {
             key
         );
         assert_eq!(parse_attestation_key(&with_bom(&hex_key)).unwrap().to_vec(), key);
-        assert!(key_err(&with_bom(&"ab".repeat(16))).contains("text"));
-        assert!(key_err(bom).contains("text"));
+        assert!(key_err(&with_bom(&"ab".repeat(16))).contains("64 hex digits"));
+        assert!(key_err(bom).contains("64 hex digits"));
 
-        // A raw key may start with the same three bytes: it is returned unchanged.
+        // A raw key that starts with the same three bytes is refused.
         let raw_key = [bom.as_slice(), &[0xffu8; 29]].concat();
-        assert_eq!(raw_key.len(), 32);
-        assert_eq!(parse_attestation_key(&raw_key).unwrap().to_vec(), raw_key);
-
-        // The BOM is not removed on the binary path, so 35 bytes is an error.
-        let too_long = [bom.as_slice(), &[0xffu8; 32]].concat();
-        let err = key_err(&too_long);
-        assert!(err.contains("raw key") && err.contains("got 35"));
+        assert!(key_err(&raw_key).contains("Only hex is accepted"));
     }
 
     #[test]
@@ -1614,24 +1606,24 @@ mod tests {
             .into_iter()
             .chain("ab".repeat(32).bytes().flat_map(|b| [b, 0]))
             .collect();
-        assert!(key_err(&utf16).contains("not plain ASCII text"));
+        assert!(key_err(&utf16).contains("Only hex is accepted"));
     }
 
     #[test]
     fn test_parse_attestation_key_errors_name_format_and_hide_content() {
         // Each input uses characters that cannot appear in any of our messages.
         let bad_char = key_err(format!("{}#", "a".repeat(63)).as_bytes());
-        assert!(bad_char.contains("text") && bad_char.contains("not a hex digit"));
+        assert!(bad_char.contains("64 hex digits") && bad_char.contains("not a hex digit"));
         assert!(!bad_char.contains('#') && !bad_char.contains('\''));
         assert!(bad_char.is_ascii());
 
         let count = key_err("7".repeat(32).as_bytes());
-        assert!(count.contains("text") && count.contains("64 hex digits") && count.contains("got 32"));
+        assert!(count.contains("64 hex digits") && count.contains("got 32"));
         assert!(!count.contains('7'));
         assert!(count.is_ascii());
 
         let err = parse_attestation_key(&[0xc3u8; 33]).unwrap_err();
-        assert!(err.to_string().contains("raw key") && err.to_string().contains("got 33"));
+        assert!(err.to_string().contains("Only hex is accepted"));
         for text in [format!("{err}"), format!("{err:?}")] {
             assert!(!text.contains("c3") && !text.contains("C3") && !text.contains("195"));
             assert!(text.is_ascii(), "message is not plain ASCII");
