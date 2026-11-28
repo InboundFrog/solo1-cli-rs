@@ -33,7 +33,7 @@ mod unix {
     use std::os::fd::{AsRawFd, RawFd};
     use std::sync::{Mutex, PoisonError};
 
-    use libc::{ECHO, TCSANOW, tcgetattr, tcsetattr, termios};
+    use libc::{ECHO, ECHONL, TCSANOW, tcgetattr, tcsetattr, termios};
 
     /// The terminal state to restore: its fd and the settings from before echo was turned off.
     static SAVED: Mutex<Option<(RawFd, termios)>> = Mutex::new(None);
@@ -77,13 +77,21 @@ mod unix {
             // SAFETY: `fd` is the open `/dev/tty` of the guard that stored it. The guard closes it
             // only after its own `restore` has run, and that waits for this lock. `orig` came
             // from `tcgetattr`.
-            unsafe { tcsetattr(fd, TCSANOW, &raw const orig) };
+            if unsafe { tcsetattr(fd, TCSANOW, &raw const orig) } != 0 {
+                // Drop and the Ctrl-C handler cannot return an error.
+                log::warn!(
+                    "Could not restore the terminal settings: {}",
+                    std::io::Error::last_os_error()
+                );
+            }
         }
     }
 
-    /// Clear ECHO only. ECHONL and every other flag stay as they are.
+    /// Clear ECHO and ECHONL. Every other flag stays as it is. ECHONL must go too: with only ECHO
+    /// off, the newline of an early `PIN\n` would still be echoed, and `rpassword` prints its own
+    /// newline after the read.
     const fn without_echo(mut t: termios) -> termios {
-        t.c_lflag &= !ECHO;
+        t.c_lflag &= !(ECHO | ECHONL);
         t
     }
 
@@ -113,7 +121,7 @@ mod unix {
             clippy::cast_possible_truncation
         )]
         use super::*;
-        use libc::{ECHONL, ICANON};
+        use libc::ICANON;
         use std::os::fd::{FromRawFd, OwnedFd};
 
         /// The tests that use `EchoOff::on` share the `SAVED` static, so they run one at a time.
@@ -165,12 +173,12 @@ mod unix {
         }
 
         #[test]
-        fn without_echo_clears_only_echo() {
+        fn without_echo_clears_echo_and_echonl_only() {
             // SAFETY: `termios` is plain integers and arrays; all-zero is a valid value.
             let mut t: termios = unsafe { std::mem::zeroed() };
             t.c_lflag = ECHO | ECHONL | ICANON;
             let q = without_echo(t);
-            assert_eq!(q.c_lflag, ECHONL | ICANON);
+            assert_eq!(q.c_lflag, ICANON);
         }
 
         #[test]
@@ -180,7 +188,7 @@ mod unix {
             assert_ne!(before & ECHO, 0, "pty starts with echo on");
             let orig = echo_off(slave.as_raw_fd()).unwrap();
             assert_eq!(orig.c_lflag, before);
-            assert_eq!(flags(&slave), before & !ECHO);
+            assert_eq!(flags(&slave), before & !(ECHO | ECHONL));
         }
 
         #[test]
@@ -195,7 +203,7 @@ mod unix {
             let (_master, slave) = pty();
             let before = flags(&slave);
             let guard = guard_on(&slave);
-            assert_eq!(flags(&slave), before & !ECHO);
+            assert_eq!(flags(&slave), before & !(ECHO | ECHONL));
             drop(guard);
             assert_eq!(flags(&slave), before);
         }
@@ -227,7 +235,7 @@ mod unix {
             let (_master, slave) = pty();
             let before = flags(&slave);
             let seen = with_guard(Some(guard_on(&slave)), || flags(&slave));
-            assert_eq!(seen, before & !ECHO, "echo must be off inside the closure");
+            assert_eq!(seen, before & !(ECHO | ECHONL), "echo must be off inside the closure");
             assert_eq!(flags(&slave), before, "and back on after it");
         }
     }
