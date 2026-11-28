@@ -54,11 +54,12 @@ impl GithubRelease {
 }
 
 /// Build the blocking HTTP client used for GitHub requests.
-fn http_client() -> Result<reqwest::blocking::Client> {
+/// `request_timeout` is the time allowed for a whole request.
+fn http_client(request_timeout: Duration) -> Result<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .user_agent("solo1-cli-rs")
         .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(request_timeout)
         .build()
         .map_err(|e| SoloError::NetworkError(e.to_string()))
 }
@@ -84,7 +85,12 @@ fn read_limited(reader: impl Read, max: u64) -> Result<Vec<u8>> {
 
 /// Send a GET request and return the response body, with status and size checks.
 fn get_limited(url: &str) -> Result<Vec<u8>> {
-    let resp = http_client()?
+    get_limited_with(url, REQUEST_TIMEOUT)
+}
+
+/// `get_limited` with the request timeout passed in, so a test needs no long wait.
+fn get_limited_with(url: &str, request_timeout: Duration) -> Result<Vec<u8>> {
+    let resp = http_client(request_timeout)?
         .get(url)
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
@@ -121,8 +127,10 @@ pub fn download_url(url: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
     use super::*;
+    use std::io::Write;
+    use std::net::TcpListener;
 
     fn asset(name: &str) -> GithubAsset {
         GithubAsset {
@@ -167,5 +175,86 @@ mod tests {
             assets: vec![asset("firmware.hex")],
         };
         assert!(release.find_asset(|n| n == "missing.json").is_none());
+    }
+
+    /// Serve one connection on 127.0.0.1 in a thread: read the request head, send `response`,
+    /// then wait until the client closes. Returns the URL to fetch.
+    fn serve(response: impl FnOnce(&mut std::net::TcpStream) + Send + 'static) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/fw.json", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).is_ok_and(|n| n == 1) {
+                head.extend_from_slice(&byte);
+            }
+            response(&mut stream);
+            // Hold the connection until the client is done with it.
+            let _ = stream.read(&mut byte);
+        });
+        url
+    }
+
+    fn reply(status: &str, headers: &str, body: Vec<u8>) -> impl FnOnce(&mut std::net::TcpStream) + Send + 'static {
+        let head = format!("HTTP/1.1 {status}\r\n{headers}Connection: close\r\n\r\n");
+        move |s| {
+            // The client may stop reading early (size limit), so a write error is fine.
+            let _ = s.write_all(head.as_bytes());
+            let _ = s.write_all(&body);
+            // Connection: close, so end the body here and do not wait for the client.
+            let _ = s.shutdown(std::net::Shutdown::Write);
+        }
+    }
+
+    #[test]
+    fn test_download_ok() {
+        let url = serve(reply("200 OK", "Content-Length: 5\r\n", b"hello".to_vec()));
+        assert_eq!(download_url(&url).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn test_download_403_names_the_status() {
+        let url = serve(reply("403 Forbidden", "Content-Length: 0\r\n", vec![]));
+        let text = download_url(&url).unwrap_err().to_string();
+        assert!(text.contains("403 Forbidden"), "{text}");
+    }
+
+    #[test]
+    fn test_download_404_names_the_status() {
+        let url = serve(reply("404 Not Found", "Content-Length: 0\r\n", vec![]));
+        let text = download_url(&url).unwrap_err().to_string();
+        assert!(text.contains("404 Not Found"), "{text}");
+    }
+
+    #[test]
+    fn test_download_times_out_when_the_server_never_answers() {
+        let url = serve(|_| {});
+        let (tx, rx) = std::sync::mpsc::channel();
+        let start = std::time::Instant::now();
+        std::thread::spawn(move || tx.send(get_limited_with(&url, Duration::from_millis(300))).unwrap());
+        // Without the timeout the request would wait 30 s (the reqwest default), so do not wait for it here.
+        let err = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the request did not time out")
+            .unwrap_err();
+        assert!(matches!(err, SoloError::NetworkError(_)), "{err}");
+        assert!(start.elapsed() >= Duration::from_millis(300), "failed early: {err}");
+    }
+
+    #[test]
+    fn test_download_rejects_a_declared_size_over_the_limit() {
+        let headers = format!("Content-Length: {}\r\n", MAX_DOWNLOAD_BYTES + 1);
+        let url = serve(reply("200 OK", &headers, vec![]));
+        let text = download_url(&url).unwrap_err().to_string();
+        assert!(text.contains("limit"), "{text}");
+    }
+
+    #[test]
+    fn test_download_rejects_a_body_over_the_limit_without_a_size_header() {
+        let body = vec![7u8; usize::try_from(MAX_DOWNLOAD_BYTES).unwrap() + 1];
+        let url = serve(reply("200 OK", "", body));
+        let text = download_url(&url).unwrap_err().to_string();
+        assert!(text.contains("limit"), "{text}");
     }
 }
