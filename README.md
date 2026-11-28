@@ -40,6 +40,13 @@ The binary is `target/release/solo`. Its old name was `solo1`.
 The device crates build on `solo-ctaphid`. They also use `solo-ctap2` where they need CTAP2.
 Only `solo-cli` uses the terminal or the network.
 
+### Supported systems
+
+Linux and macOS are supported. CI builds and tests the code on Linux only; it does not run on
+macOS. Windows and other systems are not supported: CI builds the code on Windows to find build
+errors, but runs nothing there. On Windows, a file with a private key is written with a plain
+write, without the protections in "Files with a private key" below.
+
 ### Supported devices
 
 `solo ls` and every `solo key` command find both Solo 1 and Solo 2 keys.
@@ -235,7 +242,9 @@ write a file that holds a private key. On Linux and macOS these files are writte
   give other users access. Not checked: how each system treats them. Look at the new file with
   `ls -l` (and `ls -le` on macOS or `getfacl` on Linux).
 - On Windows (and any other system that is not Unix), none of this is done: the file is written
-  with a plain write.
+  with a plain write. It follows a symbolic link and writes into an existing file. `solo` sets no
+  access rights, so the file gets the rights that the directory gives to new files (not checked
+  on Windows). See "Supported systems".
 
 Without `--attestation-key` (and `--attestation-cert`), `mergehex` puts the default Solo Hacker
 attestation key in the output. That key is public, so the output is written as a plain file: a
