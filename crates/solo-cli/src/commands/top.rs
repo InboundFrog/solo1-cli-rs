@@ -76,8 +76,15 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 /// output name, so a long output name cannot make it too long. The process id
 /// keeps two programs apart; one process writes one key at a time. The file
 /// has mode 0o600 (or less if the umask removes bits). The file is synced and then
-/// renamed over `path`. If any step fails, the temporary file is removed and
-/// an old file at `path` is left as it was. The new key is in a new file, so a
+/// renamed over `path`. If any step up to the rename fails, the temporary file
+/// is removed and an old file at `path` is left as it was. After the rename the
+/// directory is synced, so the rename is not lost if the power fails. If that
+/// last sync fails, the key is already in place and is not removed; the error
+/// says so ("written but not synced"), so the caller knows the file may not
+/// survive a power loss. On macOS `File::sync_all` calls `fcntl(F_FULLFSYNC)`
+/// (checked in the std source of Rust 1.99, `sys/fs/unix.rs`), so it flushes
+/// the drive cache too. Not checked: whether every file system accepts that
+/// call on a directory. The new key is in a new file, so a
 /// handle that another program opened on the old file cannot read it. A
 /// symbolic link or any other kind of existing path gives an error and is left
 /// untouched.
@@ -120,7 +127,25 @@ fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
         // Best effort: the original error is the one to report.
         let _ = std::fs::remove_file(&temp);
     }
-    result
+    result?;
+    std::fs::File::open(parent_dir(path))
+        .and_then(|dir| dir.sync_all())
+        .map_err(|e| {
+            std::io::Error::new(
+                e.kind(),
+                format!("key written but not synced (directory sync failed): {e}"),
+            )
+        })
+}
+
+/// The directory to sync after a rename onto `path`. The parent of a bare
+/// file name is the empty path, which cannot be opened, so use ".".
+#[cfg(unix)]
+fn parent_dir(path: &Path) -> &Path {
+    match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    }
 }
 
 /// Write a file that holds a private key to `path` (non-Unix fallback).
@@ -606,10 +631,18 @@ mod tests {
         clippy::as_conversions,
         clippy::cast_possible_truncation
     )]
-    use super::write_private_key;
+    use super::{parent_dir, write_private_key};
     use std::os::unix::fs::PermissionsExt;
 
     const KEY_PEM: &str = "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----\n";
+
+    #[test]
+    fn test_parent_dir_of_bare_name_is_dot() {
+        use std::path::Path;
+        assert_eq!(parent_dir(Path::new("key.pem")), Path::new("."));
+        assert_eq!(parent_dir(Path::new("a/key.pem")), Path::new("a"));
+        assert_eq!(parent_dir(Path::new("/key.pem")), Path::new("/"));
+    }
 
     /// The private key file must be created with mode 0o600 so it is not
     /// readable by other local users.
