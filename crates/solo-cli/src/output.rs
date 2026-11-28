@@ -102,15 +102,46 @@ pub struct PingOutput {
     pub duration_ms: f64,
 }
 
+/// The result of `key sign-file --json`.
+#[derive(Debug, Serialize)]
+pub struct SignFileOutput {
+    pub file_hash: String,      // hex, SHA-256 of the file
+    pub signature: String,      // hex
+    pub signature_file: String, // path of the `.sig` file
+    pub authdata_file: String,  // path of the `.authdata` file
+}
+
+/// The result of `key probe --json`.
+#[derive(Debug, Serialize)]
+pub struct ProbeOutput {
+    pub hash_type: String, // as sent to the key, for example `Ed25519`
+    pub response: String,  // hex, the whole response
+    /// Ed25519 only, when the response is longer than 64 bytes: hex of the first 64 bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+    /// Ed25519 only, when the response is longer than 64 bytes: hex of the bytes after the signature.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
 /// Serialize `value` to pretty JSON and print to stdout.
 ///
 /// # Errors
-/// Returns an error if `value` cannot be serialized to JSON.
+/// Returns an error if `value` cannot be serialized to JSON or if writing to stdout fails.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    println!(
+    write_json(&mut std::io::stdout().lock(), value)
+}
+
+/// Serialize `value` to pretty JSON and write it, with a newline, to `out`.
+///
+/// # Errors
+/// Returns an error if `value` cannot be serialized to JSON or if writing fails.
+pub fn write_json<T: Serialize>(out: &mut impl std::io::Write, value: &T) -> Result<()> {
+    writeln!(
+        out,
         "{}",
         serde_json::to_string_pretty(value).map_err(crate::error::SoloError::JsonError)?
-    );
+    )?;
     Ok(())
 }
 

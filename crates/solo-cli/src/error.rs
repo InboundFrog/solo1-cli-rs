@@ -61,6 +61,10 @@ pub enum SoloError {
 
     #[error("`{command}` is not supported on {model} yet")]
     Unsupported { command: &'static str, model: &'static str },
+
+    /// The command line is wrong in a way that clap cannot see.
+    #[error("{0}")]
+    Usage(String),
 }
 
 pub type Result<T> = std::result::Result<T, SoloError>;
