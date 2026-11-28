@@ -6,8 +6,14 @@ pub enum Error {
     #[error(transparent)]
     Transport(#[from] solo_ctaphid::Error),
 
-    #[error("Authenticator error (CTAP2 {code:#04x}): {message}")]
-    Authenticator { code: u8, message: &'static str },
+    /// The key answered a step with a non-zero CTAP2 status. `step` is the name the caller gave
+    /// to [`check_ctap_status`](crate::check_ctap_status), for example `"setPin"`.
+    #[error("Authenticator error in {step} (CTAP2 {code:#04x}): {message}")]
+    Authenticator {
+        step: String,
+        code: u8,
+        message: &'static str,
+    },
 
     #[error("CBOR serialization error: {0}")]
     CborSer(#[from] ciborium::ser::Error<std::io::Error>),

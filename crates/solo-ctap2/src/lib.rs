@@ -190,7 +190,9 @@ pub fn extract_cbor_text_responses(response_values: &[Value]) -> Vec<&str> {
 }
 
 /// Check a raw CTAP2 response: it must be non-empty and its status byte must be 0x00.
-/// Returns `Ok(())` on success, or an error that names the failed step.
+///
+/// Returns `Ok(())` on success. On failure the error names the step: `context` is part of the
+/// message of both [`Error::MalformedResponse`] and [`Error::Authenticator`].
 ///
 /// # Errors
 /// Returns [`Error::MalformedResponse`] if `response` is empty, or
@@ -201,7 +203,11 @@ pub fn check_ctap_status(response: &[u8], context: &str) -> Result<()> {
         .ok_or_else(|| Error::MalformedResponse(format!("Empty response from {context}")))?;
     if code != 0x00 {
         let message = ctap2_status_message(code);
-        return Err(Error::Authenticator { code, message });
+        return Err(Error::Authenticator {
+            step: context.to_owned(),
+            code,
+            message,
+        });
     }
     Ok(())
 }
@@ -704,6 +710,7 @@ mod tests {
             matches!(err, Error::Authenticator { code: 0x01, .. }),
             "unexpected error: {err}"
         );
+        assert!(err.to_string().contains("in test"), "step missing: {err}");
         let err_empty = check_ctap_status(&[], "test").unwrap_err();
         assert!(err_empty.to_string().contains("Empty response"));
     }
