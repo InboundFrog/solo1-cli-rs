@@ -1,3 +1,12 @@
+//! PIN prompts for `set-pin` and `change-pin`.
+//!
+//! Limit: every PIN read by `rpassword::prompt_password` is put into a `Zeroizing`
+//! wrapper, so the final buffer is wiped. But `rpassword` 7.5.5 pushes the typed
+//! characters one at a time into a `String`. When that `String` grows, its text can
+//! move to a new block, and the old block is freed without being wiped. So the PIN
+//! is not guaranteed to be wiped from all memory. The terminal and the kernel also
+//! hold the typed PIN, and no program can wipe those.
+
 use crate::error::{Result, SoloError};
 use solo_ctap2::cbor::{cbor_bytes, cbor_int, int_map};
 use solo_ctaphid::HidDevice;

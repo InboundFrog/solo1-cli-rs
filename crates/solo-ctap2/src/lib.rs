@@ -513,7 +513,9 @@ pub fn pin_uv_auth(key: &[u8], msg: &[u8]) -> Result<Vec<u8>> {
 ///
 /// The text is written into a `String` that already has room for the result
 /// (NFC makes UTF-8 text at most 3 times longer), so the result is never
-/// reallocated. Only the normalizer's own buffers can hold an unwiped copy.
+/// reallocated. Limit: the result is wiped, but the normalizer's own internal
+/// buffers can hold an unwiped copy of the PIN. We cannot reach them, so the
+/// PIN is not guaranteed to be wiped from all memory.
 fn nfc_pin(pin: &str) -> Result<Zeroizing<String>> {
     let mut out = Zeroizing::new(String::with_capacity(pin.len().saturating_mul(3)));
     ComposingNormalizerBorrowed::new_nfc()
