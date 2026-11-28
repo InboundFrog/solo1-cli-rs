@@ -582,8 +582,9 @@ fn parse_attestation_key(raw: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
         }
         return Ok(Zeroizing::new(raw.to_vec()));
     }
-    let digits: Zeroizing<Vec<u8>> =
-        Zeroizing::new(body.iter().copied().filter(|b| !b.is_ascii_whitespace()).collect());
+    // Fixed capacity: a growing Vec would leave smaller, unwiped copies behind.
+    let mut digits: Zeroizing<Vec<u8>> = Zeroizing::new(Vec::with_capacity(body.len()));
+    digits.extend(body.iter().copied().filter(|b| !b.is_ascii_whitespace()));
     if !digits.iter().all(u8::is_ascii_hexdigit) {
         return Err(Error::Firmware(
             "Attestation key file is text, so it must hold exactly 64 hex digits, \
@@ -597,9 +598,10 @@ fn parse_attestation_key(raw: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
             digits.len()
         )));
     }
-    hex::decode(&*digits)
-        .map(Zeroizing::new)
-        .map_err(|_| Error::Firmware("Attestation key file has invalid hex".into()))
+    let mut key = Zeroizing::new(vec![0u8; 32]);
+    hex::decode_to_slice(&*digits, &mut key)
+        .map_err(|_| Error::Firmware("Attestation key file has invalid hex".into()))?;
+    Ok(key)
 }
 
 /// Merge multiple Intel HEX files into one output HEX file.
