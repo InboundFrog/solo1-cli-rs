@@ -284,19 +284,21 @@ fn enumerate_credentials_for_rp(
             })
             .unwrap_or_else(|| "<unknown>".into());
 
-        // credentialId: key 0x07 → map with "id" (bytes); keep the raw bytes
-        let cred_id: Vec<u8> = find_int_key(&cred_pairs, 0x07)
-            .and_then(|v| {
-                if let Value::Map(m) = v {
-                    match find_text_key(m, "id") {
-                        Some(Value::Bytes(b)) => Some(b.clone()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
+        // credentialId: key 0x07 → descriptor map with "id" (bytes); keep the raw bytes.
+        // A key that sends no usable id gives an error: an empty id cannot be used
+        // with `credential rm` or `sign-file`.
+        let cred_id: Vec<u8> = match find_int_key(&cred_pairs, 0x07) {
+            Some(Value::Map(m)) => match find_text_key(m, "id") {
+                Some(Value::Bytes(b)) if !b.is_empty() => Some(b.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+        .ok_or_else(|| {
+            SoloError::MalformedResponse(format!(
+                "credentialId (0x07) missing, or without a byte-string id, for user '{username}'"
+            ))
+        })?;
 
         result.push((username, cred_id));
     }
@@ -498,7 +500,94 @@ mod tests {
         clippy::as_conversions,
         clippy::cast_possible_truncation
     )]
+    use super::enumerate_credentials_for_rp;
+    use crate::error::SoloError;
     use base64::Engine as _;
+    use ciborium::value::Value;
+    use solo_ctaphid::mock::MockDevice;
+
+    /// Build a credMgmt answer: status byte 0x00 and a CBOR map with int keys.
+    fn answer(entries: Vec<(i64, Value)>) -> Vec<u8> {
+        let mut out = vec![0x00u8];
+        ciborium::ser::into_writer(&solo_ctap2::cbor::int_map(entries), &mut out).unwrap();
+        out
+    }
+
+    fn text(s: &str) -> Value {
+        Value::Text(s.into())
+    }
+
+    fn user(name: Option<&str>) -> Value {
+        let mut m = vec![(text("id"), Value::Bytes(vec![1, 2]))];
+        if let Some(n) = name {
+            m.push((text("name"), text(n)));
+        }
+        Value::Map(m)
+    }
+
+    fn descriptor(id: Value) -> Value {
+        Value::Map(vec![(text("type"), text("public-key")), (text("id"), id)])
+    }
+
+    fn enumerate(answer: Vec<u8>) -> crate::error::Result<Vec<(String, Vec<u8>)>> {
+        enumerate_credentials_for_rp(&MockDevice::new(vec![Ok(answer)]), &[0u8; 32], &[0u8; 32])
+    }
+
+    #[test]
+    fn enumerate_credentials_returns_id_and_name() {
+        let r = enumerate(answer(vec![
+            (0x06, user(Some("alice"))),
+            (0x07, descriptor(Value::Bytes(vec![9, 8]))),
+        ]))
+        .unwrap();
+        assert_eq!(r, vec![("alice".to_string(), vec![9, 8])]);
+    }
+
+    #[test]
+    fn enumerate_credentials_missing_credential_id_is_malformed() {
+        let r = enumerate(answer(vec![(0x06, user(Some("alice")))]));
+        assert!(matches!(r, Err(SoloError::MalformedResponse(_))), "{r:?}");
+    }
+
+    #[test]
+    fn enumerate_credentials_descriptor_without_id_is_malformed() {
+        let d = Value::Map(vec![(text("type"), text("public-key"))]);
+        let r = enumerate(answer(vec![(0x06, user(Some("alice"))), (0x07, d)]));
+        assert!(matches!(r, Err(SoloError::MalformedResponse(_))), "{r:?}");
+    }
+
+    #[test]
+    fn enumerate_credentials_wrong_type_credential_id_is_malformed() {
+        for bad in [text("abc"), Value::Integer(5.into())] {
+            let r = enumerate(answer(vec![(0x06, user(Some("alice"))), (0x07, descriptor(bad))]));
+            assert!(matches!(r, Err(SoloError::MalformedResponse(_))), "{r:?}");
+        }
+        let r = enumerate(answer(vec![(0x06, user(Some("alice"))), (0x07, text("not a map"))]));
+        assert!(matches!(r, Err(SoloError::MalformedResponse(_))), "{r:?}");
+    }
+
+    #[test]
+    fn enumerate_credentials_empty_credential_id_is_malformed() {
+        let r = enumerate(answer(vec![
+            (0x06, user(Some("alice"))),
+            (0x07, descriptor(Value::Bytes(vec![]))),
+        ]));
+        assert!(matches!(r, Err(SoloError::MalformedResponse(_))), "{r:?}");
+    }
+
+    /// The user `name` is optional, so a credential without it is still listed.
+    #[test]
+    fn enumerate_credentials_without_user_name_is_still_listed() {
+        let u = Value::Map(vec![]);
+        let r = enumerate(answer(vec![(0x06, u), (0x07, descriptor(Value::Bytes(vec![7])))])).unwrap();
+        assert_eq!(r, vec![("<unknown>".to_string(), vec![7])]);
+        let r = enumerate(answer(vec![
+            (0x06, user(None)),
+            (0x07, descriptor(Value::Bytes(vec![7]))),
+        ]))
+        .unwrap();
+        assert_eq!(r, vec![("0102".to_string(), vec![7])]);
+    }
 
     /// Credential IDs are displayed and accepted as standard base64, not hex.
     #[test]
