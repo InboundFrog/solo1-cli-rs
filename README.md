@@ -207,6 +207,8 @@ solo program aux bootloader-version
 
 ```sh
 # Generate ECDSA P-256 keypair (PEM)
+# With --json and -o, the private key goes to the file only. The JSON has
+# public_key and private_key_path. With --json and no -o, the JSON has private_key too.
 solo genkey [-o OUTPUT] [--json]
 
 # Sign firmware HEX file, output JSON {firmware, signature, versions}
