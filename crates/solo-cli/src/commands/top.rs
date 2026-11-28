@@ -2,7 +2,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::commands::key::{SIGN_FILE_RP_ID, with_suffix};
+use crate::commands::key::{SIGN_FILE_RP_ID, sha256_file, with_suffix};
 use crate::error::{Result, SoloError};
 use crate::output::{VerifyFileOutput, write_json};
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
@@ -161,7 +161,7 @@ pub struct FileSignatureFacts {
 
 /// Check a `sign-file` signature. All checks must pass, or this returns an error that names the check.
 ///
-/// The key signs `auth_data || SHA-256(file)` with ES256 (ECDSA P-256, SHA-256).
+/// `file_hash` is the SHA-256 of the file. The key signs `auth_data || file_hash` with ES256 (ECDSA P-256, SHA-256).
 ///
 /// # Errors
 /// Returns `CryptoError` if the public key is not a P-256 PEM key, the authenticator data is too short
@@ -171,7 +171,7 @@ pub fn check_file_signature(
     public_key_pem: &str,
     signature_der: &[u8],
     auth_data: &[u8],
-    file: &[u8],
+    file_hash: &[u8; 32],
 ) -> Result<FileSignatureFacts> {
     let key = VerifyingKey::from_public_key_pem(public_key_pem)
         .map_err(|e| SoloError::CryptoError(format!("The public key is not a P-256 PEM public key: {e}")))?;
@@ -195,7 +195,7 @@ pub fn check_file_signature(
     let signature = Signature::from_der(signature_der)
         .map_err(|e| SoloError::CryptoError(format!("The signature is not a valid DER ECDSA signature: {e}")))?;
 
-    let message = [auth_data, Sha256::digest(file).as_slice()].concat();
+    let message = [auth_data, file_hash].concat();
     key.verify(&message, &signature).map_err(|_| {
         SoloError::CryptoError(
             "The signature does not match: wrong public key, or the file or the authenticator data was changed".into(),
@@ -208,14 +208,17 @@ pub fn check_file_signature(
     })
 }
 
-/// Read an input file. The error says which input it was.
+/// Make the error of a failed read say which input it was.
+fn input_error(what: &str, path: &Path, e: &std::io::Error) -> SoloError {
+    SoloError::IoError(std::io::Error::new(
+        e.kind(),
+        format!("cannot read the {what} {}: {e}", path.display()),
+    ))
+}
+
+/// Read a small input file. The error says which input it was.
 fn read_input(what: &str, path: &Path) -> Result<Vec<u8>> {
-    std::fs::read(path).map_err(|e| {
-        SoloError::IoError(std::io::Error::new(
-            e.kind(),
-            format!("cannot read the {what} {}: {e}", path.display()),
-        ))
-    })
+    std::fs::read(path).map_err(|e| input_error(what, path, &e))
 }
 
 /// The JSON object of `verify-file --json` for a good signature. Prints nothing.
@@ -257,7 +260,7 @@ pub fn cmd_verify_file(
         &key_pem,
         &read_input("signature file", &signature)?,
         &read_input("authenticator data file", &authdata)?,
-        &read_input("input file", file)?,
+        &sha256_file(file).map_err(|e| input_error("input file", file, &e))?,
     )?;
 
     // The facts exist only after every check of the signature passed.
@@ -369,6 +372,10 @@ mod verify_file_tests {
         SigningKey::from_slice(&[0x42; 32]).unwrap()
     }
 
+    fn hash_of(bytes: &[u8]) -> [u8; 32] {
+        Sha256::digest(bytes).into()
+    }
+
     fn pem(k: &SigningKey) -> String {
         k.verifying_key().to_public_key_pem(LineEnding::LF).unwrap()
     }
@@ -402,7 +409,7 @@ mod verify_file_tests {
     #[test]
     fn good_signature_passes_and_reports_facts() {
         let (pem, sig, auth) = good();
-        let facts = check_file_signature(&pem, &sig, &auth, FILE).unwrap();
+        let facts = check_file_signature(&pem, &sig, &auth, &hash_of(FILE)).unwrap();
         assert_eq!(
             facts,
             FileSignatureFacts {
@@ -413,7 +420,7 @@ mod verify_file_tests {
 
         let k = key();
         let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP | FLAG_UV, 0x0102_0304);
-        let facts = check_file_signature(&pem, &sign(&k, &auth, FILE), &auth, FILE).unwrap();
+        let facts = check_file_signature(&pem, &sign(&k, &auth, FILE), &auth, &hash_of(FILE)).unwrap();
         assert!(facts.user_verified);
         assert_eq!(facts.sign_count, 0x0102_0304);
     }
@@ -423,14 +430,14 @@ mod verify_file_tests {
         let (pem, sig, auth) = good();
         let mut file = FILE.to_vec();
         file[0] ^= 1;
-        assert!(err_text(check_file_signature(&pem, &sig, &auth, &file)).contains("does not match"));
+        assert!(err_text(check_file_signature(&pem, &sig, &auth, &hash_of(&file))).contains("does not match"));
     }
 
     #[test]
     fn changed_authdata_fails() {
         let (pem, sig, mut auth) = good();
         auth[36] ^= 1; // the signature counter
-        assert!(err_text(check_file_signature(&pem, &sig, &auth, FILE)).contains("does not match"));
+        assert!(err_text(check_file_signature(&pem, &sig, &auth, &hash_of(FILE))).contains("does not match"));
     }
 
     #[test]
@@ -439,17 +446,17 @@ mod verify_file_tests {
         let mut auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 1);
         auth.extend_from_slice(&[0xA0]);
         let sig = sign(&k, &auth, FILE);
-        check_file_signature(&pem(&k), &sig, &auth, FILE).unwrap();
+        check_file_signature(&pem(&k), &sig, &auth, &hash_of(FILE)).unwrap();
         // A signature over the 37-byte header only must not pass for the longer data.
         let short_sig = sign(&k, &auth[..37], FILE);
-        assert!(check_file_signature(&pem(&k), &short_sig, &auth, FILE).is_err());
+        assert!(check_file_signature(&pem(&k), &short_sig, &auth, &hash_of(FILE)).is_err());
     }
 
     #[test]
     fn wrong_public_key_fails() {
         let (_, sig, auth) = good();
         let other = pem(&SigningKey::from_slice(&[0x43; 32]).unwrap());
-        assert!(err_text(check_file_signature(&other, &sig, &auth, FILE)).contains("does not match"));
+        assert!(err_text(check_file_signature(&other, &sig, &auth, &hash_of(FILE))).contains("does not match"));
     }
 
     #[test]
@@ -457,7 +464,7 @@ mod verify_file_tests {
         let k = key();
         let auth = auth_data("example.com", FLAG_UP, 1);
         let sig = sign(&k, &auth, FILE);
-        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE));
+        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, &hash_of(FILE)));
         assert!(msg.contains("rpIdHash"), "{msg}");
     }
 
@@ -466,7 +473,7 @@ mod verify_file_tests {
         let k = key();
         let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UV, 1);
         let sig = sign(&k, &auth, FILE);
-        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, FILE));
+        let msg = err_text(check_file_signature(&pem(&k), &sig, &auth, &hash_of(FILE)));
         assert!(msg.contains("user-present"), "{msg}");
     }
 
@@ -474,7 +481,7 @@ mod verify_file_tests {
     fn short_authdata_fails() {
         let (pem, sig, auth) = good();
         for len in [0, 1, 32, 36] {
-            let msg = err_text(check_file_signature(&pem, &sig, &auth[..len], FILE));
+            let msg = err_text(check_file_signature(&pem, &sig, &auth[..len], &hash_of(FILE)));
             assert!(msg.contains("shorter than 37"), "len {len}: {msg}");
             assert!(!msg.contains("device"), "len {len}: {msg}");
         }
@@ -484,7 +491,7 @@ mod verify_file_tests {
     fn cut_short_attested_data_fails_without_mentioning_a_device() {
         let (pem, sig, _) = good();
         let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP | 0x40, 1); // AT flag, but no attested data
-        let msg = err_text(check_file_signature(&pem, &sig, &auth, FILE));
+        let msg = err_text(check_file_signature(&pem, &sig, &auth, &hash_of(FILE)));
         assert!(msg.contains("shorter than 37 bytes or is not valid"), "{msg}");
         assert!(!msg.contains("device"), "{msg}");
     }
@@ -503,7 +510,7 @@ mod verify_file_tests {
             &with_extra_byte,
             &zero_r,
         ] {
-            let msg = err_text(check_file_signature(&pem, bad, &auth, FILE));
+            let msg = err_text(check_file_signature(&pem, bad, &auth, &hash_of(FILE)));
             assert!(msg.contains("not a valid DER ECDSA signature"), "{msg}");
         }
     }
@@ -516,11 +523,11 @@ mod verify_file_tests {
             "not pem",
             "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END PUBLIC KEY-----\n",
         ] {
-            let msg = err_text(check_file_signature(bad, &sig, &auth, FILE));
+            let msg = err_text(check_file_signature(bad, &sig, &auth, &hash_of(FILE)));
             assert!(msg.contains("P-256 PEM public key"), "{msg}");
         }
         // A good key body under the wrong PEM label.
-        assert!(check_file_signature(&pem.replace("PUBLIC KEY", "CERTIFICATE"), &sig, &auth, FILE).is_err());
+        assert!(check_file_signature(&pem.replace("PUBLIC KEY", "CERTIFICATE"), &sig, &auth, &hash_of(FILE)).is_err());
     }
 
     /// A vector made with OpenSSL only (new P-256 key, `openssl dgst -sha256 -sign` over the
@@ -538,7 +545,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
     fn openssl_vector_passes_and_a_cut_file_fails() {
         let sig = hex::decode(VECTOR_SIG).unwrap();
         let auth = hex::decode(VECTOR_AUTH).unwrap();
-        let facts = check_file_signature(VECTOR_KEY, &sig, &auth, VECTOR_FILE).unwrap();
+        let facts = check_file_signature(VECTOR_KEY, &sig, &auth, &hash_of(VECTOR_FILE)).unwrap();
         assert_eq!(
             facts,
             FileSignatureFacts {
@@ -547,7 +554,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
             }
         );
         let cut = &VECTOR_FILE[..VECTOR_FILE.len() - 1];
-        assert!(err_text(check_file_signature(VECTOR_KEY, &sig, &auth, cut)).contains("does not match"));
+        assert!(err_text(check_file_signature(VECTOR_KEY, &sig, &auth, &hash_of(cut))).contains("does not match"));
     }
 
     #[test]
@@ -558,7 +565,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
             .unwrap()
             .to_pkcs8_pem(LineEnding::LF)
             .unwrap();
-        let msg = err_text(check_file_signature(&private, &sig, &auth, FILE));
+        let msg = err_text(check_file_signature(&private, &sig, &auth, &hash_of(FILE)));
         assert!(msg.contains("P-256 PEM public key"), "{msg}");
     }
 

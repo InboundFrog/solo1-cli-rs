@@ -151,8 +151,7 @@ pub fn cmd_sign_file(
     let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
 
     // Read the file. Use its SHA-256 hash as the clientDataHash.
-    let data = std::fs::read(filename)?;
-    let file_hash: Vec<u8> = Sha256::digest(&data).to_vec();
+    let file_hash = sha256_file(filename)?.to_vec();
 
     let hash_line = format!("{}  {}", hex::encode(&file_hash), filename.display());
     progress(json, out, err, &hash_line)?;
@@ -178,6 +177,27 @@ pub fn cmd_sign_file(
     // CTAP2 getAssertion (0x02)
     let ga_response = solo_ctap2::ctap2_call(hid, 0x02, &get_assertion_cbor)?;
     check_ga_response(&ga_response, filename, &file_hash, json, out, err)
+}
+
+/// SHA-256 of a file, hashed in blocks so that the file is never held in memory.
+///
+/// # Errors
+/// Returns the I/O error if the file cannot be opened or read.
+pub fn sha256_file(path: &Path) -> std::io::Result<[u8; 32]> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut block = [0_u8; 8 * 1024];
+    loop {
+        let n = match file.read(&mut block) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        };
+        hasher.update(block.get(..n).unwrap_or_default());
+    }
+    Ok(hasher.finalize().into())
 }
 
 /// Return `path` with `suffix` added at the end of the file name (`file.bin` and `.sig` give `file.bin.sig`).
@@ -276,6 +296,23 @@ mod tests {
     )]
     use super::*;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn sha256_file_matches_the_hash_of_the_bytes_for_a_file_larger_than_one_block() {
+        // The file has many blocks and one partial block.
+        let data: Vec<u8> = (0..(100 * 1024 + 123_u32)).map(|i| (i % 251) as u8).collect();
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(&data).unwrap();
+        assert_eq!(
+            sha256_file(f.path()).unwrap().as_slice(),
+            Sha256::digest(&data).as_slice()
+        );
+    }
+
+    #[test]
+    fn sha256_file_of_a_missing_file_is_an_error() {
+        assert!(sha256_file(Path::new("/nonexistent/solo-test-file")).is_err());
+    }
 
     #[test]
     fn test_normalize_hash_type_known_types() {
