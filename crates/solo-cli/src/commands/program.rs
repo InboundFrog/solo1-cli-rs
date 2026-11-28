@@ -91,7 +91,7 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
 ///
 /// # Errors
 /// Returns an error if the HEX file cannot be parsed, if no single DFU device
-/// can be chosen or opened, or if DFU programming fails.
+/// can be chosen or opened, if DFU programming fails, or if the flash read back differs from the firmware.
 pub fn cmd_program_dfu(firmware_hex: &Path, serial: Option<&str>) -> Result<()> {
     use solo1::firmware::parse_hex_file;
 
@@ -119,6 +119,10 @@ pub fn cmd_program_dfu(firmware_hex: &Path, serial: Option<&str>) -> Result<()> 
         pb.set_position(u64::try_from(done).unwrap_or(u64::MAX));
     })?;
     pb.finish_with_message("Done");
+
+    println!("Verifying: reading the flash back...");
+    dfu.verify(base_addr, &firmware_bytes)?;
+    println!("Firmware readback verified.");
     println!("DFU programming complete.");
     Ok(())
 }
