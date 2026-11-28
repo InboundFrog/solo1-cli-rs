@@ -41,8 +41,9 @@ fn run(cli: Cli) -> error::Result<()> {
             signature,
             authdata,
             file,
+            json,
         } => {
-            top::cmd_verify_file(&public_key, signature.as_deref(), authdata.as_deref(), &file)?;
+            top::cmd_verify_file(&public_key, signature.as_deref(), authdata.as_deref(), &file, json)?;
         }
 
         Commands::Sign { key, firmware_hex } => {

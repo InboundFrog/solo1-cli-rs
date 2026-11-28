@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::commands::key::{SIGN_FILE_RP_ID, with_suffix};
 use crate::error::{Result, SoloError};
+use crate::output::{VerifyFileOutput, print_json};
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 use p256::pkcs8::DecodePublicKey;
 use sha2::{Digest, Sha256};
@@ -216,7 +217,19 @@ fn read_input(what: &str, path: &Path) -> Result<Vec<u8>> {
     })
 }
 
+/// The JSON object of `verify-file --json` for a good signature. Prints nothing.
+fn verify_file_output(facts: &FileSignatureFacts) -> VerifyFileOutput {
+    VerifyFileOutput {
+        valid: true,
+        rp_id: SIGN_FILE_RP_ID.into(),
+        user_verified: facts.user_verified,
+        sign_count: facts.sign_count,
+    }
+}
+
 /// Check the signature of `sign-file` offline and print the result.
+///
+/// With `json`, a good signature prints one JSON object. A failed check is an error, as without `json`.
 ///
 /// `signature` and `authdata` default to `<file>.sig` and `<file>.authdata`.
 ///
@@ -228,6 +241,7 @@ pub fn cmd_verify_file(
     signature: Option<&Path>,
     authdata: Option<&Path>,
     file: &Path,
+    json: bool,
 ) -> Result<()> {
     let signature = signature.map_or_else(|| with_suffix(file, ".sig"), Path::to_path_buf);
     let authdata = authdata.map_or_else(|| with_suffix(file, ".authdata"), Path::to_path_buf);
@@ -242,6 +256,9 @@ pub fn cmd_verify_file(
         &read_input("input file", file)?,
     )?;
 
+    if json {
+        return print_json(&verify_file_output(&facts));
+    }
     println!("The signature is good.");
     println!("rpId: {SIGN_FILE_RP_ID}");
     println!("User verified: {}", if facts.user_verified { "yes" } else { "no" });
@@ -535,12 +552,12 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
     fn command_fails_for_missing_or_non_text_public_key() {
         let dir = tempfile::tempdir().unwrap();
         let file = write_case(dir.path(), FILE);
-        let err = cmd_verify_file(&dir.path().join("none.pem"), None, None, &file).unwrap_err();
+        let err = cmd_verify_file(&dir.path().join("none.pem"), None, None, &file, false).unwrap_err();
         assert!(matches!(err, SoloError::IoError(_)));
         assert!(err.to_string().contains("public key file"));
 
         std::fs::write(dir.path().join("bin.pem"), [0xFF, 0xFE, 0x00]).unwrap();
-        let err = cmd_verify_file(&dir.path().join("bin.pem"), None, None, &file).unwrap_err();
+        let err = cmd_verify_file(&dir.path().join("bin.pem"), None, None, &file, false).unwrap_err();
         assert!(matches!(err, SoloError::CryptoError(_)));
         assert!(err.to_string().contains("not text"));
     }
@@ -560,15 +577,45 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
     fn command_uses_default_sig_and_authdata_paths() {
         let dir = tempfile::tempdir().unwrap();
         let file = write_case(dir.path(), FILE);
-        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file).unwrap();
+        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, false).unwrap();
 
         // A changed file is an error; so is a missing default file.
         let file = write_case(dir.path(), b"other");
-        assert!(cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file).is_err());
+        assert!(cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, false).is_err());
         std::fs::remove_file(dir.path().join("doc.txt.authdata")).unwrap();
-        let err = cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file).unwrap_err();
+        let err = cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, false).unwrap_err();
         assert!(matches!(err, SoloError::IoError(_)));
         assert!(err.to_string().contains("authenticator data file"));
+    }
+
+    #[test]
+    fn json_value_has_the_facts() {
+        let v = serde_json::to_value(verify_file_output(&FileSignatureFacts {
+            user_verified: true,
+            sign_count: 3,
+        }))
+        .unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"valid": true, "rp_id": "solokeys.dev", "user_verified": true, "sign_count": 3})
+        );
+        let v = serde_json::to_value(verify_file_output(&FileSignatureFacts {
+            user_verified: false,
+            sign_count: 0,
+        }))
+        .unwrap();
+        assert_eq!(v["user_verified"], false);
+        assert_eq!(v["sign_count"], 0);
+    }
+
+    #[test]
+    fn command_with_json_works_and_a_bad_file_is_still_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE);
+        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, true).unwrap();
+        let file = write_case(dir.path(), b"other");
+        let err = cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, true).unwrap_err();
+        assert!(matches!(err, SoloError::CryptoError(_)));
     }
 
     #[test]
@@ -579,7 +626,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
         let auth = dir.path().join("a.ad");
         std::fs::rename(dir.path().join("doc.txt.sig"), &sig).unwrap();
         std::fs::rename(dir.path().join("doc.txt.authdata"), &auth).unwrap();
-        cmd_verify_file(&dir.path().join("pub.pem"), Some(&sig), Some(&auth), &file).unwrap();
+        cmd_verify_file(&dir.path().join("pub.pem"), Some(&sig), Some(&auth), &file, false).unwrap();
     }
 }
 

@@ -111,6 +111,18 @@ pub struct SignFileOutput {
     pub authdata_file: String,  // path of the `.authdata` file
 }
 
+/// The result of `verify-file --json` for a good signature.
+///
+/// A failed check prints no JSON: the error goes to stderr and the exit code is 1, as for every command.
+#[derive(Debug, Serialize)]
+pub struct VerifyFileOutput {
+    /// Always `true`. A bad signature is an error, not a result.
+    pub valid: bool,
+    pub rp_id: String,
+    pub user_verified: bool,
+    pub sign_count: u32,
+}
+
 /// The result of `key probe --json`.
 #[derive(Debug, Serialize)]
 pub struct ProbeOutput {
