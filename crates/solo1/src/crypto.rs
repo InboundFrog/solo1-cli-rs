@@ -312,15 +312,16 @@ pub fn websafe_b64_encode(data: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(data)
 }
 
-/// Websafe base64 decoding.
+/// Websafe base64 decoding. Input with or without `=` padding is accepted.
+/// Padding that is too long or in the wrong place is refused.
 ///
 /// # Errors
 /// Returns [`Error::Firmware`] if `s` is not valid websafe base64
-/// (RFC 4648 URL-safe, no padding).
+/// (RFC 4648 URL-safe).
 pub fn websafe_b64_decode(s: &str) -> Result<Vec<u8>> {
     use base64::Engine;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    URL_SAFE_NO_PAD
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD_INDIFFERENT;
+    URL_SAFE_NO_PAD_INDIFFERENT
         .decode(s)
         .map_err(|e| Error::Firmware(format!("Base64 decode error: {e}")))
 }
@@ -369,6 +370,31 @@ mod tests {
         assert!(!encoded.contains('/'));
         let decoded = websafe_b64_decode(&encoded).unwrap();
         assert_eq!(decoded, data);
+    }
+
+    #[test]
+    fn test_websafe_b64_padded_and_unpadded_agree() {
+        // "Ma" needs one `=`, "M" needs two.
+        assert_eq!(websafe_b64_decode("TWE").unwrap(), b"Ma");
+        assert_eq!(websafe_b64_decode("TWE=").unwrap(), b"Ma");
+        assert_eq!(websafe_b64_decode("TQ").unwrap(), b"M");
+        assert_eq!(websafe_b64_decode("TQ==").unwrap(), b"M");
+    }
+
+    #[test]
+    fn test_websafe_b64_bad_padding_refused() {
+        // Too few `=` for the length is accepted (indifferent), but too many,
+        // `=` in the middle, and `=` after a full group are refused.
+        assert!(websafe_b64_decode("TWE==").is_err());
+        assert!(websafe_b64_decode("TWFu=").is_err());
+        assert!(websafe_b64_decode("TQ=A").is_err());
+        assert!(websafe_b64_decode("T===").is_err());
+        assert!(websafe_b64_decode("=").is_err());
+    }
+
+    #[test]
+    fn test_websafe_b64_one_pad_where_two_needed() {
+        assert_eq!(websafe_b64_decode("TQ=").unwrap(), b"M");
     }
 
     #[test]
