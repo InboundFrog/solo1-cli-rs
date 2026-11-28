@@ -219,6 +219,31 @@ solo mergehex -o OUTPUT [--attestation-key FILE] [--attestation-cert FILE] INPUT
 solo monitor <PORT>
 ```
 
+#### Files with a private key
+
+`solo genkey -o OUTPUT` (without `--json`) and `solo mergehex -o OUTPUT --attestation-key FILE`
+write a file that holds a private key. On Linux and macOS these files are written like this:
+
+- The file is always a new file. It is readable and writable only by you (mode 0600, or less if
+  your umask removes more). An existing file at the path is replaced.
+- The new file does not keep the owner, the group, the mode or the access control lists (ACLs) of
+  the old file. It belongs to the user who runs the command.
+- If the path exists and is not a regular file (a directory, for example), the command stops with
+  an error. A symbolic link at the path is not followed: the command stops with an error and the
+  link is left as it was.
+- `solo` does not set or remove ACLs. ACLs that the directory passes on to new files can still
+  give other users access. Not checked: how each system treats them. Look at the new file with
+  `ls -l` (and `ls -le` on macOS or `getfacl` on Linux).
+- On Windows (and any other system that is not Unix), none of this is done: the file is written
+  with a plain write.
+
+Without `--attestation-key` (and `--attestation-cert`), `mergehex` puts the default Solo Hacker
+attestation key in the output. That key is public, so the output is written as a plain file: a
+symbolic link is followed and an existing file keeps its mode.
+
+With `--json`, `genkey` writes no file, even with `-o`: the private key is in the JSON on
+standard output.
+
 ---
 
 ## Firmware update notes
