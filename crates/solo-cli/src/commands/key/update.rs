@@ -97,7 +97,7 @@ pub fn cmd_update(
         RECONNECT_INTERVAL,
         timeout,
         || solo1::open(serial, timeout),
-        |msg| log::warn!("Could not reconnect yet: {msg}. Trying again..."),
+        |msg, level| log::log!(level, "Could not reconnect yet: {msg}. Trying again..."),
     )?;
 
     // Query bootloader version to select the correct signature.
