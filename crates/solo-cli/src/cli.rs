@@ -55,6 +55,10 @@ pub enum Commands {
         /// The file that was signed
         file: PathBuf,
 
+        /// Fail unless the signature counter is greater than N. A counter of 0 always fails
+        #[arg(long, value_name = "N")]
+        counter_above: Option<u32>,
+
         /// Output results as JSON (for scripting)
         #[arg(long)]
         json: bool,

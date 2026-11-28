@@ -41,6 +41,7 @@ fn run(cli: Cli) -> error::Result<()> {
             signature,
             authdata,
             file,
+            counter_above,
             json,
         } => {
             top::cmd_verify_file(
@@ -49,6 +50,7 @@ fn run(cli: Cli) -> error::Result<()> {
                 authdata.as_deref(),
                 &file,
                 json,
+                counter_above,
                 &mut std::io::stdout().lock(),
             )?;
         }
