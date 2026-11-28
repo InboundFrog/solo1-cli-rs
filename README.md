@@ -113,7 +113,8 @@ solo key change-pin                        # Change existing PIN
 solo key disable-updates                   # Permanently disable firmware updates
 solo key keyboard <DATA>                   # Program keyboard sequence (max 64 bytes)
 solo key probe <HASH_TYPE> <FILE>          # Calculate hash on device (sha256|sha512|rsa2048|ed25519, file <=6144 bytes)
-solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential (ID is hex); writes FILE.sig and FILE.authdata
+solo key sign-file <CREDENTIAL_ID> <FILE> [--host <HOST>]
+                                           # Sign file with resident credential (ID is hex); writes FILE.sig and FILE.authdata
 solo key update [--firmware FILE.json]     # Update firmware (downloads latest if omitted)
 ```
 
@@ -138,8 +139,17 @@ text holds the PEM text.
 
 #### Sign a file and check the signature
 
-`sign-file` works only with a credential made with `--host solokeys.dev`. It sends the SHA-256 hash
-of the file to the key. The key does not sign this hash alone. It signs the authenticator data
+`sign-file` needs a credential that was made for the same host. The default host is `solokeys.dev`.
+Use `--host <HOST>` for a credential that was made with another host. The signature has the form of
+a WebAuthn assertion for that host, so use a credential that you make only for file signing.
+
+```sh
+solo key credential create --host solokeys.dev --user me --public-key-out pub.pem
+solo key sign-file <CREDENTIAL_ID> FILE
+solo key sign-file <CREDENTIAL_ID> FILE --host example.com   # for a credential made with --host example.com
+```
+
+`sign-file` sends the SHA-256 hash of the file to the key. The key does not sign this hash alone. It signs the authenticator data
 followed by the hash (ES256, as in the CTAP2 specification). `sign-file` writes two files next to
 the input file, and overwrites them if they exist:
 
@@ -153,6 +163,7 @@ The simple way is `solo verify-file`. It needs no device:
 
 ```sh
 solo verify-file --public-key pub.pem FILE
+solo verify-file --public-key pub.pem FILE --host example.com   # if you signed with --host example.com
 ```
 
 It reads `FILE.sig` and `FILE.authdata` by default. Use `--signature` and `--authdata` for other
@@ -160,7 +171,7 @@ names. The check passes only if all of these are true:
 
 - The public key file is a P-256 public key in PEM text.
 - The authenticator data has at least 37 bytes.
-- The authenticator data is for the rpId `solokeys.dev`, the rpId that `sign-file` uses.
+- The authenticator data is for the rpId given with `--host` (default `solokeys.dev`). Use the same host as with `sign-file`. The error names the host that was expected.
 - The user-present flag is set.
 - The signature is a valid DER ECDSA signature by that public key over the authenticator data
   followed by the SHA-256 hash of the file.
@@ -173,7 +184,7 @@ names. The check passes only if all of these are true:
   normal, so the check shows only that a signature is newer than `N`.
 
 If a check fails, the command says which one and exits with a non-zero code. If all pass, it prints
-that the signature is good, the rpId, whether the user-verified flag is set, and the signature
+that the signature is good, the rpId (the `--host` value), whether the user-verified flag is set, and the signature
 counter. With `--json` it prints one JSON object with `rp_id`, `user_verified` and `sign_count`.
 The exit code is the result, so there is no `valid` field. If a check fails, stdout is empty and the
 error goes to stderr. This differs from `key verify --json`, which prints a report with
