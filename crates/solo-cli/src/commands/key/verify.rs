@@ -31,7 +31,7 @@ struct AttestationData {
 ///
 /// In the packed format (`WebAuthn` §8.2), `alg` names the algorithm of the
 /// attestation key. The spec does not fix it to -7. This code accepts only -7
-/// (ES256) and returns an error for any other value, because Solo keys only
+/// (ES256) and returns an error for any other value or a missing `alg`, because Solo keys only
 /// attest with ES256 and this code cannot verify anything else.
 fn extract_attestation(response: &[u8]) -> Result<AttestationData> {
     use ciborium::value::Value;
