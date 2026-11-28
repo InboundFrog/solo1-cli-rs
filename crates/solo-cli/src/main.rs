@@ -134,9 +134,8 @@ fn run_key_command(
             key::cmd_wink(hid)?;
         }
 
-        KeyCommands::Ping { count, data } => {
-            // Use the data as hex bytes if it is valid hex. Otherwise use its UTF-8 bytes.
-            let ping_data = hex::decode(&data).unwrap_or_else(|_| data.as_bytes().to_vec());
+        KeyCommands::Ping { count, data, hex } => {
+            let ping_data = key::ping_payload(data.as_deref(), hex.as_deref())?;
             key::cmd_ping(hid, count, &ping_data, json)?;
         }
 
@@ -307,6 +306,14 @@ mod tests {
     fn genkey_entropy_option_is_rejected() {
         use clap::Parser;
         assert!(Cli::try_parse_from(["solo", "genkey", "--entropy", "x"]).is_err());
+    }
+
+    #[test]
+    fn ping_data_and_hex_conflict() {
+        use clap::Parser;
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--data", "a", "--hex", "aa"]).is_err());
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--data", "a"]).is_ok());
+        assert!(Cli::try_parse_from(["solo", "key", "ping", "--hex", "aa"]).is_ok());
     }
 
     #[test]

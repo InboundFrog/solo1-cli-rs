@@ -155,9 +155,13 @@ pub enum KeyCommands {
         #[arg(long, default_value = "1")]
         count: u32,
 
-        /// Ping data (hex string or plain text)
-        #[arg(long, default_value = "deadbeef")]
-        data: String,
+        /// Ping data, sent as the text bytes (default: the 4 bytes de ad be ef)
+        #[arg(long, conflicts_with = "hex")]
+        data: Option<String>,
+
+        /// Ping data as a hex string, sent as the decoded bytes
+        #[arg(long)]
+        hex: Option<String>,
     },
 
     /// Program keyboard sequence (max 64 bytes)

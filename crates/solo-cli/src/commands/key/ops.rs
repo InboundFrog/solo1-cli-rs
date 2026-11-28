@@ -66,6 +66,22 @@ pub fn cmd_wink(hid: &impl HidDevice) -> Result<()> {
     Ok(())
 }
 
+/// Choose the ping payload: the text bytes of `--data`, the decoded bytes of
+/// `--hex`, or `de ad be ef` when neither is given.
+///
+/// # Errors
+///
+/// Returns an error if `--hex` is not valid hex.
+pub fn ping_payload(data: Option<&str>, hex: Option<&str>) -> Result<Vec<u8>> {
+    match (data, hex) {
+        (Some(text), _) => Ok(text.as_bytes().to_vec()),
+        (None, Some(h)) => {
+            hex::decode(h).map_err(|e| SoloError::ProtocolError(format!("Invalid value for --hex: {e}")))
+        }
+        (None, None) => Ok(vec![0xde, 0xad, 0xbe, 0xef]),
+    }
+}
+
 /// Send ping(s) and measure round-trip time.
 ///
 /// # Errors
@@ -183,6 +199,16 @@ mod tests {
     use super::*;
     use crate::error::SoloError;
     use solo_ctaphid::mock::MockDevice;
+
+    #[test]
+    fn ping_payload_text_hex_default() {
+        assert_eq!(ping_payload(Some("beef"), None).unwrap(), b"beef");
+        assert_eq!(ping_payload(None, Some("beef")).unwrap(), [0xbe, 0xef]);
+        assert_eq!(ping_payload(None, None).unwrap(), [0xde, 0xad, 0xbe, 0xef]);
+        let e = ping_payload(None, Some("abc")).unwrap_err().to_string();
+        assert!(e.contains("--hex"), "{e}");
+        assert!(ping_payload(None, Some("zz")).is_err());
+    }
 
     // ── cmd_ping ────────────────────────────────────────────────────────────
 
