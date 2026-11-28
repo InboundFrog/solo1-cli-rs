@@ -26,3 +26,12 @@ updates:
       cargo-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+
+  # Watches rust-toolchain.toml only. The three `toolchain:` values in
+  # .github/workflows/ci.yml are not covered: change them by hand to match.
+  - package-ecosystem: rust-toolchain
+    directories: ['/']
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
