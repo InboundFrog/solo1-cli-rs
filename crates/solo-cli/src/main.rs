@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(name(&["solo", "key", "rng", "raw"]), Some("rng raw"));
         assert_eq!(name(&["solo", "key", "rng", "feedkernel"]), Some("rng feedkernel"));
         assert_eq!(
-            name(&["solo", "key", "credential", "rm", "--host", "h"]),
+            name(&["solo", "key", "credential", "rm", "--host", "h", "--user", "u"]),
             Some("credential rm")
         );
         assert_eq!(name(&["solo", "key", "version"]), None);
