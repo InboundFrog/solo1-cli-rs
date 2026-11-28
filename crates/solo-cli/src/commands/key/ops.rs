@@ -2,27 +2,51 @@ use std::time::Instant;
 
 use crate::commands::key::common;
 use crate::error::{Result, SoloError};
-use crate::output::{PingOutput, print_json};
+use crate::output::{PingOutput, Solo1VersionOutput, print_json};
 use solo_ctaphid::{CTAPHID_CBOR, CTAPHID_PING, CTAPHID_WINK, HidDevice};
 use solo1::firmware::FirmwareVersion;
 use solo1::protocol::{CMD_GET_VERSION, CMD_KEYBOARD};
 
 /// Print the firmware version of the device.
 ///
+/// `product` is the USB product name. A key in the bootloader answers the
+/// version query with the version of the bootloader, so it is reported as such.
+///
 /// # Errors
 /// Returns an error if the version query fails (device/transport error or
 /// timeout), the response is too short, or JSON serialization fails.
-pub fn cmd_key_version(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{VersionOutput, print_json};
-
-    let version = get_device_version(hid)?;
+pub fn cmd_key_version(hid: &impl HidDevice, product: Option<&str>, json: bool) -> Result<()> {
+    let out = key_version_output(hid, product)?;
     if json {
-        return print_json(&VersionOutput {
-            firmware_version: version.to_string(),
-        });
+        return print_json(&out);
     }
-    println!("Firmware version: {version}");
+    println!("{}", key_version_text(&out));
     Ok(())
+}
+
+fn key_version_output(hid: &impl HidDevice, product: Option<&str>) -> Result<Solo1VersionOutput> {
+    let version = get_device_version(hid)?.to_string();
+    Ok(if common::is_bootloader(product) {
+        Solo1VersionOutput {
+            mode: "bootloader",
+            firmware_version: None,
+            bootloader_version: Some(version),
+        }
+    } else {
+        Solo1VersionOutput {
+            mode: "normal",
+            firmware_version: Some(version),
+            bootloader_version: None,
+        }
+    })
+}
+
+fn key_version_text(out: &Solo1VersionOutput) -> String {
+    match (&out.bootloader_version, &out.firmware_version) {
+        (Some(v), _) => format!("Bootloader version: {v}\nThe key is in bootloader mode."),
+        (None, Some(v)) => format!("Firmware version: {v}"),
+        (None, None) => String::new(),
+    }
 }
 
 /// Print the firmware version of a Solo 2.
@@ -301,7 +325,7 @@ mod tests {
     #[test]
     fn test_cmd_key_version_too_short() {
         let device = MockDevice::new(vec![Ok(vec![1, 0])]);
-        let err = cmd_key_version(&device, false).unwrap_err();
+        let err = cmd_key_version(&device, None, false).unwrap_err();
         assert!(matches!(err, SoloError::ProtocolError(_)));
     }
 
@@ -309,7 +333,33 @@ mod tests {
     #[test]
     fn test_cmd_key_version_timeout() {
         let device = MockDevice::new(vec![]);
-        let err = cmd_key_version(&device, false).unwrap_err();
+        let err = cmd_key_version(&device, None, false).unwrap_err();
         assert!(matches!(err, SoloError::Timeout));
+    }
+
+    /// Normal key: text and JSON report the firmware version.
+    #[test]
+    fn test_key_version_normal_mode() {
+        let device = MockDevice::new(vec![Ok(vec![4, 1, 5])]);
+        let out = key_version_output(&device, Some("Solo 4.1.5")).unwrap();
+        assert_eq!(key_version_text(&out), "Firmware version: 4.1.5");
+        let v = serde_json::to_value(&out).unwrap();
+        assert_eq!(v, serde_json::json!({"mode": "normal", "firmware_version": "4.1.5"}));
+    }
+
+    /// Bootloader: the version is called the bootloader version, and the mode is said.
+    #[test]
+    fn test_key_version_bootloader_mode() {
+        let device = MockDevice::new(vec![Ok(vec![3, 0, 0])]);
+        let out = key_version_output(&device, Some("Solo Bootloader 3.0.0")).unwrap();
+        let text = key_version_text(&out);
+        assert!(text.contains("Bootloader version: 3.0.0"), "{text}");
+        assert!(text.contains("bootloader mode"), "{text}");
+        assert!(!text.contains("Firmware"), "{text}");
+        let v = serde_json::to_value(&out).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"mode": "bootloader", "bootloader_version": "3.0.0"})
+        );
     }
 }

@@ -65,6 +65,19 @@ pub struct VersionOutput {
     pub firmware_version: String,
 }
 
+/// Output of `solo key version` for a Solo 1.
+///
+/// Exactly one of `firmware_version` and `bootloader_version` is set.
+#[derive(Serialize)]
+pub struct Solo1VersionOutput {
+    /// "normal" or "bootloader".
+    pub mode: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub firmware_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bootloader_version: Option<String>,
+}
+
 #[derive(Serialize)]
 pub struct CliVersionOutput {
     pub name: String,
