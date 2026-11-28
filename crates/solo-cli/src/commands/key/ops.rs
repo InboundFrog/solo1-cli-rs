@@ -28,7 +28,8 @@ fn key_version_output(hid: &impl HidDevice, product: Option<&str>) -> Result<Sol
     let (version, locked) = query_version(hid)?;
     let version = version.to_string();
     Ok(if common::is_bootloader(product) {
-        // Not checked: whether the bootloader's fourth byte means "locked". Not shown.
+        // The bootloader build compiles the same ctaphid.c (tag 4.1.5), so it also sends the
+        // locked byte. This code does not show it in bootloader mode.
         Solo1VersionOutput::Bootloader {
             bootloader_version: version,
         }
