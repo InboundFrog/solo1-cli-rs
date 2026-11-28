@@ -220,19 +220,48 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
     Ok(result)
 }
 
+/// One credential of a relying party, as read from the key.
+#[derive(Debug)]
+struct RpCredential {
+    user_name: String,
+    /// The raw credential ID bytes.
+    id: Vec<u8>,
+    /// The value at key 0x08 as the key sent it (a `COSE_Key`). `None` if the answer has no key 0x08.
+    public_key: Option<ciborium::value::Value>,
+}
+
+/// Convert the public key of a credential to PEM text for `credential ls`.
+///
+/// The key is extra data. A key that cannot be converted gives a warning on stderr and
+/// `None`, so that it does not hide the rest of the list.
+fn public_key_pem_or_warn(cred: &RpCredential, rp_id: &str) -> Option<String> {
+    use ciborium::value::Value;
+    let result = match cred.public_key.as_ref()? {
+        Value::Map(pairs) => solo_ctap2::cose_pairs_to_pem(pairs).map_err(|e| e.to_string()),
+        _ => Err("it is not a CBOR map".into()),
+    };
+    result
+        .map_err(|e| {
+            eprintln!(
+                "Warning: public key of user '{}' at '{rp_id}' not read: {e}",
+                cred.user_name
+            );
+        })
+        .ok()
+}
+
 /// Send enumerateCredentialsBegin (subcommand 0x04) for the given RP hash,
 /// then enumerateCredentialsGetNextCredential (subcommand 0x05) for each
 /// remaining credential.
 ///
-/// Returns `(username, cred_id)` pairs. `cred_id` is the raw credential ID
-/// bytes.
+/// Returns one [`RpCredential`] for each credential.
 ///
 /// The request always uses PIN protocol 1 (see `send_cred_mgmt`).
 fn enumerate_credentials_for_rp(
     hid: &impl HidDevice,
     pin_token: &[u8],
     rp_id_hash: &[u8],
-) -> Result<Vec<(String, Vec<u8>)>> {
+) -> Result<Vec<RpCredential>> {
     use ciborium::value::Value;
 
     // subCommandParams = CBOR({0x01: rpIdHash})
@@ -300,7 +329,11 @@ fn enumerate_credentials_for_rp(
             ))
         })?;
 
-        result.push((username, cred_id));
+        result.push(RpCredential {
+            user_name: username,
+            id: cred_id,
+            public_key: find_int_key(&cred_pairs, 0x08).cloned(),
+        });
     }
 
     Ok(result)
@@ -357,11 +390,12 @@ pub fn cmd_credential_ls(hid: &impl HidDevice, json: bool) -> Result<()> {
     let mut entries = Vec::new();
     for (rp_id, rp_id_hash) in &rps {
         let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash)?;
-        for (username, cred_id) in credentials {
+        for cred in credentials {
             entries.push(CredentialEntry {
                 rp_id: rp_id.clone(),
-                user_name: username,
-                credential_id: base64::engine::general_purpose::STANDARD.encode(&cred_id),
+                public_key_pem: public_key_pem_or_warn(&cred, rp_id),
+                user_name: cred.user_name,
+                credential_id: base64::engine::general_purpose::STANDARD.encode(&cred.id),
             });
         }
     }
@@ -430,7 +464,7 @@ pub fn cmd_credential_rm(
         let credentials = enumerate_credentials_for_rp(hid, pin_token, rp_id_hash)?;
         let mut matches: Vec<Vec<u8>> = credentials
             .into_iter()
-            .filter_map(|(username, cred_id)| (username == user).then_some(cred_id))
+            .filter_map(|c| (c.user_name == user).then_some(c.id))
             .collect();
 
         if matches.is_empty() {
@@ -529,7 +563,7 @@ mod tests {
         Value::Map(vec![(text("type"), text("public-key")), (text("id"), id)])
     }
 
-    fn enumerate(answer: Vec<u8>) -> crate::error::Result<Vec<(String, Vec<u8>)>> {
+    fn enumerate(answer: Vec<u8>) -> crate::error::Result<Vec<super::RpCredential>> {
         enumerate_credentials_for_rp(&MockDevice::new(vec![Ok(answer)]), &[0u8; 32], &[0u8; 32])
     }
 
@@ -540,7 +574,9 @@ mod tests {
             (0x07, descriptor(Value::Bytes(vec![9, 8]))),
         ]))
         .unwrap();
-        assert_eq!(r, vec![("alice".to_string(), vec![9, 8])]);
+        assert_eq!(r.len(), 1);
+        assert_eq!((r[0].user_name.as_str(), r[0].id.as_slice()), ("alice", &[9u8, 8][..]));
+        assert_eq!(r[0].public_key, None);
     }
 
     #[test]
@@ -578,18 +614,81 @@ mod tests {
         assert!(matches!(r, Err(SoloError::MalformedResponse(_))), "{r:?}");
     }
 
+    fn cose_key(pub_key: &p256::PublicKey) -> Value {
+        use p256::elliptic_curve::sec1::ToSec1Point;
+        let point = pub_key.to_sec1_point(false);
+        Value::Map(vec![
+            (Value::Integer(1.into()), Value::Integer(2.into())),
+            (Value::Integer(3.into()), Value::Integer((-7).into())),
+            (Value::Integer((-1).into()), Value::Integer(1.into())),
+            (Value::Integer((-2).into()), Value::Bytes(point.x().unwrap().to_vec())),
+            (Value::Integer((-3).into()), Value::Bytes(point.y().unwrap().to_vec())),
+        ])
+    }
+
+    /// Key 0x08 is read and gives the PEM of the same key.
+    #[test]
+    fn enumerate_credentials_reads_public_key() {
+        use p256::pkcs8::DecodePublicKey;
+        let pub_key = p256::SecretKey::from_slice(&[0x42; 32]).unwrap().public_key();
+        let r = enumerate(answer(vec![
+            (0x06, user(Some("alice"))),
+            (0x07, descriptor(Value::Bytes(vec![9]))),
+            (0x08, cose_key(&pub_key)),
+        ]))
+        .unwrap();
+        let pem = super::public_key_pem_or_warn(&r[0], "example.com").unwrap();
+        assert!(pem.starts_with("-----BEGIN PUBLIC KEY-----\n"));
+        assert_eq!(p256::PublicKey::from_public_key_pem(&pem).unwrap(), pub_key);
+    }
+
+    /// No key 0x08 is fine: the key is None and the credential is listed.
+    #[test]
+    fn credential_without_public_key_has_no_pem() {
+        let r = enumerate(answer(vec![
+            (0x06, user(Some("alice"))),
+            (0x07, descriptor(Value::Bytes(vec![9]))),
+        ]))
+        .unwrap();
+        assert_eq!(super::public_key_pem_or_warn(&r[0], "example.com"), None);
+    }
+
+    /// A key 0x08 that cannot be converted gives None, not an error.
+    #[test]
+    fn credential_with_bad_public_key_has_no_pem() {
+        for bad in [
+            text("x"),
+            Value::Map(vec![]),
+            Value::Map(vec![(Value::Integer((-2).into()), Value::Bytes(vec![1]))]),
+            // The shape the firmware sends for an EdDSA credential: OKP, Ed25519, only x.
+            Value::Map(vec![
+                (Value::Integer(1.into()), Value::Integer(1.into())),
+                (Value::Integer((-1).into()), Value::Integer(6.into())),
+                (Value::Integer((-2).into()), Value::Bytes(vec![0; 32])),
+            ]),
+        ] {
+            let r = enumerate(answer(vec![
+                (0x06, user(Some("alice"))),
+                (0x07, descriptor(Value::Bytes(vec![9]))),
+                (0x08, bad),
+            ]))
+            .unwrap();
+            assert_eq!(super::public_key_pem_or_warn(&r[0], "example.com"), None);
+        }
+    }
+
     /// The user `name` is optional, so a credential without it is still listed.
     #[test]
     fn enumerate_credentials_without_user_name_is_still_listed() {
         let u = Value::Map(vec![]);
         let r = enumerate(answer(vec![(0x06, u), (0x07, descriptor(Value::Bytes(vec![7])))])).unwrap();
-        assert_eq!(r, vec![("<unknown>".to_string(), vec![7])]);
+        assert_eq!(r[0].user_name, "<unknown>");
         let r = enumerate(answer(vec![
             (0x06, user(None)),
             (0x07, descriptor(Value::Bytes(vec![7]))),
         ]))
         .unwrap();
-        assert_eq!(r, vec![("0102".to_string(), vec![7])]);
+        assert_eq!(r[0].user_name, "0102");
     }
 
     /// Credential IDs are displayed and accepted as standard base64, not hex.

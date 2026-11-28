@@ -306,7 +306,6 @@ pub fn cose_to_public_key(cose_pairs: &[(Value, Value)]) -> Result<p256::PublicK
 /// map, or the key length is wrong. A missing coordinate gives [`Error::Protocol`].
 /// [`Error::Crypto`] is returned if the PEM encoding fails.
 pub fn cose_key_pem_from_trailing(trailing: &[u8]) -> Result<String> {
-    use p256::pkcs8::{EncodePublicKey, LineEnding};
     let value: Value = ciborium::de::from_reader(trailing)
         .map_err(|e| Error::MalformedResponse(format!("Credential public key is not valid CBOR: {e}")))?;
     let Value::Map(pairs) = value else {
@@ -314,7 +313,17 @@ pub fn cose_key_pem_from_trailing(trailing: &[u8]) -> Result<String> {
             "Credential public key is not a CBOR map".into(),
         ));
     };
-    cose_to_public_key(&pairs)?
+    cose_pairs_to_pem(&pairs)
+}
+
+/// Convert a `COSE_Key` map (EC2 / P-256) to a PEM text (`SubjectPublicKeyInfo`, LF line endings).
+///
+/// # Errors
+/// Returns the errors of [`cose_to_public_key`]. [`Error::Crypto`] is returned if the PEM
+/// encoding fails.
+pub fn cose_pairs_to_pem(pairs: &[(Value, Value)]) -> Result<String> {
+    use p256::pkcs8::{EncodePublicKey, LineEnding};
+    cose_to_public_key(pairs)?
         .to_public_key_pem(LineEnding::LF)
         .map_err(|e| Error::Crypto(format!("Public key PEM encode error: {e}")))
 }
