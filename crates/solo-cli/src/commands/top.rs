@@ -57,10 +57,19 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Write a file that holds a private key to a new file at `path`.
+/// Write a file that holds a private key to `path`.
 ///
 /// Used for the key from `genkey` and for the merged HEX from `mergehex` when
-/// it holds a user's attestation key.
+/// it holds a user's attestation key. On Unix the write is private and
+/// atomic (see `write_private_key_inner`); on other systems it is a plain
+/// write. Every error names `path` and keeps the `ErrorKind` of the original
+/// error.
+fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
+    write_private_key_inner(path, contents)
+        .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", path.display())))
+}
+
+/// Unix version of `write_private_key`.
 ///
 /// The key is written to a temporary file in the same directory, with mode
 /// 0o600 (or less if the umask removes bits). The file is synced and then
@@ -70,7 +79,7 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
 /// symbolic link or any other kind of existing path gives an error and is left
 /// untouched.
 #[cfg(unix)]
-fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
+fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
 
@@ -113,7 +122,7 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 
 /// Write a file that holds a private key to `path` (non-Unix fallback).
 #[cfg(not(unix))]
-fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
+fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
     std::fs::write(path, contents)
 }
 
@@ -268,7 +277,9 @@ pub fn cmd_mergehex(
     if attestation_key.is_some() {
         write_private_key(output, &text)?;
     } else {
-        std::fs::write(output, text)?;
+        // Same `<path>: <error>` form as `write_private_key`.
+        std::fs::write(output, text)
+            .map_err(|e| std::io::Error::new(e.kind(), format!("{}: {e}", output.display())))?;
     }
     println!("Merged {} files into {}", inputs.len(), output.display());
     Ok(())
@@ -678,6 +689,7 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "target");
     }
@@ -694,6 +706,7 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
         assert!(!target.exists());
     }
@@ -718,7 +731,9 @@ mod tests {
         let content = std::fs::read_to_string(&path);
         std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o700)).unwrap();
 
-        assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::PermissionDenied);
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert_eq!(content.unwrap(), "old");
     }
 
@@ -777,6 +792,7 @@ mod tests {
         let err = write_private_key(&path, KEY_PEM).unwrap_err();
 
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(err.to_string().contains(&path.display().to_string()));
     }
 
     /// A Unix socket at the path gives an error and is left untouched.
@@ -792,6 +808,7 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_socket());
     }
 
@@ -806,6 +823,7 @@ mod tests {
 
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert!(err.to_string().contains("not a regular file"));
+        assert!(err.to_string().contains(&path.display().to_string()));
         assert!(path.is_dir());
     }
 
@@ -876,5 +894,22 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         super::cmd_mergehex(&[hex], &link, None, None).unwrap();
         assert_eq!(std::fs::read_to_string(&target).unwrap(), expected);
+    }
+
+    /// Without an attestation key, a write error names the output path and
+    /// keeps the `ErrorKind`.
+    #[test]
+    fn test_mergehex_without_attestation_key_write_error_names_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let (hex, _, _) = mergehex_inputs(dir.path());
+        let out = dir.path().join("no_such_dir").join("out.hex");
+
+        let err = super::cmd_mergehex(&[hex], &out, None, None).unwrap_err();
+
+        assert!(err.to_string().contains(&out.display().to_string()), "{err}");
+        assert!(
+            matches!(err, crate::error::SoloError::IoError(ref e) if e.kind() == std::io::ErrorKind::NotFound),
+            "{err:?}"
+        );
     }
 }

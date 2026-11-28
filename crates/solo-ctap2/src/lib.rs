@@ -522,6 +522,18 @@ fn nfc_pin(pin: &str) -> Result<Zeroizing<String>> {
     Ok(out)
 }
 
+/// Tell if two PIN texts are the same PIN after Unicode normalization form C (NFC).
+///
+/// Use this to compare a new PIN with its confirmation: the key sees the NFC form,
+/// so inputs with different code points can still be the same PIN. Both NFC
+/// copies are wiped when the function returns.
+///
+/// # Errors
+/// Returns [`Error::Protocol`] if a PIN could not be normalized.
+pub fn pins_equal_nfc(a: &str, b: &str) -> Result<bool> {
+    Ok(nfc_pin(a)? == nfc_pin(b)?)
+}
+
 /// Check that `pin` is allowed as a new PIN (CTAP 2.1, setPIN and changePIN).
 ///
 /// The PIN is put into Unicode normalization form C (NFC) first (CTAP 2.1
@@ -776,6 +788,15 @@ mod tests {
         assert!(validate_new_pin(&devanagari).is_err());
         // NFC leaves compatibility characters alone (NFKC would change them).
         assert_eq!(nfc_pin("\u{FB01}\u{FF11}").unwrap().as_str(), "\u{FB01}\u{FF11}");
+    }
+
+    #[test]
+    fn test_pins_equal_nfc() {
+        // U+00E9 against U+0065 U+0301: same NFC form.
+        assert!(pins_equal_nfc("caf\u{e9}1", "cafe\u{301}1").unwrap());
+        assert!(!pins_equal_nfc("caf\u{e9}1", "cafe1").unwrap());
+        assert!(pins_equal_nfc("1234", "1234").unwrap());
+        assert!(!pins_equal_nfc("1234", "1235").unwrap());
     }
 
     #[test]
