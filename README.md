@@ -149,9 +149,9 @@ solo key sign-file <CREDENTIAL_ID> FILE
 solo key sign-file <CREDENTIAL_ID> FILE --host example.com   # for a credential made with --host example.com
 ```
 
-`sign-file` sends the SHA-256 hash of the file to the key. The key does not sign this hash alone. It signs the authenticator data
-followed by the hash (ES256, as in the CTAP2 specification). `sign-file` writes two files next to
-the input file, and overwrites them if they exist:
+`sign-file` sends the SHA-256 hash of the file to the key. The key does not sign this hash alone. It
+signs the authenticator data followed by the hash (ES256, as in the CTAP2 specification).
+`sign-file` writes two files next to the input file, and overwrites them if they exist:
 
 - `FILE.sig`: the signature.
 - `FILE.authdata`: the authenticator data that was signed.
@@ -171,7 +171,8 @@ names. The check passes only if all of these are true:
 
 - The public key file is a P-256 public key in PEM text.
 - The authenticator data has at least 37 bytes.
-- The authenticator data is for the rpId given with `--host` (default `solokeys.dev`). Use the same host as with `sign-file`. The error names the host that was expected.
+- The authenticator data is for the rpId given with `--host` (default `solokeys.dev`). Use the same
+  host as with `sign-file`. The error names the host that was expected.
 - The user-present flag is set.
 - The signature is a valid DER ECDSA signature by that public key over the authenticator data
   followed by the SHA-256 hash of the file.
@@ -184,12 +185,12 @@ names. The check passes only if all of these are true:
   normal, so the check shows only that a signature is newer than `N`.
 
 If a check fails, the command says which one and exits with a non-zero code. If all pass, it prints
-that the signature is good, the rpId (the `--host` value), whether the user-verified flag is set, and the signature
-counter. With `--json` it prints one JSON object with `rp_id`, `user_verified` and `sign_count`.
-The exit code is the result, so there is no `valid` field. If a check fails, stdout is empty and the
-error goes to stderr. This differs from `key verify --json`, which prints a report with
-`signature_valid: false` and then fails. `verify-file` stops at the first failed check and has no
-facts to report.
+that the signature is good, the rpId (the `--host` value), whether the user-verified flag is set,
+and the signature counter. With `--json` it prints one JSON object with `rp_id`, `user_verified` and
+`sign_count`. The exit code is the result, so there is no `valid` field. If a check fails, stdout is
+empty and the error goes to stderr. This differs from `key verify --json`, which prints a report
+with `signature_valid: false` and then fails. `verify-file` stops at the first failed check and has
+no facts to report.
 
 As a second way, you can run this OpenSSL command in bash or zsh. It checks only the signature, not
 the rpId or the flags:
