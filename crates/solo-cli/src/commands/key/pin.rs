@@ -23,7 +23,7 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let new_pin = Zeroizing::new(rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?);
     let confirm_pin = Zeroizing::new(rpassword::prompt_password("Confirm new PIN: ").map_err(SoloError::IoError)?);
 
-    if new_pin != confirm_pin {
+    if !solo_ctap2::pins_equal_nfc(&new_pin, &confirm_pin)? {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
     }
     solo_ctap2::validate_new_pin(&new_pin)?;
@@ -73,7 +73,7 @@ pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let new_pin = Zeroizing::new(rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?);
     let confirm_pin = Zeroizing::new(rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?);
 
-    if new_pin != confirm_pin {
+    if !solo_ctap2::pins_equal_nfc(&new_pin, &confirm_pin)? {
         return Err(SoloError::ProtocolError("PINs do not match".into()));
     }
     solo_ctap2::validate_new_pin(&new_pin)?;
