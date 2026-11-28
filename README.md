@@ -203,22 +203,23 @@ A good result from `verify-file` shows that the holder of the private key of the
 the hash of this file, and that the user-present flag is set in the signed data. It does not show
 that the private key is in a Solo key, which device holds it, or when the file was signed.
 
-`sign-file` uses the CTAP2 getAssertion command. It puts the SHA-256 hash of the file in the place of
-the `clientDataHash`. A WebAuthn login for the same rpId has the same form: the key signs the
+`sign-file` uses the CTAP2 getAssertion command. It puts the SHA-256 hash of the file in the place
+of the `clientDataHash`. A WebAuthn login for the same rpId has the same form: the key signs the
 authenticator data followed by the hash of the client data JSON. Nothing in the signed bytes says
 "file signature". So `verify-file` cannot tell a file signature from a WebAuthn login of the same
 credential. For this reason:
 
-- Make a credential only for file signing, for example
-  `solo key credential create --host solokeys.dev --user signer --public-key-out pub.pem`.
-  Do not use it to log in to a web site.
+- Make a credential only for file signing, as in the example above. Do not use it to log in to a
+  web site.
 - Do not sign a file from an untrusted source with a credential that is also used for logins. A file
-  that holds a client data JSON text gets a signature that a web site could take as a login.
+  that holds a client data JSON text gets a signature that a web site for that rpId could take as a
+  login.
 
 This is not the `sign-file` of the Python tool (solo1-cli). From its source, not tried on a key: it
 sends the hash with the command number `0x50`, takes the credential ID as base64, and writes only a
 `.sig` file. Here the credential ID is hex and two files are written. The Solo 1 firmware 4.1.5
-source has no command `0x50`. So a `.sig` file from this tool is not the output of the Python tool.
+source has no command `0x50`. getAssertion is a standard CTAP2 command, so it works with this
+firmware. So a `.sig` file from this tool is not the output of the Python tool.
 
 #### Challenge-response
 
