@@ -442,6 +442,20 @@ pub const HACKER_ATTESTATION_CERT: &[u8] = &[
 /// Number of addresses in one page of a [`FlashImage`].
 const IMAGE_PAGE_LEN: usize = 256;
 
+/// Most pages one [`FlashImage`] may hold, over all input files of one merge.
+///
+/// The STM32L432 flash is `FLASH_PAGES * FLASH_PAGE_SIZE` = 256 KiB, which is
+/// 1024 image pages. The bootloader, the firmware and the attestation data all
+/// fit in that. The limit is 4 times that, so that a file with some data
+/// outside the flash (for example option bytes) still merges. At about 538
+/// bytes per page, a full image takes about 2 MiB of memory. Without this
+/// limit, files far apart cost 538 bytes for each byte they hold.
+const MAX_IMAGE_PAGES: usize = 4 * 1024;
+
+/// Pages of a [`FlashImage`] that a full Solo 1 flash takes (1024).
+const FLASH_IMAGE_PAGES: u32 = FLASH_PAGES * FLASH_PAGE_SIZE / 256;
+const _: () = assert!(256 == IMAGE_PAGE_LEN);
+
 /// A sparse flash image: bytes at 32-bit addresses.
 ///
 /// The address space is cut into pages of 256 addresses. A page is created
@@ -467,7 +481,8 @@ impl FlashImage {
     /// If the write fails, the image is not changed.
     ///
     /// # Errors
-    /// Returns [`Error::Firmware`] if an address in the range overflows 32 bits.
+    /// Returns [`Error::Firmware`] if an address in the range overflows 32 bits,
+    /// or if the write would make the image hold more than [`MAX_IMAGE_PAGES`] pages.
     fn write(&mut self, addr: u32, data: &[u8]) -> Result<()> {
         if data.is_empty() {
             return Ok(());
@@ -475,7 +490,14 @@ impl FlashImage {
         // Check the last address first, so a failed write changes nothing.
         let overflow = || Error::Firmware("flash address overflow".into());
         let extra = u32::try_from(data.len().saturating_sub(1)).map_err(|_| overflow())?;
-        addr.checked_add(extra).ok_or_else(overflow)?;
+        let last = addr.checked_add(extra).ok_or_else(overflow)?;
+        // Count the pages this write would create, before creating any.
+        let new_pages = (addr >> 8..=last >> 8).filter(|p| !self.pages.contains_key(p)).count();
+        if self.pages.len().saturating_add(new_pages) > MAX_IMAGE_PAGES {
+            return Err(Error::Firmware(format!(
+                "merged image is too large: it would need more than {MAX_IMAGE_PAGES} pages of {IMAGE_PAGE_LEN} addresses (a Solo 1 flash image fits in {FLASH_IMAGE_PAGES})"
+            )));
+        }
         let mut a = addr;
         for &b in data {
             let page = self
@@ -624,7 +646,8 @@ fn parse_attestation_key(raw: &[u8]) -> Result<Vec<u8>> {
 /// `attestation_cert` is provided, an attestation key or certificate file
 /// cannot be read or is invalid (malformed hex key, or a certificate shorter
 /// than 100 bytes), an input HEX file cannot be read or parsed, an address
-/// overflows 32 bits, or the output file cannot be written.
+/// overflows 32 bits, the merged image would need more than [`MAX_IMAGE_PAGES`]
+/// pages, or the output file cannot be written.
 pub fn merge_hex_files(
     inputs: &[&Path],
     output: &Path,
@@ -1253,6 +1276,45 @@ mod tests {
         img.write(12, &[]).unwrap();
         img.write(u32::MAX, &[]).unwrap();
         assert_eq!(img.segments(), before);
+    }
+
+    #[test]
+    fn test_flash_image_page_limit() {
+        let mut img = FlashImage::default();
+        for i in 0..u32::try_from(MAX_IMAGE_PAGES).unwrap() {
+            img.write(i << 8, &[1]).unwrap();
+        }
+        // A byte in an existing page is fine; a byte in a new page is not.
+        img.write(5, &[2]).unwrap();
+        let err = img.write(0x4000_0000, &[1]).unwrap_err().to_string();
+        assert!(err.contains("4096"), "{err}");
+        // A write that crosses into a new page fails and changes nothing.
+        let before = img.segments();
+        let last_page_end = (u32::try_from(MAX_IMAGE_PAGES).unwrap() << 8) - 1;
+        assert!(img.write(last_page_end, &[1, 2]).is_err());
+        assert_eq!(img.segments(), before);
+    }
+
+    #[test]
+    fn test_merge_many_files_total_limit_and_normal_merge() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let write_hex = |name: &str, addr: u32| {
+            let p = dir.join(name);
+            std::fs::write(&p, hex_text(&[(addr, vec![1, 2, 3])]).unwrap()).unwrap();
+            p
+        };
+        // Normal merge: bootloader + firmware at their usual places.
+        let boot = write_hex("boot.hex", 0x0800_0000);
+        let fw = write_hex("fw.hex", 0x0800_8000);
+        assert!(merge_hex_text(&[&boot, &fw], None, None).is_ok());
+        // Too many files far apart: each one needs its own page.
+        let many: Vec<_> = (0..=u32::try_from(MAX_IMAGE_PAGES).unwrap())
+            .map(|i| write_hex(&format!("f{i}.hex"), i << 12))
+            .collect();
+        let refs: Vec<&Path> = many.iter().map(std::path::PathBuf::as_path).collect();
+        let err = merge_hex_text(&refs, None, None).unwrap_err().to_string();
+        assert!(err.contains("too large") && err.contains("4096"), "{err}");
     }
 
     #[test]
