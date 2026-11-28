@@ -85,6 +85,20 @@ pub fn cmd_program_bootloader(hid: &impl HidDevice, firmware_json: &Path) -> Res
     Ok(())
 }
 
+/// The error for a failed readback after `program dfu`. It says what state the
+/// key is in and what to do, because the flash was already erased and written.
+fn readback_error(e: solo1::Error) -> SoloError {
+    let reason = match e {
+        solo1::Error::Device(m) => m,
+        other => other.to_string(),
+    };
+    SoloError::FirmwareError(format!(
+        "{reason}\nThe flash was erased and written, but the readback did not confirm the firmware. \
+         The key is still in ST DFU mode. Run `solo program dfu` again, and do not run \
+         `solo program aux leave-dfu` until it passes."
+    ))
+}
+
 /// Program via ST DFU (firmware.hex format).
 ///
 /// `serial` is the USB serial of the ST DFU device.
@@ -121,8 +135,26 @@ pub fn cmd_program_dfu(firmware_hex: &Path, serial: Option<&str>) -> Result<()> 
     pb.finish_with_message("Done");
 
     println!("Verifying: reading the flash back...");
-    dfu.verify(base_addr, &firmware_bytes)?;
+    dfu.verify(base_addr, &firmware_bytes).map_err(readback_error)?;
     println!("Firmware readback verified.");
     println!("DFU programming complete.");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_readback_error_message_reads_well() {
+        let e = readback_error(solo1::Error::Device(
+            "Flash readback differs from the firmware at address 0x08000803: wrote 0x01, read 0x00".into(),
+        ));
+        let shown = format!("Error: {e}");
+        println!("{shown}");
+        assert_eq!(shown.matches("error").count(), 1, "{shown}");
+        assert!(shown.contains("0x08000803"), "{shown}");
+        assert!(shown.contains("Run `solo program dfu` again"), "{shown}");
+        assert!(shown.contains("do not run `solo program aux leave-dfu`"), "{shown}");
+    }
 }
