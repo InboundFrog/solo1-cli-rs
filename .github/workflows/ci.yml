@@ -27,10 +27,41 @@ jobs:
       # hidapi / libudev-sys link against these.
       apt-packages: libudev-dev libusb-1.0-0-dev pkg-config
 
+  # Cases the unit tests cannot show on a normal single-user run: root, and a
+  # second user who must not read the key.
+  key-file-users:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install system packages
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends libudev-dev libusb-1.0-0-dev pkg-config
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
+        with:
+          toolchain: "1.99"
+          cache: false
+      - name: Build
+        run: |
+          cargo test -p solo-cli --locked --no-run
+          cargo build -p solo-cli --locked
+      - name: write_private_key tests as root
+        # Already built above, so root writes nothing into target/.
+        run: sudo env "PATH=$PATH" "HOME=$HOME" "RUSTUP_HOME=${RUSTUP_HOME:-$HOME/.rustup}" "CARGO_HOME=${CARGO_HOME:-$HOME/.cargo}" cargo test -p solo-cli --locked write_private_key
+      - name: Another user cannot read a key from genkey
+        run: |
+          sudo useradd -M solo_other
+          dir=$(mktemp -d)
+          chmod 755 "$dir"
+          target/debug/solo genkey -o "$dir/key.pem"
+          test "$(stat -c %a "$dir/key.pem")" = 600
+          if sudo -u solo_other cat "$dir/key.pem"; then
+            echo "another user could read the key" >&2
+            exit 1
+          fi
+
   ci-ok:
     name: CI OK
     if: always()
-    needs: [rust]
+    needs: [rust, key-file-users]
     runs-on: ubuntu-latest
     steps:
       - name: Check job results
