@@ -167,7 +167,10 @@ names. The check passes only if all of these are true:
 - Only with `--counter-above N`: the signature counter is greater than `N`. Use it to check that a
   new signature is newer than the last one you saw. A counter of 0 never passes, because 0 is not
   greater than any `N`. Some authenticators always send 0, as WebAuthn allows for a key without a
-  counter. Whether a Solo 1 sends a counter above 0 is not checked.
+  counter. In the Solo 1 firmware source (4.1.5) the counter is one counter for all credentials. It
+  is not 0, and it goes up by a random step of 1 to 16 with each signature. Not checked on a device.
+  The tool keeps no state: your script must save the last counter. A gap between two counters is
+  normal, so the check shows only that a signature is newer than `N`.
 
 If a check fails, the command says which one and exits with a non-zero code. If all pass, it prints
 that the signature is good, the rpId, whether the user-verified flag is set, and the signature
