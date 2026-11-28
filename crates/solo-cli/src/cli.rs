@@ -55,6 +55,10 @@ pub enum Commands {
         /// The file that was signed
         file: PathBuf,
 
+        /// Relying party host that `sign-file` was used with
+        #[arg(long, default_value = crate::commands::key::SIGN_FILE_RP_ID)]
+        host: String,
+
         /// Fail unless the signature counter is greater than N. A counter of 0 always fails
         #[arg(long, value_name = "N")]
         counter_above: Option<u32>,
@@ -200,6 +204,9 @@ pub enum KeyCommands {
         credential_id: String,
         /// File to sign
         filename: PathBuf,
+        /// Relying party host. The signature has the form of a web login for this host, so use a credential made only for file signing
+        #[arg(long, default_value = crate::commands::key::SIGN_FILE_RP_ID)]
+        host: String,
     },
 
     /// Update firmware

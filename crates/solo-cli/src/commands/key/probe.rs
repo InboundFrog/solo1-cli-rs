@@ -110,14 +110,14 @@ fn normalize_hash_type(hash_type: &str) -> Option<&'static str> {
     }
 }
 
-/// The relying party id that `sign-file` uses. `verify-file` checks the rpIdHash against it.
+/// The relying party id that `sign-file` and `verify-file` use when `--host` is not given.
 pub const SIGN_FILE_RP_ID: &str = "solokeys.dev";
 
 /// Sign a file using CTAP2 getAssertion with the file's SHA-256 as clientDataHash.
 ///
 /// Protocol:
 ///   1. SHA-256 the file contents → clientDataHash
-///   2. getAssertion (0x02) with `rp_id`, clientDataHash, allowList[`credential_id`]
+///   2. getAssertion (0x02) with `host` as the rpId, clientDataHash, allowList[`credential_id`]
 ///   3. Extract authData (key 0x02) and signature (key 0x03) from the CBOR response
 ///   4. Save raw signature bytes to `{filename}.sig`
 ///   5. Save raw authData bytes to `{filename}.authdata`
@@ -132,6 +132,8 @@ pub const SIGN_FILE_RP_ID: &str = "solokeys.dev";
 /// needs the file, both output files and the public key of the credential.
 /// `credential create --public-key-out` saves that public key.
 ///
+/// `host` is the rpId. It must be the rpId that the credential was made with.
+///
 /// # Errors
 /// Returns an error if `credential_id` is not valid hex, if the file cannot be
 /// read, if the getAssertion request fails, if the response is missing the
@@ -140,6 +142,7 @@ pub const SIGN_FILE_RP_ID: &str = "solokeys.dev";
 pub fn cmd_sign_file(
     hid: &impl HidDevice,
     credential_id: &str,
+    host: &str,
     filename: &Path,
     json: bool,
     out: &mut impl Write,
@@ -161,9 +164,8 @@ pub fn cmd_sign_file(
     //   0x01: rpId  (must be the same rp that made the credential)
     //   0x02: clientDataHash  (SHA-256 of file)
     //   0x03: allowList  [{type: "public-key", id: cred_id_bytes}]
-    let rp_id = SIGN_FILE_RP_ID;
     let get_assertion_cbor = Value::Map(vec![
-        (Value::Integer(0x01u64.into()), Value::Text(rp_id.into())),
+        (Value::Integer(0x01u64.into()), Value::Text(host.into())),
         (Value::Integer(0x02u64.into()), Value::Bytes(file_hash.clone())),
         (
             Value::Integer(0x03u64.into()),
@@ -498,8 +500,45 @@ mod tests {
         use solo_ctaphid::mock::MockDevice;
         let device = MockDevice::new(vec![Ok(ga_response(Some(&[0x11; 37]), Some(&[0xAA, 0xBB])))]);
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        cmd_sign_file(&device, "abcd", path, json, &mut out, &mut err).unwrap();
+        cmd_sign_file(&device, "abcd", SIGN_FILE_RP_ID, path, json, &mut out, &mut err).unwrap();
         (String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
+    }
+
+    /// A device that keeps the data of the last request that it got.
+    struct Recorder(std::cell::RefCell<Vec<u8>>, Vec<u8>);
+
+    impl HidDevice for Recorder {
+        fn send_recv(&self, _cmd: u8, data: &[u8]) -> solo_ctaphid::Result<Vec<u8>> {
+            *self.0.borrow_mut() = data.to_vec();
+            Ok(self.1.clone())
+        }
+
+        fn send(&self, _cmd: u8, _data: &[u8]) -> solo_ctaphid::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_sign_file_sends_the_given_host_as_rp_id() {
+        use ciborium::value::Value;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file.bin");
+        std::fs::write(&path, b"test data\n").unwrap();
+        for host in ["example.com", SIGN_FILE_RP_ID] {
+            let device = Recorder(
+                std::cell::RefCell::default(),
+                ga_response(Some(&[0x11; 37]), Some(&[0xAA])),
+            );
+            cmd_sign_file(&device, "abcd", host, &path, false, &mut Vec::new(), &mut Vec::new()).unwrap();
+            let sent = device.0.borrow();
+            // The first byte is the CTAP2 command number, the rest is the CBOR request.
+            let request: Value = ciborium::de::from_reader(&sent[1..]).unwrap();
+            let Value::Map(pairs) = request else {
+                panic!("not a map")
+            };
+            let rp_id = pairs.iter().find(|(k, _)| *k == Value::Integer(1u64.into())).unwrap();
+            assert_eq!(rp_id.1, Value::Text(host.into()));
+        }
     }
 
     #[test]

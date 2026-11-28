@@ -41,6 +41,7 @@ fn run(cli: Cli) -> error::Result<()> {
             signature,
             authdata,
             file,
+            host,
             counter_above,
             json,
         } => {
@@ -50,7 +51,10 @@ fn run(cli: Cli) -> error::Result<()> {
                 authdata.as_deref(),
                 &file,
                 json,
-                counter_above,
+                &top::FileChecks {
+                    host: &host,
+                    counter_above,
+                },
                 &mut std::io::stdout().lock(),
             )?;
         }
@@ -138,12 +142,14 @@ fn refuse_json(cmd: &KeyCommands, json: bool) -> error::Result<()> {
 fn sign_file_to_stdio(
     hid: &impl solo_ctaphid::HidDevice,
     credential_id: &str,
+    host: &str,
     filename: &std::path::Path,
     json: bool,
 ) -> error::Result<()> {
     key::cmd_sign_file(
         hid,
         credential_id,
+        host,
         filename,
         json,
         &mut std::io::stdout().lock(),
@@ -242,8 +248,9 @@ fn run_key_command(
         KeyCommands::SignFile {
             credential_id,
             filename,
+            host,
         } => {
-            sign_file_to_stdio(hid, &credential_id, &filename, json)?;
+            sign_file_to_stdio(hid, &credential_id, &host, &filename, json)?;
         }
 
         KeyCommands::Update { firmware } => {
