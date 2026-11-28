@@ -112,6 +112,31 @@ solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential 
 solo key update [--firmware FILE.json]     # Update firmware (downloads latest if omitted)
 ```
 
+#### PIN and Unicode form (NFC)
+
+Unicode can write some characters in more than one way. For example, "é" can be one
+character or an "e" followed by a combining accent. NFC is the form that uses the one-character
+version where there is one.
+
+The tool puts every PIN into NFC before it uses it, as CTAP 2.1 (section 6.5.1) requires. This
+happens in `set-pin`, `change-pin` (old and new PIN), `credential ls`, `credential rm`,
+`credential create` and `verify`. If this changes what you typed, the tool prints a
+warning to stderr (`[warning] ...`), also without `--verbose`. For a new PIN (`set-pin`, `change-pin`):
+
+> The new PIN was converted to Unicode NFC form. Tools that do not do this may reject it when it is typed the same way, and the key counts each failed attempt.
+
+For an existing PIN (all of the commands above that ask for one):
+
+> The PIN was converted to Unicode NFC form before use. If it was set in another form (for example by another tool or an older version of this one), the key will reject it and count a failed attempt.
+
+A PIN with ASCII characters only is never changed.
+
+If you use the same key with other tools, use an ASCII PIN. Other tools may send the
+PIN exactly as typed, without NFC. (Chromium, libfido2 and python-fido2 did this when
+their source was read for #131; this was not checked again.) Then a non-ASCII PIN that
+is not in NFC is sent as different bytes by this tool and by those tools, so the key
+rejects it in one of them and counts a failed attempt.
+
 #### Credential management
 
 ```sh
