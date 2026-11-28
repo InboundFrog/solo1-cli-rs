@@ -221,7 +221,7 @@ fn enumerate_rps(hid: &impl HidDevice, pin_token: &[u8]) -> Result<Vec<(String, 
 }
 
 /// One credential of a relying party, as read from the key.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 struct RpCredential {
     user_name: String,
     /// The raw credential ID bytes.
@@ -660,6 +660,12 @@ mod tests {
             text("x"),
             Value::Map(vec![]),
             Value::Map(vec![(Value::Integer((-2).into()), Value::Bytes(vec![1]))]),
+            // The shape the firmware sends for an EdDSA credential: OKP, Ed25519, only x.
+            Value::Map(vec![
+                (Value::Integer(1.into()), Value::Integer(1.into())),
+                (Value::Integer((-1).into()), Value::Integer(6.into())),
+                (Value::Integer((-2).into()), Value::Bytes(vec![0; 32])),
+            ]),
         ] {
             let r = enumerate(answer(vec![
                 (0x06, user(Some("alice"))),
