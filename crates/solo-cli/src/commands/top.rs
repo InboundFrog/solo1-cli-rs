@@ -235,14 +235,16 @@ fn verify_file_output(facts: &FileSignatureFacts) -> VerifyFileOutput {
 /// `signature` and `authdata` default to `<file>.sig` and `<file>.authdata`.
 ///
 /// # Errors
-/// Returns an error if an input file cannot be read, or if any check of
-/// `check_file_signature` fails.
+/// Returns an error if an input file cannot be read, if any check of
+/// `check_file_signature` fails, or if `counter_above` is set and the signature counter is not
+/// greater than it. A counter of 0 fails every `counter_above`.
 pub fn cmd_verify_file(
     public_key: &Path,
     signature: Option<&Path>,
     authdata: Option<&Path>,
     file: &Path,
     json: bool,
+    counter_above: Option<u32>,
     out: &mut impl Write,
 ) -> Result<()> {
     let signature = signature.map_or_else(|| with_suffix(file, ".sig"), Path::to_path_buf);
@@ -257,6 +259,16 @@ pub fn cmd_verify_file(
         &read_input("authenticator data file", &authdata)?,
         &read_input("input file", file)?,
     )?;
+
+    // The facts exist only after every check of the signature passed.
+    if let Some(n) = counter_above
+        && facts.sign_count <= n
+    {
+        return Err(SoloError::CryptoError(format!(
+            "The signature counter {} is not above {n}",
+            facts.sign_count
+        )));
+    }
 
     if json {
         return write_json(out, &verify_file_output(&facts));
@@ -554,12 +566,30 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
     fn command_fails_for_missing_or_non_text_public_key() {
         let dir = tempfile::tempdir().unwrap();
         let file = write_case(dir.path(), FILE);
-        let err = cmd_verify_file(&dir.path().join("none.pem"), None, None, &file, false, &mut Vec::new()).unwrap_err();
+        let err = cmd_verify_file(
+            &dir.path().join("none.pem"),
+            None,
+            None,
+            &file,
+            false,
+            None,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
         assert!(matches!(err, SoloError::IoError(_)));
         assert!(err.to_string().contains("public key file"));
 
         std::fs::write(dir.path().join("bin.pem"), [0xFF, 0xFE, 0x00]).unwrap();
-        let err = cmd_verify_file(&dir.path().join("bin.pem"), None, None, &file, false, &mut Vec::new()).unwrap_err();
+        let err = cmd_verify_file(
+            &dir.path().join("bin.pem"),
+            None,
+            None,
+            &file,
+            false,
+            None,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
         assert!(matches!(err, SoloError::CryptoError(_)));
         assert!(err.to_string().contains("not text"));
     }
@@ -579,13 +609,42 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
     fn command_uses_default_sig_and_authdata_paths() {
         let dir = tempfile::tempdir().unwrap();
         let file = write_case(dir.path(), FILE);
-        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, false, &mut Vec::new()).unwrap();
+        cmd_verify_file(
+            &dir.path().join("pub.pem"),
+            None,
+            None,
+            &file,
+            false,
+            None,
+            &mut Vec::new(),
+        )
+        .unwrap();
 
         // A changed file is an error; so is a missing default file.
         let file = write_case(dir.path(), b"other");
-        assert!(cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, false, &mut Vec::new()).is_err());
+        assert!(
+            cmd_verify_file(
+                &dir.path().join("pub.pem"),
+                None,
+                None,
+                &file,
+                false,
+                None,
+                &mut Vec::new()
+            )
+            .is_err()
+        );
         std::fs::remove_file(dir.path().join("doc.txt.authdata")).unwrap();
-        let err = cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, false, &mut Vec::new()).unwrap_err();
+        let err = cmd_verify_file(
+            &dir.path().join("pub.pem"),
+            None,
+            None,
+            &file,
+            false,
+            None,
+            &mut Vec::new(),
+        )
+        .unwrap_err();
         assert!(matches!(err, SoloError::IoError(_)));
         assert!(err.to_string().contains("authenticator data file"));
     }
@@ -611,11 +670,71 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
     }
 
     #[test]
+    fn counter_above_passes_only_for_a_greater_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE); // the count is 3
+        let pubkey = dir.path().join("pub.pem");
+        let run = |n: Option<u32>, json: bool| {
+            let mut out = Vec::new();
+            let r = cmd_verify_file(&pubkey, None, None, &file, json, n, &mut out);
+            (r, out)
+        };
+        for n in [None, Some(0), Some(2)] {
+            let (r, out) = run(n, true);
+            r.unwrap();
+            assert_eq!(out.first(), Some(&b'{'));
+        }
+        for n in [3, 4, u32::MAX] {
+            let (r, out) = run(Some(n), true);
+            let msg = r.unwrap_err().to_string();
+            assert!(
+                msg.ends_with(&format!("The signature counter 3 is not above {n}")),
+                "{msg}"
+            );
+            assert_eq!(out, Vec::<u8>::new());
+        }
+    }
+
+    #[test]
+    fn counter_above_fails_for_a_zero_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE);
+        let k = key();
+        let auth = auth_data(SIGN_FILE_RP_ID, FLAG_UP, 0);
+        std::fs::write(dir.path().join("doc.txt.sig"), sign(&k, &auth, FILE)).unwrap();
+        std::fs::write(dir.path().join("doc.txt.authdata"), &auth).unwrap();
+        let pubkey = dir.path().join("pub.pem");
+        cmd_verify_file(&pubkey, None, None, &file, false, None, &mut Vec::new()).unwrap();
+        let err = cmd_verify_file(&pubkey, None, None, &file, false, Some(0), &mut Vec::new()).unwrap_err();
+        assert!(err.to_string().contains("counter 0 is not above 0"));
+    }
+
+    #[test]
+    fn bad_signature_still_gives_the_signature_error_with_counter_above() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = write_case(dir.path(), FILE);
+        let mut auth = std::fs::read(dir.path().join("doc.txt.authdata")).unwrap();
+        auth[36] ^= 1; // the count becomes 2
+        std::fs::write(dir.path().join("doc.txt.authdata"), &auth).unwrap();
+        let err = cmd_verify_file(
+            &dir.path().join("pub.pem"),
+            None,
+            None,
+            &file,
+            false,
+            Some(1),
+            &mut Vec::new(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("does not match"), "{err}");
+    }
+
+    #[test]
     fn json_mode_writes_exactly_one_json_object() {
         let dir = tempfile::tempdir().unwrap();
         let file = write_case(dir.path(), FILE);
         let mut out = Vec::new();
-        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, true, &mut out).unwrap();
+        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, true, None, &mut out).unwrap();
         let text = String::from_utf8(out).unwrap();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
@@ -629,7 +748,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
         let dir = tempfile::tempdir().unwrap();
         let file = write_case(dir.path(), FILE);
         let mut out = Vec::new();
-        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, false, &mut out).unwrap();
+        cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, false, None, &mut out).unwrap();
         assert_eq!(
             String::from_utf8(out).unwrap(),
             "The signature is good.\nrpId: solokeys.dev\nUser verified: no\nSignature counter: 3\n"
@@ -642,7 +761,8 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
         let file = write_case(dir.path(), b"other");
         for json in [true, false] {
             let mut out = Vec::new();
-            let err = cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, json, &mut out).unwrap_err();
+            let err =
+                cmd_verify_file(&dir.path().join("pub.pem"), None, None, &file, json, None, &mut out).unwrap_err();
             assert!(matches!(err, SoloError::CryptoError(_)));
             assert_eq!(out, Vec::<u8>::new());
         }
@@ -662,6 +782,7 @@ K1AvWLn046q1Ik2YKVlH6a1ub/59Px9p0EYH/EJ99cnrKYqvALq666Q+Vw==\n\
             Some(&auth),
             &file,
             false,
+            None,
             &mut Vec::new(),
         )
         .unwrap();
