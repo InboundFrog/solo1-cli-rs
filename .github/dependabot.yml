@@ -26,3 +26,12 @@ updates:
       cargo-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+
+  # rust-toolchain.toml is the only place with the Rust version. The CI jobs
+  # in .github/workflows/ci.yml read it, so this covers all pins.
+  - package-ecosystem: rust-toolchain
+    directories: ['/']
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
