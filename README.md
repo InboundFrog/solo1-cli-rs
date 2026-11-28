@@ -164,6 +164,10 @@ names. The check passes only if all of these are true:
 - The user-present flag is set.
 - The signature is a valid DER ECDSA signature by that public key over the authenticator data
   followed by the SHA-256 hash of the file.
+- Only with `--counter-above N`: the signature counter is greater than `N`. Use it to check that a
+  new signature is newer than the last one you saw. A counter of 0 never passes, because 0 is not
+  greater than any `N`. Some authenticators always send 0, as WebAuthn allows for a key without a
+  counter. Whether a Solo 1 sends a counter above 0 is not checked.
 
 If a check fails, the command says which one and exits with a non-zero code. If all pass, it prints
 that the signature is good, the rpId, whether the user-verified flag is set, and the signature
