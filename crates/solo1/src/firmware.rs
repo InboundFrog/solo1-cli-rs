@@ -1129,6 +1129,8 @@ mod tests {
         assert_eq!(read_bootloader_version(&device), None);
         let device = MockDevice::new(vec![Ok(vec![0x01])]);
         assert_eq!(read_bootloader_version(&device), None);
+        let device = MockDevice::new(vec![Ok(vec![])]);
+        assert_eq!(read_bootloader_version(&device), None);
         let device = MockDevice::new(vec![]);
         assert_eq!(read_bootloader_version(&device), None);
     }

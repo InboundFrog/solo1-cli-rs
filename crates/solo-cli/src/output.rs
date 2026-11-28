@@ -65,6 +65,21 @@ pub struct VersionOutput {
     pub firmware_version: String,
 }
 
+/// Output of `solo key version` for a Solo 1. The `mode` field says which variant it is.
+#[derive(Serialize)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum Solo1VersionOutput {
+    Normal {
+        firmware_version: String,
+        /// The fourth byte of the answer, when it is 0 or 1. Absent otherwise.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        locked: Option<bool>,
+    },
+    Bootloader {
+        bootloader_version: String,
+    },
+}
+
 #[derive(Serialize)]
 pub struct CliVersionOutput {
     pub name: String,
