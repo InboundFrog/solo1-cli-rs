@@ -42,10 +42,10 @@ Only `solo-cli` uses the terminal or the network.
 
 ### Supported systems
 
-Only Linux and macOS are supported and tested. The code is not tested on Windows or any other
-system. The CI compiles it for Windows, but does not run it. Some things work differently on
-other systems: a file with a private key is written with a plain write, without the protections
-in "Files with a private key" below.
+Linux and macOS are supported. CI builds and tests the code on Linux only; it does not run on
+macOS. Windows and other systems are not supported: CI builds the code on Windows to find build
+errors, but runs nothing there. On Windows, a file with a private key is written with a plain
+write, without the protections in "Files with a private key" below.
 
 ### Supported devices
 
@@ -241,11 +241,17 @@ write a file that holds a private key. On Linux and macOS these files are writte
 - `solo` does not set or remove ACLs. ACLs that the directory passes on to new files can still
   give other users access. Not checked: how each system treats them. Look at the new file with
   `ls -l` (and `ls -le` on macOS or `getfacl` on Linux).
-- On other systems, none of this is done: the file is written with a plain write. It follows a
-  symbolic link, writes into an existing file, and sets no access rights. Only Linux and macOS are
-  supported and tested.
+- On Windows (and any other system that is not Unix), none of this is done: the file is written
+  with a plain write. It follows a symbolic link and writes into an existing file. `solo` sets no
+  access rights, so the file gets the rights that the directory gives to new files (not checked
+  on Windows). See "Supported systems".
 
-Without `--attestation-key`, `mergehex` writes its output as a plain file.
+Without `--attestation-key` (and `--attestation-cert`), `mergehex` puts the default Solo Hacker
+attestation key in the output. That key is public, so the output is written as a plain file: a
+symbolic link is followed and an existing file keeps its mode.
+
+With `--json`, `genkey` writes no file, even with `-o`: the private key is in the JSON on
+standard output.
 
 ---
 
