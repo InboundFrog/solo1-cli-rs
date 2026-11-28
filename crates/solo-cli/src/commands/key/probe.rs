@@ -99,15 +99,13 @@ pub const SIGN_FILE_RP_ID: &str = "solokeys.dev";
 /// `credential create --public-key-out` saves that public key.
 ///
 /// # Errors
-/// Returns an error if `credential_id` is not valid hex, if the file cannot be
-/// read, if the getAssertion request fails, if the response is missing the
-/// authData or the signature (no file is written then), or if writing the
-/// `.sig` or `.authdata` file fails.
-pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &str, filename: &Path) -> Result<()> {
+/// Returns an error if the file cannot be read, if the getAssertion request fails, if the
+/// response is missing the authData or the signature (no file is written then), or if writing
+/// the `.sig` or `.authdata` file fails.
+pub fn cmd_sign_file(hid: &impl HidDevice, credential_id: &[u8], filename: &Path) -> Result<()> {
     use ciborium::value::Value;
 
-    // Decode the hex credential ID. `cmd_challenge_response` does the same.
-    let cred_id_bytes = hex::decode(credential_id).map_err(SoloError::InvalidHex)?;
+    let cred_id_bytes = credential_id.to_vec();
 
     // Read the file. Use its SHA-256 hash as the clientDataHash.
     let data = std::fs::read(filename)?;

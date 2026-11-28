@@ -108,7 +108,7 @@ solo key change-pin                        # Change existing PIN
 solo key disable-updates                   # Permanently disable firmware updates
 solo key keyboard <DATA>                   # Program keyboard sequence (max 64 bytes)
 solo key probe <HASH_TYPE> <FILE>          # Calculate hash on device (sha256|sha512|rsa2048|ed25519, file <=6144 bytes)
-solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential (ID is hex); writes FILE.sig and FILE.authdata
+solo key sign-file <CREDENTIAL_ID> <FILE>  # Sign file with resident credential (ID is hex or base64); writes FILE.sig and FILE.authdata
 solo key update [--firmware FILE.json]     # Update firmware (downloads latest if omitted)
 ```
 
@@ -117,12 +117,19 @@ solo key update [--firmware FILE.json]     # Update firmware (downloads latest i
 ```sh
 solo key credential info                # Get credential slot info
 solo key credential ls                  # List resident credentials
-solo key credential rm <ID>             # Remove credential by base64 ID
+solo key credential rm <ID>             # Remove credential by ID (hex or base64)
 solo key credential rm --host <HOST> --user <USER>
                                          # Remove credential by relying party and username
 solo key credential create --host <HOST> --user <USER> [--prompt <TEXT>] [--public-key-out <FILE>]
                                          # Create FIDO2 credential with hmac-secret
 ```
+
+Credential IDs: `credential create` prints the credential ID as hex. `credential ls` prints it as base64. Every
+command that takes a credential ID (`challenge-response`, `sign-file`, `credential rm`) accepts both
+forms. A text of only hex digits (0-9, a-f, A-F) with an even length is read as hex. Anything else
+is read as base64, in the standard or the URL-safe alphabet, with or without `=` padding. A
+base64 ID that is made only of hex digits and has an even length would be read as hex. The ID that
+`credential ls` prints ends in `==`, so it is never read as hex.
 
 `credential create` prints the credential ID. With `--public-key-out <FILE>`, it also writes the
 public key of the new credential to FILE as PEM text. With `--json`, the JSON object has the extra
@@ -186,7 +193,7 @@ that the private key is in a Solo key, which device holds it, or when the file w
 ```sh
 solo key challenge-response <CREDENTIAL_ID> <CHALLENGE> [--host <HOST>]
 # HMAC-secret challenge-response using an existing credential
-# CREDENTIAL_ID: hex string from credential create output
+# CREDENTIAL_ID: hex (as printed by credential create) or base64 (as printed by credential ls)
 # CHALLENGE: string to hash
 # --host defaults to "solokeys.dev"
 ```
