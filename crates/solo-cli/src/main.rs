@@ -101,14 +101,18 @@ const fn json_unsupported(cmd: &KeyCommands) -> Option<&'static str> {
         KeyCommands::Credential {
             command: CredentialCommands::Rm { .. },
         } => Some("credential rm"),
-        KeyCommands::Rng { .. }
+        KeyCommands::Rng {
+            command: RngCommands::Hexbytes { .. },
+        }
+        | KeyCommands::Credential {
+            command: CredentialCommands::Info | CredentialCommands::Ls | CredentialCommands::Create { .. },
+        }
         | KeyCommands::ChallengeResponse { .. }
         | KeyCommands::Verify
         | KeyCommands::Version
         | KeyCommands::Ping { .. }
         | KeyCommands::Probe { .. }
-        | KeyCommands::SignFile { .. }
-        | KeyCommands::Credential { .. } => None,
+        | KeyCommands::SignFile { .. } => None,
     }
 }
 
