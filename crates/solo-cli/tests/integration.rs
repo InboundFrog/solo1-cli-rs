@@ -322,3 +322,18 @@ fn test_flash_addr_calculation() {
     assert_eq!(flash_addr(113), 0x0803_8800); // ATTEST_ADDR
     assert_eq!(flash_addr(128), 0x0804_0000); // one past end
 }
+
+/// A bare output name has the empty path as its parent. The child process has
+/// its own current directory, so this is safe next to other tests.
+#[cfg(unix)]
+#[test]
+fn test_genkey_writes_bare_file_name_in_current_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_solo"))
+        .args(["genkey", "-o", "bare.pem"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(dir.path().join("bare.pem").is_file());
+}
