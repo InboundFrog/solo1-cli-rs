@@ -107,10 +107,17 @@ pub struct PingOutput {
 /// # Errors
 /// Returns an error if `value` cannot be serialized to JSON.
 pub fn print_json<T: Serialize>(value: &T) -> Result<()> {
-    outln!(
-        "{}",
-        serde_json::to_string_pretty(value).map_err(crate::error::SoloError::JsonError)?
-    );
+    write_json(&mut std::io::stdout().lock(), value)
+}
+
+/// Serialize `value` to pretty JSON and write it to `out`, with a newline.
+///
+/// # Errors
+/// Returns an error if `value` cannot be serialized to JSON, or if writing to
+/// `out` fails (`SoloError::Stdout`).
+pub fn write_json<T: Serialize>(mut out: impl std::io::Write, value: &T) -> Result<()> {
+    let text = serde_json::to_string_pretty(value).map_err(crate::error::SoloError::JsonError)?;
+    outln!(out, "{text}");
     Ok(())
 }
 

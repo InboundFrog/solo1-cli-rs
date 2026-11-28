@@ -12,8 +12,8 @@ use solo_ctaphid::{CTAPHID_CBOR, HidDevice};
 /// # Errors
 /// Returns an error if the getInfo request fails or its response is not a valid
 /// CBOR map, or if printing JSON output fails.
-pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
-    use crate::output::{CredentialInfoOutput, print_json};
+pub fn cmd_credential_info(hid: &impl HidDevice, json: bool, mut out: impl std::io::Write) -> Result<()> {
+    use crate::output::{CredentialInfoOutput, write_json};
     use ciborium::value::Value;
     use std::collections::HashMap;
 
@@ -76,51 +76,54 @@ pub fn cmd_credential_info(hid: &impl HidDevice, json: bool) -> Result<()> {
     let remaining_discoverable_credentials = find_uint(&pairs, 0x0A);
 
     if json {
-        return print_json(&CredentialInfoOutput {
-            versions,
-            extensions,
-            aaguid,
-            options,
-            max_msg_size,
-            pin_uv_auth_protocols,
-            max_credential_count_in_list,
-            max_credential_id_length,
-            remaining_discoverable_credentials,
-        });
+        return write_json(
+            out,
+            &CredentialInfoOutput {
+                versions,
+                extensions,
+                aaguid,
+                options,
+                max_msg_size,
+                pin_uv_auth_protocols,
+                max_credential_count_in_list,
+                max_credential_id_length,
+                remaining_discoverable_credentials,
+            },
+        );
     }
 
-    outln!("CTAP2 authenticatorGetInfo");
-    outln!("{}", "=".repeat(40));
-    outln!("Versions:                       {}", versions.join(", "));
+    outln!(out, "CTAP2 authenticatorGetInfo");
+    outln!(out, "{}", "=".repeat(40));
+    outln!(out, "Versions:                       {}", versions.join(", "));
     if !extensions.is_empty() {
-        outln!("Extensions:                     {}", extensions.join(", "));
+        outln!(out, "Extensions:                     {}", extensions.join(", "));
     }
-    outln!("AAGUID:                         {aaguid}");
+    outln!(out, "AAGUID:                         {aaguid}");
     if !options.is_empty() {
         let mut opt_strs: Vec<String> = options.iter().map(|(k, v)| format!("{k}: {v}")).collect();
         opt_strs.sort();
-        outln!("Options:                        {}", opt_strs.join(", "));
+        outln!(out, "Options:                        {}", opt_strs.join(", "));
     }
     if let Some(size) = max_msg_size {
-        outln!("Max message size:               {size}");
+        outln!(out, "Max message size:               {size}");
     }
     if !pin_uv_auth_protocols.is_empty() {
         let proto_strs: Vec<String> = pin_uv_auth_protocols
             .iter()
             .map(std::string::ToString::to_string)
             .collect();
-        outln!("PIN/UV auth protocols:          {}", proto_strs.join(", "));
+        outln!(out, "PIN/UV auth protocols:          {}", proto_strs.join(", "));
     }
     if let Some(c) = max_credential_count_in_list {
-        outln!("Max credential count in list:   {c}");
+        outln!(out, "Max credential count in list:   {c}");
     }
     if let Some(l) = max_credential_id_length {
-        outln!("Max credential ID length:       {l}");
+        outln!(out, "Max credential ID length:       {l}");
     }
     if let Some(r) = remaining_discoverable_credentials {
-        outln!("Remaining discoverable creds:   {r}");
+        outln!(out, "Remaining discoverable creds:   {r}");
     } else {
-        outln!("Remaining discoverable creds:   (not reported by device)");
+        outln!(out, "Remaining discoverable creds:   (not reported by device)");
     }
 
     Ok(())
@@ -549,5 +552,56 @@ mod tests {
             .collect();
         assert!(keys.contains(&"type"), "descriptor must have 'type' field");
         assert!(keys.contains(&"id"), "descriptor must have 'id' field");
+    }
+
+    /// A getInfo response: status 0, then a CBOR map.
+    fn get_info_response() -> Vec<u8> {
+        use ciborium::value::Value;
+        let int = |n: i64| Value::Integer(n.into());
+        let map = Value::Map(vec![
+            (int(1), Value::Array(vec![Value::Text("FIDO_2_0".into())])),
+            (int(3), Value::Bytes(vec![0xAB; 16])),
+            (int(4), Value::Map(vec![(Value::Text("rk".into()), Value::Bool(true))])),
+            (int(5), int(1200)),
+            (int(6), Value::Array(vec![int(1)])),
+        ]);
+        let mut response = vec![0u8];
+        ciborium::ser::into_writer(&map, &mut response).unwrap();
+        response
+    }
+
+    #[test]
+    fn credential_info_text() {
+        let device = solo_ctaphid::mock::MockDevice::new(vec![Ok(get_info_response())]);
+        let mut out = Vec::new();
+        super::cmd_credential_info(&device, false, &mut out).unwrap();
+        let expected = format!(
+            "CTAP2 authenticatorGetInfo\n{}\n\
+             Versions:                       FIDO_2_0\n\
+             AAGUID:                         {}\n\
+             Options:                        rk: true\n\
+             Max message size:               1200\n\
+             PIN/UV auth protocols:          1\n\
+             Remaining discoverable creds:   (not reported by device)\n",
+            "=".repeat(40),
+            "ab".repeat(16)
+        );
+        assert_eq!(String::from_utf8(out).unwrap(), expected);
+    }
+
+    #[test]
+    fn credential_info_json() {
+        let device = solo_ctaphid::mock::MockDevice::new(vec![Ok(get_info_response())]);
+        let mut out = Vec::new();
+        super::cmd_credential_info(&device, true, &mut out).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(v["versions"], serde_json::json!(["FIDO_2_0"]));
+        assert_eq!(v["extensions"], serde_json::json!([]));
+        assert_eq!(v["aaguid"], "ab".repeat(16));
+        assert_eq!(v["options"], serde_json::json!({"rk": true}));
+        assert_eq!(v["max_msg_size"], 1200);
+        assert_eq!(v["pin_uv_auth_protocols"], serde_json::json!([1]));
+        assert_eq!(v["remaining_discoverable_credentials"], serde_json::Value::Null);
+        assert_eq!(out.last(), Some(&b'\n'));
     }
 }
