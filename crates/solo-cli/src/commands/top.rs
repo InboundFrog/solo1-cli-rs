@@ -60,8 +60,8 @@ pub fn cmd_genkey(output: Option<&Path>, json: bool) -> Result<()> {
 /// Write a file that holds a private key to `path`.
 ///
 /// Used for the key from `genkey` and for the merged HEX from `mergehex` when
-/// it holds a user's attestation key. On Unix the write is private and
-/// atomic (see `write_private_key_inner`); on other systems it is a plain
+/// it holds a user's attestation key. On Unix the write is private, atomic
+/// and synced (see `write_private_key_inner`); on other systems it is a plain
 /// write. Every error names `path` and keeps the `ErrorKind` of the original
 /// error.
 fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
@@ -75,8 +75,8 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 /// rename is atomic), named `.solo-<pid>.tmp`. The name does not hold the
 /// output name, so a long output name cannot make it too long. The process id
 /// keeps two programs apart; one process writes one key at a time. The file
-/// has mode 0o600 (or less if the umask removes bits). The file is synced and then
-/// renamed over `path`. If any step up to the rename fails, the temporary file
+/// has mode 0o600 (or less if the umask removes bits). The file is synced and
+/// then renamed over `path`. If any step up to the rename fails, the temporary file
 /// is removed and an old file at `path` is left as it was. After the rename the
 /// directory is synced, so the rename is not lost if the power fails. If that
 /// last sync fails, the key is already in place and is not removed; the error
@@ -84,10 +84,9 @@ fn write_private_key(path: &Path, contents: &str) -> std::io::Result<()> {
 /// survive a power loss. On macOS `File::sync_all` calls `fcntl(F_FULLFSYNC)`
 /// (checked in the std source of Rust 1.99, `sys/fs/unix.rs`), so it flushes
 /// the drive cache too. Not checked: whether every file system accepts that
-/// call on a directory. The new key is in a new file, so a
-/// handle that another program opened on the old file cannot read it. A
-/// symbolic link or any other kind of existing path gives an error and is left
-/// untouched.
+/// call on a directory. The new key is in a new file, so a handle that another
+/// program opened on the old file cannot read it. A symbolic link or any other
+/// kind of existing path gives an error and is left untouched.
 #[cfg(unix)]
 fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
     use std::io::Write;
