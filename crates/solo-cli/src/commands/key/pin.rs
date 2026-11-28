@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 ///
 /// # Errors
 /// Returns an error if a PIN prompt cannot be read, if the new PINs do not
-/// match, if the new PIN is too short or too long, if key agreement or
+/// match, if the new PIN is too short, too long or ends in a zero byte, if key agreement or
 /// encryption fails, or if the changePin command is rejected by the device.
 pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
     let old_pin = Zeroizing::new(rpassword::prompt_password("Current PIN: ").map_err(SoloError::IoError)?);
@@ -67,8 +67,8 @@ pub fn cmd_change_pin(hid: &impl HidDevice) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if a PIN prompt cannot be read, if the new PINs do not
-/// match, if the PIN is too short or too long, if key agreement or encryption
-/// fails, or if the setPin command is rejected by the device.
+/// match, if the PIN is too short, too long or ends in a zero byte, if key
+/// agreement or encryption fails, or if the setPin command is rejected by the device.
 pub fn cmd_set_pin(hid: &impl HidDevice) -> Result<()> {
     let new_pin = Zeroizing::new(rpassword::prompt_password("New PIN: ").map_err(SoloError::IoError)?);
     let confirm_pin = Zeroizing::new(rpassword::prompt_password("Confirm PIN: ").map_err(SoloError::IoError)?);
