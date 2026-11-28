@@ -113,11 +113,12 @@ pub struct SignFileOutput {
 
 /// The result of `verify-file --json` for a good signature.
 ///
-/// A failed check prints no JSON: the error goes to stderr and the exit code is 1, as for every command.
+/// A failed check prints nothing to stdout: the error goes to stderr and the exit code is 1. The exit
+/// code is the result, so there is no `valid` field. This differs from `key verify --json`, which
+/// prints a report with `signature_valid: false` and then fails. `check_file_signature` stops at the
+/// first failed check and returns no facts, so there is no report to print.
 #[derive(Debug, Serialize)]
 pub struct VerifyFileOutput {
-    /// Always `true`. A bad signature is an error, not a result.
-    pub valid: bool,
     pub rp_id: String,
     pub user_verified: bool,
     pub sign_count: u32,
