@@ -121,6 +121,8 @@ fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
         .create_new(true)
         .mode(0o600)
         .open(&temp)?;
+    // Keep this `sync_all`: it makes the key reach the disk before the rename.
+    // No test can see it removed, so do not delete it as unneeded.
     let result = file
         .write_all(contents.as_bytes())
         .and_then(|()| file.sync_all())
@@ -130,6 +132,8 @@ fn write_private_key_inner(path: &Path, contents: &str) -> std::io::Result<()> {
         let _ = std::fs::remove_file(&temp);
     }
     result?;
+    // Keep this directory sync: it makes the rename survive a power loss.
+    // No test can see it removed, so do not delete it as unneeded.
     std::fs::File::open(parent_dir(path))
         .and_then(|dir| dir.sync_all())
         .map_err(|e| {
