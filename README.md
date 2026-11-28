@@ -188,7 +188,8 @@ solo key challenge-response <CREDENTIAL_ID> <CHALLENGE> [--host <HOST>]
 ### Programming commands (`solo program [--serial <SN>]`)
 
 ```sh
-# Flash firmware via Solo bootloader (device must be in bootloader mode)
+# Flash firmware via Solo bootloader (device must be in bootloader mode).
+# Then waits up to --timeout seconds for the key to restart and prints its firmware version.
 solo program bootloader <firmware.json>
 
 # Flash firmware via ST DFU
