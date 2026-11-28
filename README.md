@@ -131,7 +131,7 @@ cannot be read, the error text holds the credential ID. If the file cannot be wr
 text holds the PEM text.
 
 `credential ls` does not print public keys in text mode. With `--json`, each entry has the field
-`public_key_pem` (PEM text) when the key sends the public key of the credential. If the key sends
+`public_key_pem` (PEM text) when the security key sends the public key of the credential. If it sends
 none, or sends one that cannot be read, the field is left out. A key that cannot be read also gives
 a warning on stderr. To save the key of an existing credential, run `credential ls` with `--json` and
 write the field to a file.
@@ -147,7 +147,8 @@ the input file, and overwrites them if they exist:
 - `FILE.authdata`: the authenticator data that was signed.
 
 To check the signature, you need the file, `FILE.sig`, `FILE.authdata` and the public key of the
-credential. Get the public key with `credential create --public-key-out pub.pem`, or from `credential ls --json`.
+credential. Get the public key with `credential create --public-key-out pub.pem`, or from
+`credential ls --json`.
 
 The simple way is `solo verify-file`. It needs no device:
 
